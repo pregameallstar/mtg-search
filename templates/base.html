@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}MTG Search{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/mana-font@1.21.0/css/mana.min.css">
+</head>
+<body>
+    <nav>
+        <a href="/" class="brand">MTG Search</a>
+    </nav>
+    <div class="app-layout">
+        <aside class="sidebar">
+            <ul class="sidebar-nav">
+                <li><a href="/">Home</a></li>
+                <li><a href="/search">Search</a></li>
+                <li><a href="/sets">Sets</a></li>
+                <li class="sidebar-section-label">Tools</li>
+                <li><a href="/search">Similarity</a></li>
+            </ul>
+        </aside>
+        <main>
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+    <footer>
+        <p>Card data from <a href="https://mtgjson.com">MTGJSON</a>. Images from <a href="https://scryfall.com">Scryfall</a>.</p>
+    </footer>
+
+    {# Card detail side panel #}
+    <div id="card-panel" class="card-panel-overlay" onclick="closePanel(event)">
+        <div class="card-panel-sheet" id="card-panel-sheet">
+            <div class="panel-loading">Loading…</div>
+        </div>
+    </div>
+
+    <script>
+    function openPanel(setCode, number) {
+        var panel = document.getElementById('card-panel');
+        var sheet = document.getElementById('card-panel-sheet');
+        panel.classList.add('open');
+        sheet.innerHTML = '<div class="panel-loading">Loading…</div>';
+        sheet.scrollTop = 0;
+        history.pushState({panel: true, setCode: setCode, number: number}, '', '/card/' + setCode + '/' + number);
+
+        fetch('/card/' + setCode + '/' + number + '?fragment=1')
+            .then(r => r.text())
+            .then(html => { sheet.innerHTML = html; })
+            .catch(() => { sheet.innerHTML = '<div class="panel-loading">Failed to load card.</div>'; });
+    }
+    function closePanel(e) {
+        if (e && e.target !== document.getElementById('card-panel')) return;
+        document.getElementById('card-panel').classList.remove('open');
+        if (history.state && history.state.panel) history.back();
+    }
+    window.addEventListener('popstate', function(e) {
+        if (!(e.state && e.state.panel)) {
+            document.getElementById('card-panel').classList.remove('open');
+        }
+    });
+    window.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') { closePanel({target: document.getElementById('card-panel')}); }
+    });
+
+    // ponytail: delegate click on any .card-cell to open panel
+    document.addEventListener('click', function(e) {
+        var cell = e.target.closest('.card-cell');
+        if (!cell) return;
+        e.preventDefault();
+        openPanel(cell.dataset.setCode, cell.dataset.number);
+    });
+    </script>
+</body>
+</html>

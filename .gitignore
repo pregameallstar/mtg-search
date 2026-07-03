@@ -1,0 +1,26 @@
+# SQLite database (large file, symlinked)
+AllPrintings.sqlite
+
+# Python virtual environment
+venv/
+
+# Bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Server runtime
+.server.pid
+.server.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+
+# Environment
+.env

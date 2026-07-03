@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}Similar to {{ card['name'] }} — MTG Search{% endblock %}
+{% block content %}
+<div class="similar-page">
+
+    {# --- Base card header --- #}
+    <div class="similar-base-header">
+        {% set img = card_image(card['scryfallId'], size='small') %}
+        {% if img %}
+        <img src="{{ img }}" alt="{{ card['name'] }}">
+        {% endif %}
+        <div class="similar-base-info">
+            <h1>{{ card['faceName'] or card['name'] }}</h1>
+            <span class="mana-cost-lg">{{ render_mana(card['manaCost']) | safe }}</span>
+            <p class="card-type-line">{{ card['type'] }}</p>
+            {% if not card['text'] %}
+            <p class="similar-hint">This card has no oracle text. Enable optional factors below to find similar cards by other attributes.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    {# --- Change base card --- #}
+    <form class="base-card-switcher" method="get">
+        {% for k in ('use_types','use_keywords','use_subtypes','use_supertypes','use_mv','use_color') if request.args.get(k) %}
+        <input type="hidden" name="{{ k }}" value="1">
+        {% endfor %}
+        {% for k in ('w_types','w_keywords','w_subtypes','w_supertypes','w_mv','w_color') if request.args.get(k) %}
+        <input type="hidden" name="{{ k }}" value="{{ request.args.get(k) }}">
+        {% endfor %}
+        {% if mtg_filter %}<input type="hidden" name="mtg_filter" value="1">{% endif %}
+        <input type="text" name="by_name" placeholder="Change base card…" value="{{ by_name }}">
+        <button type="submit">Change Base</button>
+    </form>
+
+    {% if by_name_error %}
+    <div class="similar-error">Card "{{ by_name }}" not found. Try a different name.</div>
+    {% endif %}
+
+    {# --- Tuning panel --- #}
+    <form method="get" class="tuning-panel">
+        <input type="hidden" name="by_name" value="">
+        <fieldset><legend>Optional Factors</legend>
+            <details class="tuning-help">
+                <summary>How weights work</summary>
+                <p><strong>Oracle text</strong> is always scored, using <strong>IDF-weighted</strong> overlap — rare terms like "storm" count more than common terms. The score is <strong>normalized</strong> so results are comparable regardless of how many factors are active.</p>
+                <p>Each optional factor (<em>Types, Keywords, Subtypes, Color Identity</em>) uses <strong>Jaccard similarity</strong> — shared terms divided by total terms. <em>Mana Value</em> uses proximity: closer MV = higher score.</p>
+                <p>The <strong>weight</strong> is a multiplier. A factor weighted <strong>2</strong> counts twice as much as one weighted <strong>1</strong>. Setting a weight to <strong>0.1</strong> makes it barely influence results. No single "right" setting — tune, update, and see what surfaces.</p>
+                <p><strong>MTG filter</strong> removes ubiquitous terms (<em>creature, target, player, graveyard, battlefield…</em>) from the oracle text match. Cards won't score higher just because they both mention "target creature". Try toggling this to see which mode gives better results for a given card.</p>
+            </details>
+            <div class="filter-option">
+                <label class="factor-toggle">
+                    <input type="checkbox" name="mtg_filter" value="1"
+                           {% if mtg_filter %}checked{% endif %}>
+                    MTG Filter (strip common terms)
+                </label>
+            </div>
+            {% macro factor_row(label, use_key, weight_key) %}
+            <label class="factor-toggle">
+                <input type="checkbox" name="{{ use_key }}" value="1"
+                       {% if request.args.get(use_key) %}checked{% endif %}>
+                {{ label }}
+            </label>
+            <label class="factor-weight" title="Weight multiplier (higher = more important)">
+                Weight <input type="number" name="{{ weight_key }}"
+                       value="{{ request.args.get(weight_key, '1') }}"
+                       step="0.1" min="0.1" max="10"
+                       style="width:4.5em">
+            </label>
+            {% endmacro %}
+            <div class="factor-rows">
+                {{ factor_row('Types', 'use_types', 'w_types') }}
+                {{ factor_row('Supertypes', 'use_supertypes', 'w_supertypes') }}
+                {{ factor_row('Subtypes', 'use_subtypes', 'w_subtypes') }}
+                {{ factor_row('Keywords', 'use_keywords', 'w_keywords') }}
+                {{ factor_row('Mana Value', 'use_mv', 'w_mv') }}
+                {{ factor_row('Color Identity', 'use_color', 'w_color') }}
+            </div>
+            <button type="submit" class="tuning-update">Update Results</button>
+        </fieldset>
+    </form>
+
+    {# --- Results --- #}
+    <p class="result-count">{{ total }} similar card{{ 's' if total != 1 else '' }} found</p>
+
+    <div class="card-grid">
+        {% for score, c in results %}
+        <div class="card-cell" data-set-code="{{ c['setCode'] }}" data-number="{{ c['number'] }}">
+            {% set img = card_image(c['scryfallId']) %}
+            {% if img %}
+            <img src="{{ img }}" alt="{{ c['name'] }}" loading="lazy" width="244" height="340">
+            {% else %}
+            <div class="card-placeholder">{{ c['name'] }}</div>
+            {% endif %}
+            <div class="cell-footer">
+                <div class="cell-name" title="{{ c['name'] }}">{{ c['name'] }}</div>
+                <div class="cell-actions">
+                    <span class="similarity-score">{{ "%.0f"|format(score * 100) }}%</span>
+                    <a href="/card/{{ c['setCode'] }}/{{ c['number'] }}/similar{{ tuning_params if tuning_params else '' }}"
+                       class="btn-similar-base"
+                       onclick="event.stopPropagation();"
+                       title="Find cards similar to {{ c['name'] }}">&#x21c4;</a>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    {% if total_pages > 1 %}
+    <div class="pagination">
+        {% if page > 1 %}
+        <a href="/card/{{ card['setCode'] }}/{{ card['number'] }}/similar?page={{ page - 1 }}{{ tuning_params if tuning_params else '' }}"
+           class="page prev">← Previous</a>
+        {% else %}
+        <span class="page prev disabled">← Previous</span>
+        {% endif %}
+        <span class="page-indicator">Page {{ page }} of {{ total_pages }}</span>
+        {% if page < total_pages %}
+        <a href="/card/{{ card['setCode'] }}/{{ card['number'] }}/similar?page={{ page + 1 }}{{ tuning_params if tuning_params else '' }}"
+           class="page next">Next →</a>
+        {% else %}
+        <span class="page next disabled">Next →</span>
+        {% endif %}
+    </div>
+    {% endif %}
+
+</div>
+{% endblock %}

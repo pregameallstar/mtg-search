@@ -1,0 +1,240 @@
+{% extends "base.html" %}
+{% block title %}{% if query %}{{ query }}{% else %}Card Search{% endif %} — MTG Search{% endblock %}
+{% block content %}
+<div class="search-page">
+
+<form action="/search" method="get" id="search-form" class="filter-form">
+
+    {# --- Cards section --- #}
+    <fieldset><legend>Cards</legend>
+        <div class="field-row">
+            <label>Name <input type="text" name="name" value="{{ name }}" placeholder="Card name contains…"></label>
+            <label>Oracle Text <input type="text" name="oracle" value="{{ oracle }}" placeholder="Rules text contains…"></label>
+        </div>
+        <div class="field-row">
+            <label>Type Line <input type="text" name="type_line" value="{{ type_line }}" placeholder="e.g. 'Legendary Creature — Elf'"></label>
+            <label>Mana Cost <input type="text" name="mana_cost" value="{{ mana_cost }}" placeholder="e.g. {1}{R}{G}"></label>
+            <label>Keywords <input type="text" name="keywords" value="{{ keywords }}" placeholder="e.g. Surveil, Menace"></label>
+        </div>
+    </fieldset>
+
+    {# --- Colors section --- #}
+    <fieldset><legend>Colors</legend>
+        <div class="field-row">
+            <label>Card Colors</label>
+            <div class="color-chips multi" data-target="color">
+                {% for c, name in [('W','White'),('U','Blue'),('B','Black'),('R','Red'),('G','Green')] %}
+                <label class="chip color-{{ c.lower() }} {% if c in color %}active{% endif %}">
+                    <input type="checkbox" value="{{ c }}" name="color_check" autocomplete="off"
+                           {% if c in color %}checked{% endif %} onchange="syncColorChips(this, 'color')">
+                    <span class="ms ms-{{ c.lower() }}"></span> {{ name }}
+                </label>
+                {% endfor %}
+            </div>
+            <input type="hidden" name="color" id="color" value="{{ color }}">
+            <select name="color_rule" class="rule-select">
+                <option value="at_least" {% if color_rule=='at_least' %}selected{% endif %}>at least these colors</option>
+                <option value="exact" {% if color_rule=='exact' %}selected{% endif %}>exactly these colors</option>
+                <option value="at_most" {% if color_rule=='at_most' %}selected{% endif %}>at most these colors</option>
+            </select>
+        </div>
+        <div class="field-row">
+            <label>Color Identity</label>
+            <div class="color-chips multi" data-target="ci">
+                {% for c, name in [('W','White'),('U','Blue'),('B','Black'),('R','Red'),('G','Green')] %}
+                <label class="chip color-{{ c.lower() }} {% if c in ci %}active{% endif %}">
+                    <input type="checkbox" value="{{ c }}" autocomplete="off"
+                           {% if c in ci %}checked{% endif %} onchange="syncColorChips(this, 'ci')">
+                    <span class="ms ms-{{ c.lower() }}"></span> {{ name }}
+                </label>
+                {% endfor %}
+            </div>
+            <input type="hidden" name="ci" id="ci" value="{{ ci }}">
+            <select name="ci_rule" class="rule-select">
+                <option value="at_least" {% if ci_rule=='at_least' %}selected{% endif %}>at least these</option>
+                <option value="exact" {% if ci_rule=='exact' %}selected{% endif %}>exactly these</option>
+                <option value="at_most" {% if ci_rule=='at_most' %}selected{% endif %}>at most these</option>
+            </select>
+        </div>
+    </fieldset>
+
+    {# --- Stats section --- #}
+    <fieldset><legend>Stats</legend>
+        {% macro stat_row(label, name, val, op_val) %}
+        <div class="field-row stats-row">
+            <label>{{ label }}</label>
+            <select name="{{ name }}_op">
+                {% for o,v in [('=','='),('<','<'),('>','>'),('<=','≤'),('>=','≥')] %}
+                <option value="{{ o }}" {% if op_val==o %}selected{% endif %}>{{ v }}</option>
+                {% endfor %}
+            </select>
+            <input type="text" name="{{ name }}" value="{{ val }}" placeholder="any" style="width:5em">
+        </div>
+        {% endmacro %}
+        {{ stat_row('Mana Value', 'mv', mv, mv_op) }}
+        {{ stat_row('Power', 'pow', pow_val, pow_op) }}
+        {{ stat_row('Toughness', 'tou', tou_val, tou_op) }}
+        {{ stat_row('Loyalty', 'loy', loy_val, loy_op) }}
+    </fieldset>
+
+    {# --- Rarity & Set --- #}
+    <fieldset><legend>Rarity &amp; Set</legend>
+        <div class="field-row">
+            <label>Rarity</label>
+            <div class="chip-row">
+                {% for r in ['common','uncommon','rare','mythic','special','bonus'] %}
+                <label class="chip {% if r in rarities %}active{% endif %}">
+                    <input type="checkbox" name="rarity" value="{{ r }}" {% if r in rarities %}checked{% endif %}>
+                    {{ r | capitalize }}
+                </label>
+                {% endfor %}
+            </div>
+        </div>
+        <div class="field-row">
+            <label>Set <input type="text" name="set" value="{{ set_code }}" placeholder="Set code e.g. STA, MOM"></label>
+        </div>
+    </fieldset>
+
+    {# --- Legality --- #}
+    <fieldset><legend>Legality</legend>
+        <div class="field-row">
+            <select name="format">
+                <option value="">Any format</option>
+                {% for f in ['standard','modern','legacy','vintage','pioneer','pauper','commander','brawl','historic','oathbreaker','penny','duel','alchemy','gladiator','oldschool','premodern','predh','paupercommander','timeless','standardbrawl'] %}
+                <option value="{{ f }}" {% if fmt==f %}selected{% endif %}>{{ f | capitalize }}</option>
+                {% endfor %}
+            </select>
+            <select name="legality">
+                <option value="legal" {% if legality=='legal' %}selected{% endif %}>Legal</option>
+                <option value="banned" {% if legality=='banned' %}selected{% endif %}>Banned</option>
+                <option value="restricted" {% if legality=='restricted' %}selected{% endif %}>Restricted</option>
+            </select>
+        </div>
+    </fieldset>
+
+    {# --- Options / Flags --- #}
+    <fieldset><legend>Options</legend>
+        <div class="chip-row">
+            <label class="chip"><input type="checkbox" name="is_reprint" value="1" {% if is_reprint %}checked{% endif %}> Is Reprint</label>
+            <label class="chip"><input type="checkbox" name="is_reserved" value="1" {% if is_reserved %}checked{% endif %}> Reserved List</label>
+            <label class="chip"><input type="checkbox" name="is_funny" value="1" {% if is_funny %}checked{% endif %}> Silver-bordered</label>
+            <label class="chip"><input type="checkbox" name="is_oversized" value="1" {% if is_oversized %}checked{% endif %}> Oversized</label>
+            <label class="chip"><input type="checkbox" name="is_fullart" value="1" {% if is_fullart %}checked{% endif %}> Full Art</label>
+            <label class="chip"><input type="checkbox" name="is_textless" value="1" {% if is_textless %}checked{% endif %}> Textless</label>
+            <label class="chip"><input type="checkbox" name="is_promo" value="1" {% if is_promo %}checked{% endif %}> Promo</label>
+        </div>
+        <div class="field-row" style="margin-top:0.75rem">
+            <label>Border <select name="border">
+                <option value="">Any</option>
+                <option value="black" {% if border=='black' %}selected{% endif %}>Black</option>
+                <option value="white" {% if border=='white' %}selected{% endif %}>White</option>
+                <option value="silver" {% if border=='silver' %}selected{% endif %}>Silver</option>
+                <option value="borderless" {% if border=='borderless' %}selected{% endif %}>Borderless</option>
+            </select></label>
+            <label>Layout <select name="layout">
+                <option value="">Any</option>
+                {% for l in ['normal','split','flip','transform','modal_dfc','meld','adventure','saga','battle','planar','scheme','vanguard','token','double_faced_token','emblem','augment','host','leveler','class','case','mutate','prototype'] %}
+                <option value="{{ l }}" {% if layout==l %}selected{% endif %}>{{ l | replace('_',' ') | title }}</option>
+                {% endfor %}
+            </select></label>
+            <label>Frame <select name="frame">
+                <option value="">Any</option>
+                {% for v in ['1993','1997','2003','2015','future'] %}
+                <option value="{{ v }}" {% if frame==v %}selected{% endif %}>{{ v }}</option>
+                {% endfor %}
+            </select></label>
+        </div>
+        <div class="field-row" style="margin-top:0.75rem">
+            <label>Display <select name="unique">
+                <option value="cards" {% if unique=='cards' %}selected{% endif %}>Unique Cards</option>
+                <option value="prints" {% if unique=='prints' %}selected{% endif %}>All Printings</option>
+            </select></label>
+        </div>
+    </fieldset>
+
+    <div class="advanced-actions">
+        <button type="submit">Search</button>
+        <a href="/search" class="btn-secondary">Reset All</a>
+    </div>
+</form>
+
+{# --- Active filter badges --- #}
+{% set badges = [] %}
+{% if query %}{{ badges.append('Text: ' + query) or '' }}{% endif %}
+{% if name %}{{ badges.append('Name: ' + name) or '' }}{% endif %}
+{% if oracle %}{{ badges.append('Oracle: ' + oracle) or '' }}{% endif %}
+{% if type_line %}{{ badges.append('Type: ' + type_line) or '' }}{% endif %}
+{% if mana_cost %}{{ badges.append('Cost: ' + mana_cost) or '' }}{% endif %}
+{% if keywords %}{{ badges.append('Keywords: ' + keywords) or '' }}{% endif %}
+{% if color %}{{ badges.append('Color: ' + color) or '' }}{% endif %}
+{% if ci %}{{ badges.append('CI: ' + ci) or '' }}{% endif %}
+{% if pow_val %}{{ badges.append('Power ' + pow_op + ' ' + pow_val) or '' }}{% endif %}
+{% if tou_val %}{{ badges.append('Toughness ' + tou_op + ' ' + tou_val) or '' }}{% endif %}
+{% if loy_val %}{{ badges.append('Loyalty ' + loy_op + ' ' + loy_val) or '' }}{% endif %}
+{% for r in rarities %}{{ badges.append('Rarity: ' + r) or '' }}{% endfor %}
+{% if fmt %}{{ badges.append('Format: ' + fmt) or '' }}{% endif %}
+{% if set_code %}{{ badges.append('Set: ' + set_code) or '' }}{% endif %}
+{% if is_reprint %}{{ badges.append('Reprint') or '' }}{% endif %}
+{% if is_reserved %}{{ badges.append('Reserved List') or '' }}{% endif %}
+{% if is_funny %}{{ badges.append('Silver-bordered') or '' }}{% endif %}
+{% if border %}{{ badges.append('Border: ' + border) or '' }}{% endif %}
+{% if layout %}{{ badges.append('Layout: ' + layout) or '' }}{% endif %}
+{% if badges %}
+<div class="active-filters">
+    {% for b in badges %}<span class="filter-badge">{{ b }}</span>{% endfor %}
+    <a href="#" class="filter-badge clear" onclick="clearResults(); return false;">Clear all</a>
+</div>
+{% endif %}
+
+<p class="result-count">{{ total }} {{ 'card' if unique=='cards' else 'printing' }}{{ 's' if total != 1 else '' }} found</p>
+
+<div class="card-grid">
+    {% for c in results %}
+    <a href="/card/{{ c['setCode'] }}/{{ c['number'] }}" class="card-cell" data-set-code="{{ c['setCode'] }}" data-number="{{ c['number'] }}">
+        {% set img = card_image(c['scryfallId']) %}
+        {% if img %}
+        <img src="{{ img }}" alt="{{ c['name'] }}" loading="lazy" width="244" height="340">
+        {% else %}
+        <div class="card-placeholder">{{ c['name'] }}</div>
+        {% endif %}
+    </a>
+    {% endfor %}
+</div>
+
+{% if total_pages > 1 %}
+<div class="pagination">
+    {% if page > 1 %}
+    <a href="{{ pagination_url(request.args, page - 1) }}" class="page prev">← Previous</a>
+    {% else %}
+    <span class="page prev disabled">← Previous</span>
+    {% endif %}
+    <span class="page-indicator">Page {{ page }} of {{ total_pages }}</span>
+    {% if page < total_pages %}
+    <a href="{{ pagination_url(request.args, page + 1) }}" class="page next">Next →</a>
+    {% else %}
+    <span class="page next disabled">Next →</span>
+    {% endif %}
+</div>
+{% endif %}
+
+</div>
+
+<script>
+function syncColorChips(el, field) {
+    var chips = el.closest('.color-chips');
+    var vals = [];
+    chips.querySelectorAll('input[type=checkbox]:checked').forEach(function(cb) {
+        vals.push(cb.value);
+    });
+    document.getElementById(field).value = vals.join('');
+}
+function clearResults() {
+    // Keep all filter form fields as-is, just remove results, badges, and count
+    var el;
+    el = document.querySelector('.card-grid'); if (el) el.innerHTML = '';
+    el = document.querySelector('.active-filters'); if (el) el.remove();
+    el = document.querySelector('.pagination'); if (el) el.remove();
+    el = document.querySelector('.result-count'); if (el) el.textContent = '';
+}
+</script>
+{% endblock %}
