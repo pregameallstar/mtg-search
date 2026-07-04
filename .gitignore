@@ -24,3 +24,11 @@ __pycache__/
 
 # Environment
 .env
+
+# AI Agent Files
+IMPROVEMENTS.md
+.secret_key
+.last_ingest.json
+
+# Saved eval reports
+eval_reports/*.json
