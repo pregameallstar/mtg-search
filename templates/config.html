@@ -1,0 +1,332 @@
+{% extends "base.html" %}
+{% block title %}Configuration{% endblock %}
+{% block content %}
+<div class="similar-page">
+
+    <h1>Configuration</h1>
+
+    <div class="eval-disclaimer">
+        <strong>⚡ LLM Configuration</strong>
+        Commander Eval uses a large language model (LLM) to generate card analysis and recommendations.
+        Bring your own API key — nothing is logged or stored server-side
+        (your key is held only in your browser's session cookie).
+    </div>
+
+    <div class="eval-config">
+        <h2 class="eval-config-heading">LLM Connection</h2>
+        <form method="post" class="eval-config-form">
+            <div class="eval-config-row">
+                <label for="llm_backend">Backend</label>
+                <select name="llm_backend" id="llm_backend">
+                    <option value="openai" {% if llm_backend == 'openai' %}selected{% endif %}>OpenAI / Compatible</option>
+                    <option value="anthropic" {% if llm_backend == 'anthropic' %}selected{% endif %}>Anthropic</option>
+                </select>
+            </div>
+            <div class="eval-config-row">
+                <label for="llm_base_url">Base URL</label>
+                <div style="display:flex; gap:0.5rem; align-items:center; max-width:400px;">
+                    <input type="text" name="llm_base_url" id="llm_base_url"
+                           value="{{ llm_base_url }}"
+                           placeholder="https://api.openai.com/v1"
+                           style="flex:1;">
+                    <button type="button" id="test-connection" class="eval-test-btn">Test Connection</button>
+                </div>
+                <span class="eval-config-hint" id="test-result"></span>
+            </div>
+            <div class="eval-config-row">
+                <label for="llm_model">Model</label>
+                <select name="llm_model" id="llm_model">
+                    <option value="">—</option>
+                </select>
+                <span class="eval-config-hint">Click "Test Connection" to populate available models.</span>
+            </div>
+            <div class="eval-config-row">
+                <label for="llm_api_key">API Key</label>
+                <input type="password" name="llm_api_key" id="llm_api_key"
+                       placeholder="{% if llm_has_key %}•••• (configured){% else %}sk-...{% endif %}">
+                <span class="eval-config-hint">
+                    {% if llm_has_key %}
+                    Key is set. Submit blank to clear it.
+                    {% else %}
+                    Stored in your session cookie only. Never logged.
+                    {% endif %}
+                </span>
+            </div>
+            <button type="submit" class="eval-config-save">Save Configuration</button>
+        </form>
+    </div>
+
+    <div class="eval-config" style="margin-top: 1.5rem;">
+        <h2 class="eval-config-heading">Database</h2>
+        <div style="padding: 1rem;">
+            {% if last_ingest %}
+            <p class="db-status">
+                <strong>Current database:</strong> {{ db_card_count or '?' }} distinct English cards.
+                Last updated <time datetime="{{ last_ingest.timestamp }}">{{ last_ingest.timestamp }}</time>
+                from <em>{{ last_ingest.filename }}</em>.
+            </p>
+            {% else %}
+            <p class="db-status" style="color: var(--text-dim);">
+                No database ingest recorded. Using default <code>AllPrintings.sqlite</code>.
+            </p>
+            {% endif %}
+
+            <div class="drop-zone" id="db-drop-zone" style="margin-top: 0.75rem;">
+                <span class="drop-label">Drop a database file here</span>
+                <span class="drop-hint">.sqlite, .gz, .bz2, .xz, or .zip</span>
+                <div id="db-drop-loading" class="drop-loading" hidden></div>
+            </div>
+
+            <div style="display: flex; gap: 0.5rem; align-items: center; margin-top: 0.75rem; flex-wrap: wrap;">
+                <input type="file" id="db-file-input" accept=".sqlite,.zip,.gz,.bz2,.xz" style="display:none;">
+                <button type="button" id="db-upload-btn" class="eval-test-btn">Choose File</button>
+                <span id="db-filename" style="font-size: 0.82rem; color: var(--text-dim);">No file selected</span>
+            </div>
+
+            <div style="margin-top: 0.75rem;">
+                <button type="button" id="db-ingest-btn" class="eval-config-save" style="margin-left: 0;" disabled>Ingest Database</button>
+                <span class="eval-config-hint">Replaces the current card database with the selected file.</span>
+            </div>
+
+            <div id="db-result" style="margin-top: 0.75rem; font-size: 0.82rem;"></div>
+        </div>
+    </div>
+
+    <script>
+    (function() {
+        var zone = document.getElementById('db-drop-zone');
+        var fileInput = document.getElementById('db-file-input');
+        var uploadBtn = document.getElementById('db-upload-btn');
+        var filenameEl = document.getElementById('db-filename');
+        var ingestBtn = document.getElementById('db-ingest-btn');
+        var loadingEl = document.getElementById('db-drop-loading');
+        var resultEl = document.getElementById('db-result');
+
+        var selectedFile = null;
+
+        function setFile(file) {
+            selectedFile = file;
+            filenameEl.textContent = file.name;
+            ingestBtn.disabled = false;
+        }
+
+        function showResult(msg, ok) {
+            resultEl.textContent = msg;
+            resultEl.style.whiteSpace = 'pre-wrap';
+            resultEl.style.color = ok ? '#3fb950' : '#f85149';
+        }
+
+        // File input via button
+        uploadBtn.addEventListener('click', function() { fileInput.click(); });
+        fileInput.addEventListener('change', function() {
+            if (fileInput.files.length) setFile(fileInput.files[0]);
+        });
+
+        // Drop zone
+        ['dragenter','dragover'].forEach(function(evt) {
+            zone.addEventListener(evt, function(e) {
+                e.preventDefault();
+                zone.classList.add('drop-active');
+            });
+        });
+        zone.addEventListener('dragleave', function() {
+            zone.classList.remove('drop-active');
+        });
+        zone.addEventListener('drop', function(e) {
+            e.preventDefault();
+            zone.classList.remove('drop-active');
+            if (e.dataTransfer.files.length) setFile(e.dataTransfer.files[0]);
+        });
+
+        // Ingest
+        ingestBtn.addEventListener('click', function() {
+            if (!selectedFile) return;
+            ingestBtn.disabled = true;
+            ingestBtn.textContent = 'Ingesting…';
+            loadingEl.hidden = false;
+            resultEl.textContent = '';
+
+            var formData = new FormData();
+            formData.append('database', selectedFile);
+
+            fetch('/config/ingest', { method: 'POST', body: formData })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    loadingEl.hidden = true;
+                    ingestBtn.textContent = 'Ingest Database';
+                    ingestBtn.disabled = false;
+                    if (data.error) {
+                        var msg = 'Error: ' + data.error;
+                        if (data.traceback) {
+                            msg += '\n\n' + data.traceback;
+                        }
+                        showResult(msg, false);
+                    } else {
+                        showResult('✓ Ingested ' + data.cards.toLocaleString() + ' cards at ' + data.timestamp, true);
+                        // Reload after short delay so user sees the success message
+                        setTimeout(function() { location.reload(); }, 2000);
+                    }
+                })
+                .catch(function(err) {
+                    loadingEl.hidden = true;
+                    ingestBtn.textContent = 'Ingest Database';
+                    ingestBtn.disabled = false;
+                    showResult('Network error: ' + err.message, false);
+                });
+        });
+    })();
+    </script>
+
+    <div class="eval-config" style="margin-top: 1.5rem;">
+        <h2 class="eval-config-heading">Commander Eval Prompt</h2>
+        <div style="padding: 1rem;">
+            <textarea name="eval_prompt" form="prompt-form" class="prompt-editor eval-prompt-area"
+                      placeholder="Enter system prompt for Commander Eval analysis…">{{ eval_prompt or default_prompt }}</textarea>
+            <form method="post" id="prompt-form" style="margin-top: 0.75rem;">
+                <input type="hidden" name="save_prompt" value="1">
+                {# pass through existing config fields so Save doesn't wipe them #}
+                <input type="hidden" name="llm_backend" value="{{ llm_backend }}">
+                <input type="hidden" name="llm_base_url" value="{{ llm_base_url }}">
+                <input type="hidden" name="llm_model" value="{{ llm_model }}">
+                <div style="display:flex; gap:0.5rem;">
+                    <button type="submit" class="eval-config-save" style="margin-left:0;">Save Prompt</button>
+                    <button type="button" id="reset-prompt" class="eval-test-btn">Reset to Default</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="eval-config" style="margin-top: 1.5rem;">
+        <h2 class="eval-config-heading">Expand Strategy Prompt</h2>
+        <div style="padding: 1rem;">
+            <textarea name="expand_prompt" form="expand-prompt-form" class="prompt-editor expand-prompt-area"
+                      placeholder="Enter system prompt for Strategy/Unique Build expansion…">{{ expand_prompt or default_expand_prompt }}</textarea>
+            <form method="post" id="expand-prompt-form" style="margin-top: 0.75rem;">
+                <input type="hidden" name="save_expand_prompt" value="1">
+                {# pass through existing config fields so Save doesn't wipe them #}
+                <input type="hidden" name="llm_backend" value="{{ llm_backend }}">
+                <input type="hidden" name="llm_base_url" value="{{ llm_base_url }}">
+                <input type="hidden" name="llm_model" value="{{ llm_model }}">
+                <div style="display:flex; gap:0.5rem;">
+                    <button type="submit" class="eval-config-save" style="margin-left:0;">Save Prompt</button>
+                    <button type="button" id="reset-expand-prompt" class="eval-test-btn">Reset to Default</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+</div>
+
+<script>
+document.getElementById('reset-prompt').addEventListener('click', function() {
+    document.querySelector('.eval-prompt-area').value = {{ default_prompt | tojson | safe }};
+});
+document.getElementById('reset-expand-prompt').addEventListener('click', function() {
+    document.querySelector('.expand-prompt-area').value = {{ default_expand_prompt | tojson | safe }};
+});
+</script>
+
+<script>
+(function() {
+    var backend = document.getElementById('llm_backend');
+    var baseUrl = document.getElementById('llm_base_url');
+    var modelSelect = document.getElementById('llm_model');
+    var testBtn = document.getElementById('test-connection');
+    var resultEl = document.getElementById('test-result');
+
+    var ANTHROPIC_MODELS = [
+        ['claude-sonnet-5', 'Claude Sonnet 5'],
+        ['claude-sonnet-4-20250514', 'Claude Sonnet 4'],
+        ['claude-opus-4-8', 'Claude Opus 4.8'],
+        ['claude-haiku-4-5-20251001', 'Claude Haiku 4.5'],
+        ['claude-fable-5', 'Claude Fable 5'],
+    ];
+
+    function populateSelect(models) {
+        modelSelect.innerHTML = '<option value="">—</option>';
+        models.forEach(function(m) {
+            var opt = document.createElement('option');
+            opt.value = m[0];
+            opt.textContent = m[1];
+            modelSelect.appendChild(opt);
+        });
+    }
+
+    function setResult(msg, ok) {
+        resultEl.textContent = msg;
+        resultEl.style.color = ok ? '#3fb950' : '#f85149';
+    }
+
+    // Populate saved model on page load
+    {% if llm_model %}
+    (function() {
+        var opt = document.createElement('option');
+        opt.value = '{{ llm_model }}';
+        opt.textContent = '{{ llm_model }}';
+        opt.selected = true;
+        modelSelect.innerHTML = '';
+        modelSelect.appendChild(opt);
+    })();
+    {% endif %}
+
+    // Backend change — reset model dropdown and clear result
+    backend.addEventListener('change', function() {
+        modelSelect.innerHTML = '<option value="">—</option>';
+        setResult('', true);
+        if (backend.value === 'anthropic') {
+            baseUrl.placeholder = 'Not used for Anthropic';
+        } else {
+            baseUrl.placeholder = 'https://api.openai.com/v1';
+        }
+    });
+
+    // Test Connection button
+    testBtn.addEventListener('click', function() {
+        var bv = backend.value;
+
+        if (bv === 'anthropic') {
+            populateSelect(ANTHROPIC_MODELS);
+            setResult('Anthropic models loaded.', true);
+            return;
+        }
+
+        var url = baseUrl.value.trim();
+        if (!url) {
+            setResult('Enter a Base URL first.', false);
+            return;
+        }
+
+        testBtn.textContent = 'Testing…';
+        testBtn.disabled = true;
+        setResult('Testing…', true);
+
+        fetch('/llm-models?backend=' + encodeURIComponent(bv) +
+              '&base_url=' + encodeURIComponent(url))
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                testBtn.textContent = 'Test Connection';
+                testBtn.disabled = false;
+                if (data.error) {
+                    setResult('Connection failed: ' + data.error, false);
+                    return;
+                }
+                if (!data.models || data.models.length === 0) {
+                    setResult('Connected, but no models returned.', false);
+                    return;
+                }
+                var models = data.models.map(function(m) {
+                    return [m.id, m.name || m.id];
+                });
+                populateSelect(models);
+                setResult('Connected! ' + models.length + ' model' +
+                          (models.length !== 1 ? 's' : '') + ' found.', true);
+            })
+            .catch(function(err) {
+                testBtn.textContent = 'Test Connection';
+                testBtn.disabled = false;
+                setResult('Connection failed: ' + err.message, false);
+            });
+    });
+})();
+</script>
+{% endblock %}

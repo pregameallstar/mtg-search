@@ -1,5 +1,5 @@
 <div class="card-panel-body">
-    <button class="panel-close" onclick="closePanel()" title="Close">✕</button>
+    <button class="panel-close" onclick="closePanel({target: document.getElementById('card-panel')})" title="Close">✕</button>
 
     <div class="card-images">
         {% set img = card_image(card['scryfallId'], size='large') %}
@@ -21,16 +21,11 @@
             <span class="mana-cost-lg">{{ render_mana(card['manaCost']) | safe }}</span>
         </div>
 
-        <div class="card-actions">
-            <a href="/card/{{ card['setCode'] }}/{{ card['number'] }}/similar" class="btn-find-similar">
-                Find Similar Cards
-            </a>
-        </div>
 
         <p class="card-type-line">{{ card['type'] }}</p>
 
         {% if card['text'] %}
-        <div class="oracle-text">{{ card['text'] | replace('\n', '<br>') | safe }}</div>
+        <div class="oracle-text">{{ card['text'] | e | replace('\n', '<br>') | safe }}</div>
         {% endif %}
 
         {% if card['flavorText'] %}
@@ -60,7 +55,7 @@
             <ul>
                 {% for p in printings %}
                 <li>
-                    <a href="/set/{{ p['code'] }}">{{ p['name'] }}</a>
+                    <span>{{ p['name'] }}</span>
                     {% if p['releaseDate'] %}<span class="date">({{ p['releaseDate'] }})</span>{% endif %}
                 </li>
                 {% endfor %}

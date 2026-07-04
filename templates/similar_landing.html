@@ -1,0 +1,250 @@
+{% extends "base.html" %}
+{% block title %}Similar Cards — MTG Search{% endblock %}
+{% block content %}
+<div class="similar-page">
+
+    <div class="similar-base-header" style="justify-content: center;">
+        <div class="similar-base-info">
+            <h1>Find Similar Cards</h1>
+            <p class="card-type-line">Search by name, or drag and drop a card image.</p>
+        </div>
+    </div>
+
+    {# --- Card name search + Optional Factors (single form) --- #}
+    <form method="get" style="margin-top: 1.5rem;">
+        <input type="hidden" name="tuned" value="1">
+        <div class="base-card-switcher">
+            <input type="text" name="by_name" placeholder="Enter card name…" value="{{ by_name }}" style="flex:1;max-width:400px;" autofocus>
+            <button type="submit">Search</button>
+        </div>
+
+        {# --- Drag-and-drop zone --- #}
+        <div id="drop-zone" class="drop-zone" style="margin-top:0.75rem;">
+            <span class="drop-label">Drop a card image here</span>
+            <span class="drop-hint">Drag an image from Scryfall or your files</span>
+            <div id="drop-loading" class="drop-loading" hidden>Looking up card…</div>
+        </div>
+
+        {# --- Tuning panel --- #}
+        <div class="tuning-panel" style="margin-top: 1.5rem;">
+            <fieldset>
+                <legend>Optional Factors</legend>
+                <details class="tuning-help">
+                    <summary>How this works</summary>
+                    <p><strong>Oracle text</strong> is always scored using <strong>IDF-weighted</strong> overlap — rare terms like "storm" count more than common terms.</p>
+                    <p><strong>Strictness</strong> controls how picky each factor is. <strong>Strict</strong> means "cards must be very close to match" — a mana cost off by 2 gets almost no credit. <strong>Loose</strong> means "roughly similar is good enough" — being off by 2 still counts. Think of it like a focus knob, not a volume knob.</p>
+                    <p><strong>MTG filter</strong> removes ubiquitous terms (<em>creature, target, player, graveyard, battlefield…</em>) from oracle text matching. Two removal spells won't score higher just because they both say "target creature."</p>
+                </details>
+                <div class="filter-option">
+                    <label class="factor-toggle">
+                        <input type="checkbox" name="mtg_filter" value="1"
+                               {% if request.args.get('mtg_filter') == '1' %}checked{% endif %}>
+                        MTG Filter (strip common terms)
+                    </label>
+                </div>
+
+                {# --- Factor rows: checkbox + strictness dropdown --- #}
+                {% macro factor_row(label, use_key, strict_key) %}
+                <label class="factor-toggle">
+                    <input type="checkbox" name="{{ use_key }}" value="1"
+                           class="factor-checkbox"
+                           {% if request.args.get(use_key) == '1' %}checked{% endif %}>
+                    {{ label }}
+                </label>
+                <select name="{{ strict_key }}" class="strictness-select" title="How closely cards must match on {{ label }}">
+                    {% for val, lbl in (('strict','Strict'), ('moderate','Moderate'), ('loose','Loose')) %}
+                    <option value="{{ val }}"
+                        {% if request.args.get(strict_key, 'strict') == val %}selected{% endif %}>
+                        {{ lbl }}
+                    </option>
+                    {% endfor %}
+                </select>
+                {% endmacro %}
+
+                <div class="factor-rows">
+                    <button type="button" id="toggle-all-factors" class="toggle-all-btn">Disable All Filters</button>
+                </div>
+
+                <div class="factor-rows">
+                    {{ factor_row('Types', 'use_types', 's_types') }}
+                    {{ factor_row('Supertypes', 'use_supertypes', 's_supertypes') }}
+                    {{ factor_row('Subtypes', 'use_subtypes', 's_subtypes') }}
+                    {{ factor_row('Keywords', 'use_keywords', 's_keywords') }}
+                    {{ factor_row('Mana Value', 'use_mv', 's_mv') }}
+                    {{ factor_row('Color Identity', 'use_color', 's_color') }}
+                </div>
+
+                {# --- Top N --- #}
+                <div class="factor-rows">
+                    <label class="factor-toggle" style="border-color:transparent;cursor:default;">Top N</label>
+                    <select name="top_n" class="top-n-select">
+                        {% for n in (5, 10, 15, 20) %}
+                        <option value="{{ n }}" {% if request.args.get('top_n', '5') == n|string %}selected{% endif %}>{{ n }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                {# --- Score threshold filter --- #}
+                <div class="factor-rows">
+                    <label class="factor-toggle">
+                        <input type="checkbox" name="score_filter" value="1"
+                               {% if request.args.get('score_filter') == '1' %}checked{% endif %}>
+                        Score Filter
+                    </label>
+                    <select name="score_op" class="strictness-select">
+                        <option value="greater_than" {% if request.args.get('score_op', 'greater_than') == 'greater_than' %}selected{% endif %}>Greater than</option>
+                        <option value="less_than" {% if request.args.get('score_op') == 'less_than' %}selected{% endif %}>Less than</option>
+                    </select>
+                    <input type="number" name="score_value"
+                           value="{{ request.args.get('score_value', '75') }}"
+                           step="1" min="0" max="100"
+                           class="score-value-input"
+                           placeholder="75">%
+                </div>
+
+                {# --- Advanced Weights (collapsed by default) --- #}
+                <details class="advanced-weights" {% if request.args.get('use_weights') == '1' %}open{% endif %}>
+                    <summary>Advanced Weights</summary>
+                    <label class="weight-enable">
+                        <input type="checkbox" name="use_weights" value="1"
+                               {% if request.args.get('use_weights') == '1' %}checked{% endif %}>
+                        Enable custom weights
+                    </label>
+                    <p class="weights-hint">Weights change how much each factor contributes to the overall score. Strictness changes <em>how</em> a factor scores; weight changes <em>how much</em> that score matters. Leave at 1 for equal importance.</p>
+                    {% macro weight_row(label, key) %}
+                    <label class="weight-row">
+                        <span>{{ label }}</span>
+                        <input type="number" name="{{ key }}"
+                               value="{{ request.args.get(key, '1') }}"
+                               step="0.1" min="0.1" max="10"
+                               style="width:4.5em">
+                    </label>
+                    {% endmacro %}
+                    <div class="weight-rows">
+                        {{ weight_row('Types', 'w_types') }}
+                        {{ weight_row('Supertypes', 'w_supertypes') }}
+                        {{ weight_row('Subtypes', 'w_subtypes') }}
+                        {{ weight_row('Keywords', 'w_keywords') }}
+                        {{ weight_row('Mana Value', 'w_mv') }}
+                        {{ weight_row('Color Identity', 'w_color') }}
+                    </div>
+                </details>
+            </fieldset>
+        </div>
+    </form>
+
+    {% if by_name_error %}
+    <div class="similar-error">Card "{{ by_name }}" not found. Check spelling and try again.</div>
+    {% endif %}
+
+    <div id="drop-error" class="similar-error" hidden></div>
+
+</div>
+
+<script>
+(function() {
+    const zone = document.getElementById('drop-zone');
+    const loading = document.getElementById('drop-loading');
+    const errorEl = document.getElementById('drop-error');
+
+    function showError(msg) {
+        errorEl.textContent = msg;
+        errorEl.hidden = false;
+        setTimeout(function() { errorEl.hidden = true; }, 5000);
+    }
+
+    function extractScryfallId(str) {
+        // Match scryfallId UUID in URL or filename
+        var m = str.match(/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i);
+        return m ? m[1] : null;
+    }
+
+    function lookupCard(scryfallId) {
+        loading.hidden = false;
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', window.location.href, true);
+        xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+        xhr.onload = function() {
+            loading.hidden = true;
+            if (xhr.status === 200) {
+                var resp = JSON.parse(xhr.responseText);
+                if (resp.redirect) {
+                    window.location.href = resp.redirect;
+                } else {
+                    showError(resp.error || 'Card not found.');
+                }
+            } else {
+                showError('Something went wrong. Try searching by name instead.');
+            }
+        };
+        xhr.onerror = function() {
+            loading.hidden = true;
+            showError('Network error. Try again.');
+        };
+        xhr.send('scryfall_id=' + encodeURIComponent(scryfallId));
+    }
+
+    function handleDrop(e) {
+        e.preventDefault();
+        zone.classList.remove('drop-active');
+        var scryfallId = null;
+
+        // 1. URL drop (dragged from a web page like Scryfall)
+        var uriList = e.dataTransfer.getData('text/uri-list');
+        if (uriList) {
+            scryfallId = extractScryfallId(uriList);
+        }
+
+        // 2. HTML drop (Scryfall images embedded in <a href>)
+        if (!scryfallId) {
+            var html = e.dataTransfer.getData('text/html');
+            if (html) {
+                scryfallId = extractScryfallId(html);
+            }
+        }
+
+        // 3. File drop (downloaded card image — UUID in filename)
+        if (!scryfallId && e.dataTransfer.files.length > 0) {
+            var name = e.dataTransfer.files[0].name;
+            scryfallId = extractScryfallId(name);
+        }
+
+        if (scryfallId) {
+            lookupCard(scryfallId);
+        } else {
+            showError('Could not identify a Magic card from that image. Try searching by name.');
+        }
+    }
+
+    ['dragenter','dragover'].forEach(function(evt) {
+        zone.addEventListener(evt, function(e) {
+            e.preventDefault();
+            zone.classList.add('drop-active');
+        });
+    });
+
+    zone.addEventListener('dragleave', function(e) {
+        zone.classList.remove('drop-active');
+    });
+
+    zone.addEventListener('drop', handleDrop);
+
+    // Toggle all factors button
+    var btn = document.getElementById('toggle-all-factors');
+    var boxes = document.querySelectorAll('.factor-checkbox');
+    btn.addEventListener('click', function() {
+        var anyChecked = document.querySelectorAll('.factor-checkbox:checked').length > 0;
+        for (var i = 0; i < boxes.length; i++) {
+            boxes[i].checked = !anyChecked;
+        }
+        btn.textContent = anyChecked ? 'Enable All Filters' : 'Disable All Filters';
+    });
+    for (var i = 0; i < boxes.length; i++) {
+        boxes[i].addEventListener('change', function() {
+            var allOn = document.querySelectorAll('.factor-checkbox:checked').length === boxes.length;
+            btn.textContent = allOn ? 'Disable All Filters' : 'Enable All Filters';
+        });
+    }
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,3 @@
+# ponytail: limiter disabled for local-only use
+[botdetection.ip_limit]
+link_token = false

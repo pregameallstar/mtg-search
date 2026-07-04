@@ -14,11 +14,12 @@
     <div class="app-layout">
         <aside class="sidebar">
             <ul class="sidebar-nav">
-                <li><a href="/">Home</a></li>
                 <li><a href="/search">Search</a></li>
-                <li><a href="/sets">Sets</a></li>
                 <li class="sidebar-section-label">Tools</li>
-                <li><a href="/search">Similarity</a></li>
+                <li><a href="/cards/PDFT/similar">Similarity</a></li>
+                <li><a href="/commander-eval">Commander Eval</a></li>
+                <li class="sidebar-section-label">Settings</li>
+                <li><a href="/config">⚙ Configuration</a></li>
             </ul>
         </aside>
         <main>
@@ -64,13 +65,14 @@
         if (e.key === 'Escape') { closePanel({target: document.getElementById('card-panel')}); }
     });
 
-    // ponytail: delegate click on any .card-cell to open panel
+    // ponytail: delegate click on .card-cell to open panel
     document.addEventListener('click', function(e) {
         var cell = e.target.closest('.card-cell');
         if (!cell) return;
         e.preventDefault();
         openPanel(cell.dataset.setCode, cell.dataset.number);
     });
+
     </script>
 </body>
 </html>

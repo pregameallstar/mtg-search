@@ -5,7 +5,7 @@
 
     {# --- Base card header --- #}
     <div class="similar-base-header">
-        {% set img = card_image(card['scryfallId'], size='small') %}
+        {% set img = card_image(card['scryfallId'], size='normal') %}
         {% if img %}
         <img src="{{ img }}" alt="{{ card['name'] }}">
         {% endif %}
@@ -13,24 +13,39 @@
             <h1>{{ card['faceName'] or card['name'] }}</h1>
             <span class="mana-cost-lg">{{ render_mana(card['manaCost']) | safe }}</span>
             <p class="card-type-line">{{ card['type'] }}</p>
-            {% if not card['text'] %}
+
+            {% if card['text'] %}
+            <div class="oracle-text">{{ card['text'] | e | replace('\n', '<br>') | safe }}</div>
+            {% else %}
             <p class="similar-hint">This card has no oracle text. Enable optional factors below to find similar cards by other attributes.</p>
             {% endif %}
+
+            {% if card['flavorText'] %}
+            <div class="flavor-text"><em>{{ card['flavorText'] }}</em></div>
+            {% endif %}
+
+            <div class="card-stats">
+                {% if card['power'] and card['toughness'] %}
+                <span class="stat"><strong>{{ card['power'] }}/{{ card['toughness'] }}</strong></span>
+                {% endif %}
+                {% if card['loyalty'] %}
+                <span class="stat"><strong>{{ card['loyalty'] }}</strong> Loyalty</span>
+                {% endif %}
+            </div>
+
+            <div class="card-meta-info">
+                <p><strong>Set:</strong> {{ card['setName'] }} ({{ card['setCode'] }}) — #{{ card['number'] }}</p>
+                <p><strong>Rarity:</strong> <span class="rarity rarity-{{ card['rarity'] }}">{{ card['rarity'] | capitalize }}</span></p>
+                {% if card['artist'] %}<p><strong>Artist:</strong> {{ card['artist'] }}</p>{% endif %}
+                <p><strong>Mana Value:</strong> {{ card['manaValue'] }}</p>
+                {% if card['colorIdentity'] %}<p><strong>Color Identity:</strong> {{ card['colorIdentity'] }}</p>{% endif %}
+            </div>
         </div>
     </div>
 
-    {# --- Change base card --- #}
-    <form class="base-card-switcher" method="get">
-        {% for k in ('use_types','use_keywords','use_subtypes','use_supertypes','use_mv','use_color') if request.args.get(k) %}
-        <input type="hidden" name="{{ k }}" value="1">
-        {% endfor %}
-        {% for k in ('w_types','w_keywords','w_subtypes','w_supertypes','w_mv','w_color') if request.args.get(k) %}
-        <input type="hidden" name="{{ k }}" value="{{ request.args.get(k) }}">
-        {% endfor %}
-        {% if mtg_filter %}<input type="hidden" name="mtg_filter" value="1">{% endif %}
-        <input type="text" name="by_name" placeholder="Change base card…" value="{{ by_name }}">
-        <button type="submit">Change Base</button>
-    </form>
+    <button class="btn-clear-base"
+            onclick="window.location.href='/cards/PDFT/similar?{{ tuning_params[1:] if tuning_params else '' }}'"
+            style="margin-bottom:1rem;">Clear Commander</button>
 
     {% if by_name_error %}
     <div class="similar-error">Card "{{ by_name }}" not found. Try a different name.</div>
@@ -39,13 +54,14 @@
     {# --- Tuning panel --- #}
     <form method="get" class="tuning-panel">
         <input type="hidden" name="by_name" value="">
-        <fieldset><legend>Optional Factors</legend>
+        <input type="hidden" name="tuned" value="1">
+        <fieldset>
+            <legend>Optional Factors</legend>
             <details class="tuning-help">
-                <summary>How weights work</summary>
-                <p><strong>Oracle text</strong> is always scored, using <strong>IDF-weighted</strong> overlap — rare terms like "storm" count more than common terms. The score is <strong>normalized</strong> so results are comparable regardless of how many factors are active.</p>
-                <p>Each optional factor (<em>Types, Keywords, Subtypes, Color Identity</em>) uses <strong>Jaccard similarity</strong> — shared terms divided by total terms. <em>Mana Value</em> uses proximity: closer MV = higher score.</p>
-                <p>The <strong>weight</strong> is a multiplier. A factor weighted <strong>2</strong> counts twice as much as one weighted <strong>1</strong>. Setting a weight to <strong>0.1</strong> makes it barely influence results. No single "right" setting — tune, update, and see what surfaces.</p>
-                <p><strong>MTG filter</strong> removes ubiquitous terms (<em>creature, target, player, graveyard, battlefield…</em>) from the oracle text match. Cards won't score higher just because they both mention "target creature". Try toggling this to see which mode gives better results for a given card.</p>
+                <summary>How this works</summary>
+                <p><strong>Oracle text</strong> is always scored using <strong>IDF-weighted</strong> overlap — rare terms like "storm" count more than common terms.</p>
+                <p><strong>Strictness</strong> controls how picky each factor is. <strong>Strict</strong> means "cards must be very close to match" — a mana cost off by 2 gets almost no credit. <strong>Loose</strong> means "roughly similar is good enough" — being off by 2 still counts. Think of it like a focus knob, not a volume knob.</p>
+                <p><strong>MTG filter</strong> removes ubiquitous terms (<em>creature, target, player, graveyard, battlefield…</em>) from oracle text matching. Two removal spells won't score higher just because they both say "target creature."</p>
             </details>
             <div class="filter-option">
                 <label class="factor-toggle">
@@ -54,33 +70,144 @@
                     MTG Filter (strip common terms)
                 </label>
             </div>
-            {% macro factor_row(label, use_key, weight_key) %}
+
+            {# --- Oracle text strictness (always on, no checkbox) --- #}
+            <div class="factor-rows">
+                <label class="factor-toggle" style="border-color:transparent;cursor:default;">Oracle Text</label>
+                <select name="s_oracle" class="strictness-select" title="How closely oracle text must match">
+                    {% for val, lbl in (('strict','Strict'), ('moderate','Moderate'), ('loose','Loose')) %}
+                    <option value="{{ val }}"
+                        {% if request.args.get('s_oracle', 'strict') == val %}selected{% endif %}>
+                        {{ lbl }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            {# --- Factor rows: checkbox + strictness dropdown --- #}
+            {% macro factor_row(label, use_key, strict_key) %}
             <label class="factor-toggle">
                 <input type="checkbox" name="{{ use_key }}" value="1"
-                       {% if request.args.get(use_key) %}checked{% endif %}>
+                       class="factor-checkbox"
+                       {% if factors.get(use_key) %}checked{% endif %}>
                 {{ label }}
             </label>
-            <label class="factor-weight" title="Weight multiplier (higher = more important)">
-                Weight <input type="number" name="{{ weight_key }}"
-                       value="{{ request.args.get(weight_key, '1') }}"
-                       step="0.1" min="0.1" max="10"
-                       style="width:4.5em">
-            </label>
+            <select name="{{ strict_key }}" class="strictness-select" title="How closely cards must match on {{ label }}">
+                {% for val, lbl in (('strict','Strict'), ('moderate','Moderate'), ('loose','Loose')) %}
+                <option value="{{ val }}"
+                    {% if request.args.get(strict_key, 'strict') == val %}selected{% endif %}>
+                    {{ lbl }}
+                </option>
+                {% endfor %}
+            </select>
             {% endmacro %}
+
             <div class="factor-rows">
-                {{ factor_row('Types', 'use_types', 'w_types') }}
-                {{ factor_row('Supertypes', 'use_supertypes', 'w_supertypes') }}
-                {{ factor_row('Subtypes', 'use_subtypes', 'w_subtypes') }}
-                {{ factor_row('Keywords', 'use_keywords', 'w_keywords') }}
-                {{ factor_row('Mana Value', 'use_mv', 'w_mv') }}
-                {{ factor_row('Color Identity', 'use_color', 'w_color') }}
+                <button type="button" id="toggle-all-factors" class="toggle-all-btn">Disable All Filters</button>
             </div>
+
+            <div class="factor-rows">
+                {{ factor_row('Types', 'use_types', 's_types') }}
+                {{ factor_row('Supertypes', 'use_supertypes', 's_supertypes') }}
+                {{ factor_row('Subtypes', 'use_subtypes', 's_subtypes') }}
+                {{ factor_row('Keywords', 'use_keywords', 's_keywords') }}
+                {{ factor_row('Mana Value', 'use_mv', 's_mv') }}
+                {{ factor_row('Color Identity', 'use_color', 's_color') }}
+            </div>
+
+            {# --- Top N --- #}
+            <div class="factor-rows">
+                <label class="factor-toggle" style="border-color:transparent;cursor:default;">Top N</label>
+                <select name="top_n" class="top-n-select">
+                    {% for n in (5, 10, 15, 20) %}
+                    <option value="{{ n }}" {% if top_n == n %}selected{% endif %}>{{ n }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            {# --- Score threshold filter --- #}
+            <div class="factor-rows">
+                <label class="factor-toggle">
+                    <input type="checkbox" name="score_filter" value="1"
+                           {% if score_filter %}checked{% endif %}>
+                    Score Filter
+                </label>
+                <select name="score_op" class="strictness-select">
+                    <option value="greater_than" {% if score_op == 'greater_than' %}selected{% endif %}>Greater than</option>
+                    <option value="less_than" {% if score_op == 'less_than' %}selected{% endif %}>Less than</option>
+                </select>
+                <input type="number" name="score_value"
+                       value="{{ request.args.get('score_value', '75') }}"
+                       step="1" min="0" max="100"
+                       class="score-value-input"
+                       placeholder="75">%
+            </div>
+
+            {# --- Advanced Weights (collapsed by default) --- #}
+            <details class="advanced-weights" {% if use_weights %}open{% endif %}>
+                <summary>Advanced Weights</summary>
+                <label class="weight-enable">
+                    <input type="checkbox" name="use_weights" value="1"
+                           {% if use_weights %}checked{% endif %}>
+                    Enable custom weights
+                </label>
+                <p class="weights-hint">Weights change how much each factor contributes to the overall score. Strictness changes <em>how</em> a factor scores; weight changes <em>how much</em> that score matters. Leave at 1 for equal importance.</p>
+                {% macro weight_row(label, key) %}
+                <label class="weight-row">
+                    <span>{{ label }}</span>
+                    <input type="number" name="{{ key }}"
+                           value="{{ request.args.get(key, '1') }}"
+                           step="0.1" min="0.1" max="10"
+                           style="width:4.5em">
+                </label>
+                {% endmacro %}
+                <div class="weight-rows">
+                    {{ weight_row('Types', 'w_types') }}
+                    {{ weight_row('Supertypes', 'w_supertypes') }}
+                    {{ weight_row('Subtypes', 'w_subtypes') }}
+                    {{ weight_row('Keywords', 'w_keywords') }}
+                    {{ weight_row('Mana Value', 'w_mv') }}
+                    {{ weight_row('Color Identity', 'w_color') }}
+                </div>
+            </details>
+
             <button type="submit" class="tuning-update">Update Results</button>
+            <a href="/card/{{ card['setCode'] }}/{{ card['number'] }}/similar?export=1{{ tuning_params if tuning_params else '' }}"
+               class="btn-export-top">Export Top {{ top_n }} as HTML</a>
         </fieldset>
     </form>
 
-    {# --- Results --- #}
-    <p class="result-count">{{ total }} similar card{{ 's' if total != 1 else '' }} found</p>
+    {# --- Top N results --- #}
+    {% if top_results %}
+    <h2 class="results-section-header">Top {{ top_n }}</h2>
+    <div class="card-grid">
+        {% for score, c in top_results %}
+        <div class="card-cell" data-set-code="{{ c['setCode'] }}" data-number="{{ c['number'] }}">
+            {% set img = card_image(c['scryfallId']) %}
+            {% if img %}
+            <img src="{{ img }}" alt="{{ c['name'] }}" loading="lazy" width="244" height="340">
+            {% else %}
+            <div class="card-placeholder">{{ c['name'] }}</div>
+            {% endif %}
+            <div class="cell-footer">
+                <div class="cell-name" title="{{ c['name'] }}">{{ c['name'] }}</div>
+                <div class="cell-actions">
+                    <span class="similarity-score">{{ "%.0f"|format(score * 100) }}%</span>
+                    <a href="/card/{{ c['setCode'] }}/{{ c['number'] }}/similar?{{ tuning_params[1:] if tuning_params else '' }}"
+                       class="btn-similar-base"
+                       onclick="event.stopPropagation();"
+                       title="Find cards similar to {{ c['name'] }}">&#x21c4;</a>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {# --- Remaining results --- #}
+    {% if total %}
+    <h2 class="results-section-header">All Results</h2>
+    <p class="result-count">{{ total }} more similar card{{ 's' if total != 1 else '' }} found</p>
 
     <div class="card-grid">
         {% for score, c in results %}
@@ -95,7 +222,7 @@
                 <div class="cell-name" title="{{ c['name'] }}">{{ c['name'] }}</div>
                 <div class="cell-actions">
                     <span class="similarity-score">{{ "%.0f"|format(score * 100) }}%</span>
-                    <a href="/card/{{ c['setCode'] }}/{{ c['number'] }}/similar{{ tuning_params if tuning_params else '' }}"
+                    <a href="/card/{{ c['setCode'] }}/{{ c['number'] }}/similar?{{ tuning_params[1:] if tuning_params else '' }}"
                        class="btn-similar-base"
                        onclick="event.stopPropagation();"
                        title="Find cards similar to {{ c['name'] }}">&#x21c4;</a>
@@ -122,6 +249,28 @@
         {% endif %}
     </div>
     {% endif %}
+    {% endif %}
 
 </div>
+
+<script>
+(function() {
+    var btn = document.getElementById('toggle-all-factors');
+    var boxes = document.querySelectorAll('.factor-checkbox');
+    btn.addEventListener('click', function() {
+        var anyChecked = document.querySelectorAll('.factor-checkbox:checked').length > 0;
+        for (var i = 0; i < boxes.length; i++) {
+            boxes[i].checked = !anyChecked;
+        }
+        btn.textContent = anyChecked ? 'Enable All Filters' : 'Disable All Filters';
+    });
+    // Keep button label in sync when toggling individual boxes
+    for (var i = 0; i < boxes.length; i++) {
+        boxes[i].addEventListener('change', function() {
+            var allOn = document.querySelectorAll('.factor-checkbox:checked').length === boxes.length;
+            btn.textContent = allOn ? 'Disable All Filters' : 'Enable All Filters';
+        });
+    }
+})();
+</script>
 {% endblock %}

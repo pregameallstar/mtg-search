@@ -1,0 +1,238 @@
+{% extends "base.html" %}
+{% block title %}Commander Eval — MTG Search{% endblock %}
+{% block content %}
+<div class="similar-page">
+
+    <div class="similar-base-header" style="justify-content: center;">
+        <div class="similar-base-info">
+            <h1>Commander Eval</h1>
+            <p class="card-type-line">Analyze a legendary creature as your Commander — strengths, weaknesses, and strategies.</p>
+        </div>
+    </div>
+
+    {# Card name search with autocomplete #}
+    <form class="base-card-switcher" method="get" style="margin-top: 1.5rem;" autocomplete="off">
+        <div style="position:relative; flex:1; max-width:400px;">
+            <input type="text" name="by_name" id="commander-search-input"
+                   placeholder="Enter commander name…" value="{{ by_name }}"
+                   style="width:100%; box-sizing:border-box;" autofocus>
+            <ul id="autocomplete-list" class="autocomplete-list" hidden></ul>
+        </div>
+        <button type="submit">Search</button>
+    </form>
+
+    {# Drag-and-drop zone #}
+    <div id="drop-zone" class="drop-zone">
+        <span class="drop-label">Drop a card image here</span>
+        <span class="drop-hint">Drag an image from Scryfall or your files</span>
+        <div id="drop-loading" class="drop-loading" hidden>Looking up card…</div>
+    </div>
+
+    {% if by_name_error %}
+    <div class="similar-error">Card "{{ by_name }}" not found. Check spelling and try again.</div>
+    {% endif %}
+
+    <div id="drop-error" class="similar-error" hidden></div>
+
+    {% if saved_reports %}
+    <div style="margin-top: 2rem;">
+        <h2 style="font-size:1.1rem; margin-bottom:0.75rem; color:var(--text-dim);">Saved Reports</h2>
+        <div class="eval-strategies">
+            {% for report in saved_reports %}
+            <a href="/card/{{ report.setCode }}/{{ report.number }}/eval?report={{ report.filename | urlencode }}"
+               class="eval-rec-card" style="text-decoration:none; color:var(--text);">
+                {% if report.scryfallId %}
+                <img src="{{ card_image(report.scryfallId) }}" alt="{{ report.name }}" loading="lazy"
+                     style="width:72px; aspect-ratio:271/378; object-fit:cover; border-radius:5px; flex-shrink:0;">
+                {% else %}
+                <div class="eval-rec-placeholder" style="width:72px;">No image</div>
+                {% endif %}
+                <div class="eval-rec-info">
+                    <div class="eval-rec-name">{{ report.name }}</div>
+                    <div class="eval-rec-reason" style="color:var(--text-dim);">
+                        {{ report.savedAt[:16] | replace('T', ' ') }}
+                    </div>
+                </div>
+                <span class="eval-rec-del" data-filename="{{ report.filename }}" title="Delete report">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f85149" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="3 6 5 6 21 6"></polyline>
+                        <path d="M19 6l-1 15a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>
+                        <path d="M10 11v6"></path><path d="M14 11v6"></path>
+                        <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path>
+                    </svg>
+                </span>
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+</div>
+
+<script>
+(function() {
+    // --- Autocomplete ---
+    var input = document.getElementById('commander-search-input');
+    var list = document.getElementById('autocomplete-list');
+    var timer = null;
+    var selectedIndex = -1;
+
+    function clearList() {
+        list.innerHTML = '';
+        list.hidden = true;
+        selectedIndex = -1;
+    }
+
+    function selectItem(item) {
+        input.value = item.dataset.name;
+        clearList();
+        // Navigate directly to the eval page
+        window.location.href = '/card/' + item.dataset.setCode + '/' + item.dataset.number + '/eval';
+    }
+
+    input.addEventListener('input', function() {
+        clearTimeout(timer);
+        var q = input.value.trim();
+        if (q.length < 2) { clearList(); return; }
+        timer = setTimeout(function() {
+            fetch('/card-autocomplete?q=' + encodeURIComponent(q))
+                .then(function(r) { return r.json(); })
+                .then(function(results) {
+                    list.innerHTML = '';
+                    if (!results || results.length === 0) { list.hidden = true; return; }
+                    results.forEach(function(card) {
+                        var li = document.createElement('li');
+                        li.textContent = card.name;
+                        li.dataset.name = card.name;
+                        li.dataset.setCode = card.setCode;
+                        li.dataset.number = card.number;
+                        li.addEventListener('mousedown', function(e) {
+                            e.preventDefault(); // prevent blur before click
+                            selectItem(li);
+                        });
+                        list.appendChild(li);
+                    });
+                    list.hidden = false;
+                    selectedIndex = -1;
+                });
+        }, 150);
+    });
+
+    input.addEventListener('keydown', function(e) {
+        var items = list.querySelectorAll('li');
+        if (!items.length || list.hidden) return;
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            selectedIndex = Math.min(selectedIndex + 1, items.length - 1);
+            items.forEach(function(li, i) { li.classList.toggle('active', i === selectedIndex); });
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            selectedIndex = Math.max(selectedIndex - 1, 0);
+            items.forEach(function(li, i) { li.classList.toggle('active', i === selectedIndex); });
+        } else if (e.key === 'Enter' && selectedIndex >= 0) {
+            e.preventDefault();
+            selectItem(items[selectedIndex]);
+        } else if (e.key === 'Escape') {
+            clearList();
+        }
+    });
+
+    input.addEventListener('blur', function() {
+        setTimeout(clearList, 150); // delay to allow click to register
+    });
+
+    // --- Drag-and-drop ---
+    const zone = document.getElementById('drop-zone');
+    const loading = document.getElementById('drop-loading');
+    const errorEl = document.getElementById('drop-error');
+
+    function showError(msg) {
+        errorEl.textContent = msg;
+        errorEl.hidden = false;
+        setTimeout(function() { errorEl.hidden = true; }, 5000);
+    }
+
+    function extractScryfallId(str) {
+        var m = str.match(/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i);
+        return m ? m[1] : null;
+    }
+
+    function lookupCard(scryfallId) {
+        loading.hidden = false;
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', window.location.href, true);
+        xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+        xhr.onload = function() {
+            loading.hidden = true;
+            if (xhr.status === 200) {
+                var resp = JSON.parse(xhr.responseText);
+                if (resp.redirect) {
+                    window.location.href = resp.redirect;
+                } else {
+                    showError(resp.error || 'Card not found.');
+                }
+            } else {
+                showError('Something went wrong. Try searching by name instead.');
+            }
+        };
+        xhr.onerror = function() {
+            loading.hidden = true;
+            showError('Network error. Try again.');
+        };
+        xhr.send('scryfall_id=' + encodeURIComponent(scryfallId));
+    }
+
+    function handleDrop(e) {
+        e.preventDefault();
+        zone.classList.remove('drop-active');
+        var scryfallId = null;
+        var uriList = e.dataTransfer.getData('text/uri-list');
+        if (uriList) { scryfallId = extractScryfallId(uriList); }
+        if (!scryfallId) {
+            var html = e.dataTransfer.getData('text/html');
+            if (html) { scryfallId = extractScryfallId(html); }
+        }
+        if (!scryfallId && e.dataTransfer.files.length > 0) {
+            scryfallId = extractScryfallId(e.dataTransfer.files[0].name);
+        }
+        if (scryfallId) {
+            lookupCard(scryfallId);
+        } else {
+            showError('Could not identify a Magic card from that image. Try searching by name.');
+        }
+    }
+
+    ['dragenter','dragover'].forEach(function(evt) {
+        zone.addEventListener(evt, function(e) {
+            e.preventDefault();
+            zone.classList.add('drop-active');
+        });
+    });
+
+    zone.addEventListener('dragleave', function(e) {
+        zone.classList.remove('drop-active');
+    });
+
+    zone.addEventListener('drop', handleDrop);
+
+    // Delete saved report
+    document.addEventListener('click', function(e) {
+        var del = e.target.closest('.eval-rec-del');
+        if (!del) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (!confirm('Delete this report?')) return;
+        var card = del.closest('.eval-rec-card');
+        fetch('/commander-eval/reports/delete', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({filename: del.dataset.filename})
+        })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.success && card) card.remove();
+            });
+    });
+})();
+</script>
+{% endblock %}

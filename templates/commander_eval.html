@@ -1,0 +1,849 @@
+{% extends "base.html" %}
+{% block title %}Commander Eval — {{ card['name'] }}{% endblock %}
+{% block content %}
+<div class="similar-page">
+
+    {# Commander card header #}
+    <div class="similar-base-header">
+        {% set img = card_image(card['scryfallId'], size='normal') %}
+        {% if img %}
+        <img src="{{ img }}" alt="{{ card['name'] }}">
+        {% endif %}
+        <div class="similar-base-info">
+            <h1>{{ card['faceName'] or card['name'] }}</h1>
+            <span class="mana-cost-lg">{{ render_mana(card['manaCost']) | safe }}</span>
+            <p class="card-type-line">{{ card['type'] }}</p>
+
+            {% if card['text'] %}
+            <div class="oracle-text">{{ card['text'] | e | replace('\n', '<br>') | safe }}</div>
+            {% endif %}
+
+            <div class="card-stats">
+                {% if card['power'] and card['toughness'] %}
+                <span class="stat"><strong>{{ card['power'] }}/{{ card['toughness'] }}</strong></span>
+                {% endif %}
+                {% if card['loyalty'] %}
+                <span class="stat"><strong>{{ card['loyalty'] }}</strong> Loyalty</span>
+                {% endif %}
+            </div>
+
+            <div class="card-meta-info">
+                <p><strong>Mana Value:</strong> {{ card['manaValue'] }}</p>
+                {% if card['colorIdentity'] %}<p><strong>Color Identity:</strong> {{ card['colorIdentity'] }}</p>{% endif %}
+                {% if card['edhrecRank'] %}
+                <p><strong>EDHREC Rank:</strong> #{{ card['edhrecRank'] }}
+                {% if card['edhrecSaltiness'] %} &middot; Salt: {{ "%.1f"|format(card['edhrecSaltiness']) }}{% endif %}
+                </p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div style="display:flex; gap:0.5rem; justify-content:center; margin-bottom: 1rem;">
+        <button type="button" id="clear-commander" class="eval-clear-btn">Clear</button>
+        {% if analysis %}
+        <button type="button" id="find-similar" class="eval-clear-btn" style="background:#1a3d1a; border-color:#2d5a2d;">Find Similar</button>
+        {% if not loaded_from %}
+        <button type="button" id="save-report" class="eval-clear-btn" style="background:#1a3d1a; border-color:#2d5a2d;">Save Report</button>
+        {% endif %}
+        <button type="button" id="export-report" class="eval-clear-btn" style="background:#1a3d1a; border-color:#2d5a2d;">Export</button>
+        {% endif %}
+    </div>
+
+    {# Search section — hidden when a commander is set #}
+    <div id="commander-search" class="eval-search-section" hidden>
+        <form id="search-form" method="get" autocomplete="off" style="display:flex; gap:0.5rem; justify-content:center;">
+            <div style="position:relative; flex:1; max-width:400px;">
+                <input type="text" id="search-name" name="by_name" placeholder="Enter commander name…"
+                       style="width:100%; box-sizing:border-box;">
+                <ul id="autocomplete-list" class="autocomplete-list" hidden></ul>
+            </div>
+            <button type="submit">Set</button>
+        </form>
+        <div id="drop-zone" class="drop-zone">
+            <span class="drop-label">Drop a card image here</span>
+            <span class="drop-hint">Drag an image from Scryfall or your files</span>
+            <div id="drop-loading" class="drop-loading" hidden>Looking up card…</div>
+        </div>
+        <div id="drop-error" class="similar-error" hidden></div>
+    </div>
+
+    {% if by_name_error %}
+    <div class="similar-error">Card "{{ by_name }}" not found. Try a different name.</div>
+    {% endif %}
+
+    {# Analyze button + loading indicator #}
+    <div style="display:flex; gap:0.5rem; align-items:center; margin: 1rem 0;" id="analyze-area">
+        {% if not analysis %}
+        <a href="?analyze=1" class="eval-analyze-btn" id="analyze-btn">Analyze</a>
+        {% endif %}
+        <div class="analyze-loading" id="analyze-loading" style="display:none; flex-direction:column; align-items:center; gap:0.75rem;">
+            <div style="display:flex; gap:0.5rem; align-items:center;">
+                <span class="spinner"></span>
+                <span id="loading-step-text">Initializing…</span>
+            </div>
+            <div style="font-size:0.85rem; color:var(--text-muted, #888); display:flex; gap:1.5rem;">
+                <span>Step <span id="loading-step-num">1</span> of <span id="loading-step-total">5</span></span>
+                <span>Elapsed: <span id="loading-elapsed">00:00</span></span>
+            </div>
+        </div>
+    </div>
+
+    {% if error %}
+    <div class="similar-error eval-error">
+        <p><strong>Analysis failed:</strong> {{ error }}</p>
+    </div>
+    {% endif %}
+
+    {% if analysis %}
+
+    {% if not is_commander %}
+    <div class="eval-notice">
+        ⚠ {{ card['name'] }} is not a legal Commander. Analysis shown for reference.
+    </div>
+    {% endif %}
+
+    {% set verification = analysis.get('_verification', {}) %}
+    {% if verification.get('warnings') %}
+    <div class="eval-notice verification-warnings">
+        <strong>🔍 Verification warnings (rules-check pass):</strong>
+        <ul style="margin: 0.5rem 0 0 1.25rem; padding: 0;">
+            {% for w in verification['warnings'] %}
+            <li style="margin-bottom: 0.25rem;">{{ w }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
+    {# Strengths & Weaknesses #}
+    <div class="eval-columns">
+        <div class="eval-column">
+            <h2>Strengths</h2>
+            <ul class="eval-list strengths">
+                {% for s in analysis.get('strengths', []) %}
+                <li>{{ s }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+        <div class="eval-column">
+            <h2>Weaknesses</h2>
+            <ul class="eval-list weaknesses">
+                {% for w in analysis.get('weaknesses', []) %}
+                <li>{{ w }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+
+    {# Strategies #}
+    {% if analysis.get('strategies') %}
+    <h2>Strategies</h2>
+    <div class="eval-strategies">
+        {% for strat in analysis['strategies'] %}
+        <div class="eval-strategy">
+            <h3>{{ strat.get('name', '') }}</h3>
+            <p>{{ strat.get('description', '') }}</p>
+            <button class="eval-test-btn btn-expand"
+                    style="background:#2a1a3d; border-color:#4a2d5a; color:#c9a0ff; margin-top:0.5rem;"
+                    data-name="{{ strat.get('name', '') | e }}"
+                    data-description="{{ strat.get('description', '') | e }}"
+                    data-type="strategy"
+                    {% set btn_key = 'strategy:' + strat.get('name', '') %}
+                    {% if saved_expands and saved_expands.get(btn_key) %}
+                    data-done="1"
+                    {% endif %}>{% if saved_expands and saved_expands.get(btn_key) %}&check; {% endif %}Deep Dive</button>
+            <div class="expand-result" hidden></div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {# Priorities #}
+    {% if analysis.get('priorities') %}
+    <h2>Deck-Building Priorities</h2>
+    <div class="eval-strategies">
+        {% for p in analysis['priorities'] %}
+        <div class="eval-strategy">
+            <h3>{{ loop.index }}. {{ p.get('category', '') }}</h3>
+            <p>{{ p.get('reason', '') }}</p>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {# Unique Builds #}
+    {% if analysis.get('unique_builds') %}
+    <h2>Unique Builds</h2>
+    <div class="eval-strategies">
+        {% for build in analysis['unique_builds'] %}
+        <div class="eval-strategy">
+            <h3>{{ build.get('name', '') }}</h3>
+            <p>{{ build.get('description', '') }}</p>
+            <button class="eval-test-btn btn-expand"
+                    style="background:#2a1a3d; border-color:#4a2d5a; color:#c9a0ff; margin-top:0.5rem;"
+                    data-name="{{ build.get('name', '') | e }}"
+                    data-description="{{ build.get('description', '') | e }}"
+                    data-type="unique_build"
+                    {% set btn_key = 'unique_build:' + build.get('name', '') %}
+                    {% if saved_expands and saved_expands.get(btn_key) %}
+                    data-done="1"
+                    {% endif %}>{% if saved_expands and saved_expands.get(btn_key) %}&check; {% endif %}Deep Dive</button>
+            <div class="expand-result" hidden></div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {# Kill-On-Sight #}
+    {% if analysis.get('kill_on_sight') %}
+    {% set kos = analysis['kill_on_sight'] %}
+    <h2>Kill-On-Sight</h2>
+    <div class="eval-strategies">
+        <div class="eval-strategy">
+            <div style="display:flex; gap:1.5rem; align-items:flex-start;">
+                <div style="text-align:center; min-width:80px;">
+                    <div style="font-size:2.5rem; font-weight:700; line-height:1.2;">{{ kos.get('score', '?') }}</div>
+                    <div style="font-size:0.75rem; color:var(--text-muted, #888);">/ 10</div>
+                </div>
+                <p style="flex:1; margin:0;">{{ kos.get('reasoning', '') }}</p>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {# Bracket Analysis #}
+    {% if analysis.get('brackets') %}
+    <h2>Bracket Analysis</h2>
+    <div class="eval-strategies">
+        {% for b in analysis['brackets'] %}
+        <div class="eval-strategy">
+            <h3>Bracket {{ b.get('bracket', '') }} — {{ b.get('label', '') }}: {{ b.get('effectiveness', '') }}</h3>
+            <p>{{ b.get('reasoning', '') }}</p>
+            {% if b.get('kos_score') is not none %}
+            <p style="margin-top:0.5rem; color:var(--accent);"><strong>Kill-On-Sight:</strong> {{ b['kos_score'] }}/10 — {{ b.get('kos_note', '') }}</p>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if isGameChanger %}
+    <div class="eval-notice" style="margin-top: 2rem;">
+        🚨 {{ card['name'] }} is a <strong>Game Changer</strong> — must be declared before the game in Commander bracket system.
+    </div>
+    {% endif %}
+
+    {% endif %}
+
+    {# Similar Commanders results — server-rendered from saved report, or populated by JS #}
+    {% set has_similar = similar and similar|length > 0 %}
+    <div id="similar-commanders" style="margin-top:2rem;" {% if not has_similar %}hidden{% endif %}>
+        <h2>Similar Commanders</h2>
+        <div class="card-grid" id="similar-grid">
+            {% if has_similar %}
+            {% for c in similar %}
+            <div class="card-cell" data-set-code="{{ c.setCode }}" data-number="{{ c.number }}">
+                {% set img = card_image(c.scryfallId) %}
+                {% if img %}
+                <img src="{{ img }}" alt="{{ c.name }}" loading="lazy" width="244" height="340">
+                {% else %}
+                <div class="card-placeholder">{{ c.name }}</div>
+                {% endif %}
+                <div class="cell-footer">
+                    <div class="cell-name" title="{{ c.name }}">{{ c.name }}</div>
+                    <div class="cell-actions"><span class="similarity-score">{{ c.score }}%</span></div>
+                </div>
+            </div>
+            {% endfor %}
+            {% endif %}
+        </div>
+    </div>
+</div>
+</div>
+
+{# Deep Dive side panel #}
+<div id="deep-dive-panel" class="card-panel-overlay" onclick="closeDeepDive(event)">
+    <div class="card-panel-sheet" id="deep-dive-panel-sheet">
+        <div class="panel-loading">Loading…</div>
+    </div>
+</div>
+
+<script>
+function closeDeepDive(e) {
+    if (e && e.target !== document.getElementById('deep-dive-panel')) return;
+    document.getElementById('deep-dive-panel').classList.remove('open');
+}
+window.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        var panel = document.getElementById('deep-dive-panel');
+        if (panel.classList.contains('open')) { panel.classList.remove('open'); }
+    }
+});
+</script>
+
+<script>
+    // --- Analyze button: AJAX pipeline with loading indicator ---
+    (function() {
+        var btn = document.getElementById('analyze-btn');
+        var loading = document.getElementById('analyze-loading');
+        if (btn) {
+            var analyzeUrl = window.location.pathname.replace(/\/$/, '') + '/analyze';
+
+            btn.addEventListener('click', function(e) {
+                e.preventDefault();
+                btn.style.display = 'none';
+                loading.style.display = 'flex';
+
+                var steps = [
+                    'Loading card data…',
+                    'Searching deck guides…',
+                    'Searching strategy discussions…',
+                    'Searching community reviews…',
+                    'Searching unique archetypes…',
+                    'Searching mechanic rules…',
+                    'Analyzing with LLM…',
+                    'Verifying analysis…',
+                    'Processing results…',
+                ];
+                var stepNum = document.getElementById('loading-step-num');
+                var stepText = document.getElementById('loading-step-text');
+                var stepTotal = document.getElementById('loading-step-total');
+                var elapsedEl = document.getElementById('loading-elapsed');
+                var start = Date.now();
+
+                stepTotal.textContent = steps.length;
+                stepNum.textContent = '1';
+                stepText.textContent = steps[0];
+
+                var elapsedTimer = setInterval(function() {
+                    var s = Math.floor((Date.now() - start) / 1000);
+                    var m = Math.floor(s / 60);
+                    var sec = String(s % 60).padStart(2, '0');
+                    elapsedEl.textContent = m + ':' + sec;
+                }, 1000);
+
+                // Cycle steps
+                var stepIdx = 1;
+                var intervals = [500, 1500, 1500, 1500, 1500, 1500, 12000, 8000, 3000];
+                function advance() {
+                    if (stepIdx < steps.length) {
+                        stepNum.textContent = stepIdx + 1;
+                        stepText.textContent = steps[stepIdx];
+                        setTimeout(advance, intervals[stepIdx]);
+                        stepIdx++;
+                    }
+                }
+                setTimeout(advance, intervals[0]);
+
+                // Fire the real work via fetch; reload when done
+                fetch(analyzeUrl, {method: 'POST'})
+                    .then(function(r) { return r.json(); })
+                    .then(function(data) {
+                        clearInterval(elapsedTimer);
+                        if (data.success) {
+                            window.location.reload();
+                        } else {
+                            window.location.href = window.location.pathname + '?error=' + encodeURIComponent(data.error || 'Unknown error');
+                        }
+                    })
+                    .catch(function(err) {
+                        clearInterval(elapsedTimer);
+                        window.location.href = window.location.pathname + '?error=' + encodeURIComponent('Network error: ' + err.message);
+                    });
+            });
+        }
+    })();
+
+    // --- Find Similar Commanders ---
+    (function() {
+        var btn = document.getElementById('find-similar');
+        if (!btn) return;
+        var similarUrl = window.location.pathname.replace(/\/$/, '') + '/similar';
+        var progressEl = document.createElement('div');
+        progressEl.style.cssText = 'text-align:center;margin-top:0.5rem;color:var(--text-dim);font-size:0.85rem;';
+        btn.parentNode.insertBefore(progressEl, btn.nextSibling);
+
+        btn.addEventListener('click', function() {
+            btn.textContent = 'Searching…';
+            btn.disabled = true;
+            progressEl.textContent = 'Round 1 — scanning candidates…';
+            progressEl.hidden = false;
+            fetch(similarUrl, {method: 'POST'})
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    btn.textContent = 'Find Similar';
+                    btn.disabled = false;
+                    progressEl.hidden = true;
+                    if (!data.success || !data.results.length) {
+                        btn.textContent = 'No results';
+                        return;
+                    }
+                    // Show progress summary
+                    var last = data.progress[data.progress.length - 1];
+                    progressEl.textContent = 'Found ' + last.count + ' commanders at ' + last.label.toLowerCase() + ' strictness.';
+                    progressEl.hidden = false;
+                    renderSimilar(data.results);
+                })
+                .catch(function() {
+                    btn.textContent = 'Error';
+                    btn.disabled = false;
+                    progressEl.hidden = true;
+                });
+        });
+
+        function renderSimilar(results) {
+            var grid = document.getElementById('similar-grid');
+            var section = document.getElementById('similar-commanders');
+            var html = '';
+            results.forEach(function(c) {
+                var imgSrc = 'https://cards.scryfall.io/normal/front/' + (c.scryfallId || '') + '.jpg';
+                var imgHtml = c.scryfallId
+                    ? '<img src="' + imgSrc + '" alt="' + c.name + '" loading="lazy" width="244" height="340">'
+                    : '<div class="card-placeholder">' + c.name + '</div>';
+                html += '<div class="card-cell" data-set-code="' + c.setCode + '" data-number="' + c.number + '">'
+                    + imgHtml
+                    + '<div class="cell-footer">'
+                    + '<div class="cell-name" title="' + c.name + '">' + c.name + '</div>'
+                    + '<div class="cell-actions"><span class="similarity-score">' + c.score + '%</span></div>'
+                    + '</div></div>';
+            });
+            grid.innerHTML = html;
+            section.hidden = false;
+        }
+    })();
+
+    // --- Save report to disk ---
+    (function() {
+        var saveBtn = document.getElementById('save-report');
+        if (!saveBtn) return;
+        var saveUrl = window.location.pathname.replace(/\/$/, '') + '/save';
+        saveBtn.addEventListener('click', function() {
+            saveBtn.textContent = 'Saving…';
+            saveBtn.disabled = true;
+            fetch(saveUrl, {method: 'POST'})
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.success) {
+                        saveBtn.textContent = '✓ Saved';
+                        saveBtn.style.background = '#1a3d1a';
+                    } else {
+                        saveBtn.textContent = 'Save Failed';
+                        saveBtn.style.background = '#8b1a1a';
+                        setTimeout(function() {
+                            saveBtn.textContent = 'Save Report';
+                            saveBtn.style.background = '#1a3d1a';
+                            saveBtn.disabled = false;
+                        }, 2000);
+                    }
+                })
+                .catch(function() {
+                    saveBtn.textContent = 'Save Failed';
+                    saveBtn.style.background = '#8b1a1a';
+                    setTimeout(function() {
+                        saveBtn.textContent = 'Save Report';
+                        saveBtn.style.background = '#1a3d1a';
+                        saveBtn.disabled = false;
+                    }, 2000);
+                });
+        });
+    })();
+
+    // --- Export report as self-contained HTML ---
+    (function() {
+        var exportBtn = document.getElementById('export-report');
+        if (!exportBtn) return;
+
+        function buildExportHTML(data, type, name) {
+            var label = type === 'unique_build' ? 'Unique Build' : 'Strategy';
+            var html = '<h3 style="font-size:0.9rem; margin-bottom:0.5rem;">' + label + ': ' + name + '</h3>';
+            html += '<div class="eval-columns" style="margin:0 0 1rem 0;">';
+            html += '<div class="eval-column"><h2 style="font-size:0.85rem;">Strengths</h2><ul class="eval-list strengths">';
+            (data.strengths || []).forEach(function(s) { html += '<li>' + s + '</li>'; });
+            html += '</ul></div>';
+            html += '<div class="eval-column"><h2 style="font-size:0.85rem;">Weaknesses</h2><ul class="eval-list weaknesses">';
+            (data.weaknesses || []).forEach(function(w) { html += '<li>' + w + '</li>'; });
+            html += '</ul></div></div>';
+            if (data.priorities && data.priorities.length) {
+                html += '<h2 style="font-size:0.85rem; margin-bottom:0.5rem;">Deck-Building Priorities</h2><div class="eval-strategies" style="margin-bottom:1rem;">';
+                data.priorities.forEach(function(p, i) {
+                    html += '<div class="eval-strategy" style="padding:0.5rem 0.75rem;"><h3 style="font-size:0.78rem;">' + (i+1) + '. ' + (p.category || '') + '</h3><p style="font-size:0.75rem;">' + (p.reason || '') + '</p></div>';
+                });
+                html += '</div>';
+            }
+            if (data.win_conditions && data.win_conditions.length) {
+                html += '<h2 style="font-size:0.85rem; margin-bottom:0.5rem;">Primary Win Conditions</h2><div class="eval-strategies">';
+                data.win_conditions.forEach(function(wc) {
+                    html += '<div class="eval-strategy" style="padding:0.5rem 0.75rem;"><h3 style="font-size:0.78rem;">' + (wc.name || '') + '</h3><p style="font-size:0.75rem;">' + (wc.description || '') + '</p></div>';
+                });
+                html += '</div>';
+            }
+            return html;
+        }
+
+        exportBtn.addEventListener('click', function() {
+            var page = document.querySelector('.similar-page');
+            var clone = page.cloneNode(true);
+
+            // Keep Deep Dive buttons — don't strip them. Inject done markers.
+            clone.querySelectorAll('.btn-expand').forEach(function(btn) {
+                var key = btn.dataset.type + ':' + btn.dataset.name;
+                if (window._deepDiveCache[key]) {
+                    btn.innerHTML = '&#10003; Deep Dive';
+                    btn.setAttribute('data-done', '1');
+                }
+            });
+
+            // Remove elements we don't want in the export
+            clone.querySelectorAll(
+                '#analyze-area, #commander-search, #clear-commander, #export-report, #find-similar, #save-report, script, .eval-error, .expand-result'
+            ).forEach(function(el) { el.remove(); });
+
+            // Build cache JSON for embedding in the export
+            var cacheJSON = JSON.stringify(window._deepDiveCache || {});
+
+            // Fetch and inline CSS so the export works offline
+            var cssPromises = [];
+            document.querySelectorAll('link[rel="stylesheet"]').forEach(function(link) {
+                if (link.href && !link.href.match(/fonts\.googleapis/)) {
+                    cssPromises.push(
+                        fetch(link.href)
+                            .then(function(r) { return r.text(); })
+                            .then(function(css) { return '<style>/* ' + link.href + ' */\n' + css + '</style>'; })
+                            .catch(function() { return '<link rel="stylesheet" href="' + link.href + '">'; })
+                    );
+                }
+            });
+            document.querySelectorAll('style').forEach(function(s) {
+                cssPromises.push(Promise.resolve('<style>' + s.textContent + '</style>'));
+            });
+
+            Promise.all(cssPromises).then(function(styles) {
+                var html = '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width, initial-scale=1.0">\n<title>'
+                    + document.title + '</title>\n'
+                    + styles.join('\n')
+                    + '</head>\n<body style="max-width:900px; margin:2rem auto; padding:0 1rem; height:auto; overflow:visible; color:var(--text); background:var(--bg); font-family:sans-serif;">\n'
+                    + clone.innerHTML
+                    + '\n'
+                    // Self-contained deep-dive panel — matches live page behavior
+                    + '<div id="export-panel" class="card-panel-overlay" onclick="closeExportPanel(event)">'
+                    + '<div class="card-panel-sheet" id="export-panel-sheet"><div class="panel-loading">Loading…</div></div></div>\n'
+                    + '<script>'
+                    + 'var _deepDiveCache = ' + cacheJSON + ';\n'
+                    + 'function buildPanelHTML(data,type,name){'
+                    + 'var label=type==="unique_build"?"Unique Build":"Strategy";'
+                    + 'var h=\'<button class="panel-close">&times;</button>\';'
+                    + 'h+=\'<h2 style="font-size:1.1rem;margin-bottom:0.25rem;">\'+label+\': \'+name+\'</h2>\';'
+                    + 'h+=\'<p style="color:var(--text-dim);font-size:0.85rem;margin-bottom:1.5rem;">Detailed analysis generated by LLM</p>\';'
+                    + 'h+=\'<div class="eval-columns" style="margin:0 0 1rem 0;">\';'
+                    + 'h+=\'<div class="eval-column"><h2 style="font-size:0.9rem;">Strengths</h2><ul class="eval-list strengths">\';'
+                    + '(data.strengths||[]).forEach(function(s){h+=\'<li>\'+s+\'</li>\';});'
+                    + 'h+=\'</ul></div>\';'
+                    + 'h+=\'<div class="eval-column"><h2 style="font-size:0.9rem;">Weaknesses</h2><ul class="eval-list weaknesses">\';'
+                    + '(data.weaknesses||[]).forEach(function(w){h+=\'<li>\'+w+\'</li>\';});'
+                    + 'h+=\'</ul></div></div>\';'
+                    + 'if(data.priorities&&data.priorities.length){'
+                    + 'h+=\'<h2 style="font-size:0.9rem;margin-bottom:0.5rem;">Deck-Building Priorities</h2><div class="eval-strategies" style="margin-bottom:1rem;">\';'
+                    + 'data.priorities.forEach(function(p,i){'
+                    + 'h+=\'<div class="eval-strategy" style="padding:0.5rem 0.75rem;"><h3 style="font-size:0.8rem;">\'+(i+1)+\'. \'+(p.category||"")+\'</h3><p style="font-size:0.78rem;">\'+(p.reason||"")+\'</p></div>\';'
+                    + '});'
+                    + 'h+=\'</div>\';}'
+                    + 'if(data.win_conditions&&data.win_conditions.length){'
+                    + 'h+=\'<h2 style="font-size:0.9rem;margin-bottom:0.5rem;">Primary Win Conditions</h2><div class="eval-strategies">\';'
+                    + 'data.win_conditions.forEach(function(wc){'
+                    + 'h+=\'<div class="eval-strategy" style="padding:0.5rem 0.75rem;"><h3 style="font-size:0.8rem;">\'+(wc.name||"")+\'</h3><p style="font-size:0.78rem;">\'+(wc.description||"")+\'</p></div>\';'
+                    + '});'
+                    + 'h+=\'</div>\';}'
+                    + 'return h;}'
+                    + 'function openExportPanel(data,type,name){'
+                    + 'document.getElementById("export-panel-sheet").innerHTML=buildPanelHTML(data,type,name);'
+                    + 'document.getElementById("export-panel").classList.add("open");'
+                    + 'document.getElementById("export-panel-sheet").scrollTop=0;}'
+                    + 'function closeExportPanel(e){'
+                    + 'if(e&&e.target.closest&&e.target.closest(".panel-close")){document.getElementById("export-panel").classList.remove("open");return;}'
+                    + 'if(e&&e.target!==document.getElementById("export-panel"))return;'
+                    + 'document.getElementById("export-panel").classList.remove("open");}'
+                    + 'document.addEventListener("keydown",function(e){'
+                    + 'if(e.key==="Escape")document.getElementById("export-panel").classList.remove("open");});'
+                    + 'document.addEventListener("click",function(e){'
+                    + 'var btn=e.target.closest(".btn-expand");'
+                    + 'if(!btn)return;'
+                    + 'var key=btn.dataset.type+":"+btn.dataset.name;'
+                    + 'if(_deepDiveCache[key]){openExportPanel(_deepDiveCache[key],btn.dataset.type,btn.dataset.name);}'
+                    + '});'
+                    + '<\/script>\n'
+                    + '</body>\n</html>';
+
+                var blob = new Blob([html], {type: 'text/html'});
+                var url = URL.createObjectURL(blob);
+                var a = document.createElement('a');
+                a.href = url;
+                a.download = document.title.replace(/[^a-zA-Z0-9_-]/g, '_') + '.html';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            });
+        });
+    })();
+
+    // --- Commander search: autocomplete + drag-drop + clear ---
+    (function() {
+        var searchInput = document.getElementById('search-name');
+        var searchForm = document.getElementById('search-form');
+        var list = document.getElementById('autocomplete-list');
+        var clearBtn = document.getElementById('clear-commander');
+        var dropZone = document.getElementById('drop-zone');
+        var dropLoading = document.getElementById('drop-loading');
+        var dropError = document.getElementById('drop-error');
+        var timer = null;
+        var selectedIndex = -1;
+
+        function clearList() {
+            list.innerHTML = '';
+            list.hidden = true;
+            selectedIndex = -1;
+        }
+
+        function selectItem(item) {
+            searchInput.value = item.dataset.name;
+            clearList();
+            // Navigate to eval page for this card (no analysis yet)
+            window.location.href = '/card/' + item.dataset.setCode + '/' + item.dataset.number + '/eval';
+        }
+
+        // --- Autocomplete ---
+        searchInput.addEventListener('input', function() {
+            clearTimeout(timer);
+            var q = searchInput.value.trim();
+            if (q.length < 2) { clearList(); return; }
+            timer = setTimeout(function() {
+                fetch('/card-autocomplete?q=' + encodeURIComponent(q))
+                    .then(function(r) { return r.json(); })
+                    .then(function(results) {
+                        list.innerHTML = '';
+                        if (!results || results.length === 0) { list.hidden = true; return; }
+                        results.forEach(function(card) {
+                            var li = document.createElement('li');
+                            li.textContent = card.name;
+                            li.dataset.name = card.name;
+                            li.dataset.setCode = card.setCode;
+                            li.dataset.number = card.number;
+                            li.addEventListener('mousedown', function(e) {
+                                e.preventDefault();
+                                selectItem(li);
+                            });
+                            list.appendChild(li);
+                        });
+                        list.hidden = false;
+                        selectedIndex = -1;
+                    });
+            }, 150);
+        });
+
+        searchInput.addEventListener('keydown', function(e) {
+            var items = list.querySelectorAll('li');
+            if (!items.length || list.hidden) return;
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                selectedIndex = Math.min(selectedIndex + 1, items.length - 1);
+                items.forEach(function(li, i) { li.classList.toggle('active', i === selectedIndex); });
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                selectedIndex = Math.max(selectedIndex - 1, 0);
+                items.forEach(function(li, i) { li.classList.toggle('active', i === selectedIndex); });
+            } else if (e.key === 'Enter' && selectedIndex >= 0) {
+                e.preventDefault();
+                selectItem(items[selectedIndex]);
+            } else if (e.key === 'Escape') {
+                clearList();
+            }
+        });
+
+        searchInput.addEventListener('blur', function() {
+            setTimeout(clearList, 150);
+        });
+
+        // --- Set button submits the form normally (GET redirect to /commander-eval?by_name=) ---
+        // --- Clear button navigates to /commander-eval landing ---
+        clearBtn.addEventListener('click', function() {
+            window.location.href = '/commander-eval';
+        });
+
+        // --- Drag-and-drop ---
+        function showDropError(msg) {
+            dropError.textContent = msg;
+            dropError.hidden = false;
+            setTimeout(function() { dropError.hidden = true; }, 5000);
+        }
+
+        function extractScryfallId(str) {
+            var m = str.match(/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i);
+            return m ? m[1] : null;
+        }
+
+        function lookupCard(scryfallId) {
+            dropLoading.hidden = false;
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', '/commander-eval', true);
+            xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+            xhr.onload = function() {
+                dropLoading.hidden = true;
+                if (xhr.status === 200) {
+                    var resp = JSON.parse(xhr.responseText);
+                    if (resp.redirect) {
+                        window.location.href = resp.redirect;
+                    } else {
+                        showDropError(resp.error || 'Card not found.');
+                    }
+                } else {
+                    showDropError('Something went wrong. Try searching by name instead.');
+                }
+            };
+            xhr.onerror = function() {
+                dropLoading.hidden = true;
+                showDropError('Network error. Try again.');
+            };
+            xhr.send('scryfall_id=' + encodeURIComponent(scryfallId));
+        }
+
+        function handleDrop(e) {
+            e.preventDefault();
+            dropZone.classList.remove('drop-active');
+            var scryfallId = null;
+            var uriList = e.dataTransfer.getData('text/uri-list');
+            if (uriList) scryfallId = extractScryfallId(uriList);
+            if (!scryfallId) {
+                var html = e.dataTransfer.getData('text/html');
+                if (html) scryfallId = extractScryfallId(html);
+            }
+            if (!scryfallId && e.dataTransfer.files.length > 0) {
+                scryfallId = extractScryfallId(e.dataTransfer.files[0].name);
+            }
+            if (scryfallId) {
+                lookupCard(scryfallId);
+            } else {
+                showDropError('Could not identify a Magic card from that image. Try searching by name.');
+            }
+        }
+
+        ['dragenter','dragover'].forEach(function(evt) {
+            dropZone.addEventListener(evt, function(e) {
+                e.preventDefault();
+                dropZone.classList.add('drop-active');
+            });
+        });
+        dropZone.addEventListener('dragleave', function(e) {
+            dropZone.classList.remove('drop-active');
+        });
+        dropZone.addEventListener('drop', handleDrop);
+    })();
+
+    // --- Expand strategy / unique build ---
+    (function() {
+        var panel = document.getElementById('deep-dive-panel');
+        var sheet = document.getElementById('deep-dive-panel-sheet');
+        var expandUrl = window.location.pathname.replace(/\/$/, '') + '/expand';
+
+        // Pre-seed from saved expands and expose for export (key: "strategy:Name" or "unique_build:Name")
+        window._deepDiveCache = {};
+        {% if saved_expands %}
+        {% for key, val in saved_expands.items() %}
+        window._deepDiveCache[{{ key | tojson }}] = {{ val | tojson }};
+        {% endfor %}
+        {% endif %}
+
+        function buildPanelHTML(data, type, name) {
+            var label = type === 'unique_build' ? 'Unique Build' : 'Strategy';
+            var html = '<button class="panel-close" onclick="document.getElementById(\'deep-dive-panel\').classList.remove(\'open\')">&times;</button>';
+            html += '<h2 style="font-size:1.1rem; margin-bottom:0.25rem;">' + label + ': ' + name + '</h2>';
+            html += '<p style="color:var(--text-dim); font-size:0.85rem; margin-bottom:1.5rem;">Detailed analysis generated by LLM</p>';
+
+            // Strengths & Weaknesses
+            html += '<div class="eval-columns" style="margin:0 0 1rem 0;">';
+            html += '<div class="eval-column"><h2 style="font-size:0.9rem;">Strengths</h2><ul class="eval-list strengths">';
+            (data.strengths || []).forEach(function(s) { html += '<li>' + s + '</li>'; });
+            html += '</ul></div>';
+            html += '<div class="eval-column"><h2 style="font-size:0.9rem;">Weaknesses</h2><ul class="eval-list weaknesses">';
+            (data.weaknesses || []).forEach(function(w) { html += '<li>' + w + '</li>'; });
+            html += '</ul></div></div>';
+
+            // Priorities
+            if (data.priorities && data.priorities.length) {
+                html += '<h2 style="font-size:0.9rem; margin-bottom:0.5rem;">Deck-Building Priorities</h2>';
+                html += '<div class="eval-strategies" style="margin-bottom:1rem;">';
+                data.priorities.forEach(function(p, i) {
+                    html += '<div class="eval-strategy" style="padding:0.5rem 0.75rem;"><h3 style="font-size:0.8rem;">' + (i+1) + '. ' + (p.category || '') + '</h3><p style="font-size:0.78rem;">' + (p.reason || '') + '</p></div>';
+                });
+                html += '</div>';
+            }
+
+            // Win Conditions
+            if (data.win_conditions && data.win_conditions.length) {
+                html += '<h2 style="font-size:0.9rem; margin-bottom:0.5rem;">Primary Win Conditions</h2>';
+                html += '<div class="eval-strategies">';
+                data.win_conditions.forEach(function(wc) {
+                    html += '<div class="eval-strategy" style="padding:0.5rem 0.75rem;"><h3 style="font-size:0.8rem;">' + (wc.name || '') + '</h3><p style="font-size:0.78rem;">' + (wc.description || '') + '</p></div>';
+                });
+                html += '</div>';
+            }
+
+            return html;
+        }
+
+        function openDeepDive(content) {
+            sheet.innerHTML = content;
+            sheet.scrollTop = 0;
+            panel.classList.add('open');
+        }
+
+        document.addEventListener('click', function(e) {
+            var btn = e.target.closest('.btn-expand');
+            if (!btn) return;
+
+            var expandType = btn.dataset.type;
+            var expandName = btn.dataset.name;
+            var expandDesc = btn.dataset.description;
+            var loadKey = expandType + ':' + expandName;
+
+            // Loaded before? Re-render from cache
+            if (window._deepDiveCache[loadKey]) {
+                openDeepDive(buildPanelHTML(window._deepDiveCache[loadKey], expandType, expandName));
+                return;
+            }
+
+            btn.textContent = 'Diving deep…';
+            btn.disabled = true;
+            sheet.innerHTML = '<div class="analyze-loading" style="display:flex; padding:1.5rem;"><span class="spinner"></span> <span style="color:var(--text-dim); font-size:0.85rem;">Generating deep-dive…</span></div>';
+            panel.classList.add('open');
+
+            fetch(expandUrl, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    type: expandType,
+                    name: expandName,
+                    description: expandDesc
+                })
+            })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    btn.textContent = 'Deep Dive';
+                    btn.disabled = false;
+                    if (data.error) {
+                        sheet.innerHTML = '<div class="panel-loading" style="color:#f85149;">Error: ' + data.error + '</div>';
+                    } else {
+                        window._deepDiveCache[loadKey] = data.data;
+                        btn.setAttribute('data-done', '1');
+                        btn.innerHTML = '&#10003; Deep Dive';
+                        openDeepDive(buildPanelHTML(data.data, expandType, expandName));
+                    }
+                })
+                .catch(function(err) {
+                    btn.textContent = 'Deep Dive';
+                    btn.disabled = false;
+                    sheet.innerHTML = '<div class="panel-loading" style="color:#f85149;">Network error: ' + err.message + '</div>';
+                });
+        });
+    })();
+</script>
+{% endblock %}

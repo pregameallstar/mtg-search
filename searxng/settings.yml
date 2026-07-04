@@ -1,0 +1,14 @@
+use_default_settings: true
+
+search:
+  formats:
+    - html
+    - json
+
+server:
+  secret_key: "16466190473dbe14ee0ab8e653bf607b599939c37f04a578183cd2691fc2e9da"
+  bind_address: "0.0.0.0"
+  limiter: false
+  image_proxy: false
+
+# ponytail: internal-only, no rate limiting needed
