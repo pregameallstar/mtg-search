@@ -27,6 +27,7 @@ __pycache__/
 
 # AI Agent Files
 IMPROVEMENTS.md
+QA*.md
 .secret_key
 .last_ingest.json
 
