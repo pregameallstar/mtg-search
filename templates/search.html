@@ -8,6 +8,9 @@
     {# --- Cards section --- #}
     <fieldset><legend>Cards</legend>
         <div class="field-row">
+            <label>Text Search <input type="text" name="q" value="{{ query }}" placeholder="Search name, type & oracle text…"></label>
+        </div>
+        <div class="field-row">
             <label>Name <input type="text" name="name" value="{{ name }}" placeholder="Card name contains…"></label>
             <label>Oracle Text <input type="text" name="oracle" value="{{ oracle }}" placeholder="Rules text contains…"></label>
         </div>
@@ -23,7 +26,7 @@
         <div class="field-row">
             <label>Card Colors</label>
             <div class="color-chips multi" data-target="color">
-                {% for c, name in [('W','White'),('U','Blue'),('B','Black'),('R','Red'),('G','Green')] %}
+                {% for c, name in [('W','White'),('U','Blue'),('B','Black'),('R','Red'),('G','Green'),('C','Colorless')] %}
                 <label class="chip color-{{ c.lower() }} {% if c in color %}active{% endif %}">
                     <input type="checkbox" value="{{ c }}" name="color_check" autocomplete="off"
                            {% if c in color %}checked{% endif %} onchange="syncColorChips(this, 'color')">
@@ -41,7 +44,7 @@
         <div class="field-row">
             <label>Color Identity</label>
             <div class="color-chips multi" data-target="ci">
-                {% for c, name in [('W','White'),('U','Blue'),('B','Black'),('R','Red'),('G','Green')] %}
+                {% for c, name in [('W','White'),('U','Blue'),('B','Black'),('R','Red'),('G','Green'),('C','Colorless')] %}
                 <label class="chip color-{{ c.lower() }} {% if c in ci %}active{% endif %}">
                     <input type="checkbox" value="{{ c }}" autocomplete="off"
                            {% if c in ci %}checked{% endif %} onchange="syncColorChips(this, 'ci')">
@@ -122,6 +125,7 @@
             <label class="chip"><input type="checkbox" name="is_fullart" value="1" {% if is_fullart %}checked{% endif %}> Full Art</label>
             <label class="chip"><input type="checkbox" name="is_textless" value="1" {% if is_textless %}checked{% endif %}> Textless</label>
             <label class="chip"><input type="checkbox" name="is_promo" value="1" {% if is_promo %}checked{% endif %}> Promo</label>
+            <label class="chip"><input type="checkbox" name="is_rebalanced" value="1" {% if is_rebalanced %}checked{% endif %}> Rebalanced</label>
         </div>
         <div class="field-row" style="margin-top:0.75rem">
             <label>Border <select name="border">
@@ -129,6 +133,8 @@
                 <option value="black" {% if border=='black' %}selected{% endif %}>Black</option>
                 <option value="white" {% if border=='white' %}selected{% endif %}>White</option>
                 <option value="silver" {% if border=='silver' %}selected{% endif %}>Silver</option>
+                <option value="gold" {% if border=='gold' %}selected{% endif %}>Gold</option>
+                <option value="yellow" {% if border=='yellow' %}selected{% endif %}>Yellow</option>
                 <option value="borderless" {% if border=='borderless' %}selected{% endif %}>Borderless</option>
             </select></label>
             <label>Layout <select name="layout">
@@ -177,6 +183,7 @@
 {% if is_reprint %}{{ badges.append('Reprint') or '' }}{% endif %}
 {% if is_reserved %}{{ badges.append('Reserved List') or '' }}{% endif %}
 {% if is_funny %}{{ badges.append('Silver-bordered') or '' }}{% endif %}
+{% if is_rebalanced %}{{ badges.append('Rebalanced') or '' }}{% endif %}
 {% if border %}{{ badges.append('Border: ' + border) or '' }}{% endif %}
 {% if layout %}{{ badges.append('Layout: ' + layout) or '' }}{% endif %}
 {% if badges %}

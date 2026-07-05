@@ -18,6 +18,7 @@ import lzma
 import zipfile
 import tarfile
 from datetime import datetime, timezone
+from collections import OrderedDict
 from urllib.parse import quote, urljoin
 from urllib.request import Request, urlopen
 from flask import Flask, g, render_template, request, abort, redirect, url_for, make_response, session, jsonify
@@ -43,9 +44,23 @@ if not _secret_key:
             f.write(_secret_key)
 app.secret_key = _secret_key
 
+@app.after_request
+def _add_security_headers(response):
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Content-Security-Policy"] = "default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; script-src 'self' 'unsafe-inline'; font-src 'self' https://cdn.jsdelivr.net"
+    return response
+
 # ponytail: server-side analysis cache — Flask cookie sessions cap at ~4KB,
 # expanded bracket+kill-on-sight output exceeds that.
-_eval_cache = {}  # {id: {"analysis": {...}, "error": "..."}}
+# ponytail: FIFO-capped at 100 entries, add LRU if eviction order matters.
+_eval_cache = OrderedDict()  # {id: {"analysis": {...}, "error": "..."}}
+
+def _cache_put(key, entry):
+    """Store in eval cache, evicting oldest if over cap."""
+    _eval_cache[key] = entry
+    while len(_eval_cache) > 100:
+        _eval_cache.popitem(last=False)
 
 DATABASE = "AllPrintings.sqlite"
 REPORTS_DIR = "eval_reports"
@@ -358,7 +373,7 @@ def index():
     # Quick counts for homepage
     db = get_db()
     total = db.execute(
-        "SELECT COUNT(DISTINCT name) FROM cards WHERE language='English'"
+        "SELECT COUNT(DISTINCT name) FROM cards WHERE language='English' AND (side IS NULL OR side='a')"
     ).fetchone()[0]
     return render_template("index.html", total_cards=total)
 
@@ -461,50 +476,79 @@ def search():
     # Colors (WUBRGC)
     if color:
         color_chars = [ch for ch in color.upper() if ch in "WUBRGC"]
-        if color_rule == "exact":
-            # ponytail: compare sorted comma string — works because MTGJSON stores colors sorted
-            where.append("c.colors = ?")
-            params.append(", ".join(color_chars))
-            # Also exclude cards with more colors
-            where.append(f"LENGTH(c.colors) - LENGTH(REPLACE(c.colors, ',', '')) + (CASE WHEN c.colors = '' THEN 0 ELSE 1 END) = ?")
-            params.append(len(color_chars))
-        else:
-            for ch in color_chars:
-                where.append("c.colors LIKE ?")
-                params.append(f"%{ch}%")
-            if color_rule == "at_most":
-                where.append(f"LENGTH(c.colors) - LENGTH(REPLACE(c.colors, ',', '')) + (CASE WHEN c.colors = '' THEN 0 ELSE 1 END) <= ?")
+        has_c = "C" in color_chars
+        color_chars = [ch for ch in color_chars if ch != "C"]
+        if has_c and color_rule != "at_most":
+            if not color_chars:
+                # Only C selected: colorless cards have colors = ''
+                where.append("c.colors = ''")
+            elif color_rule == "exact":
+                # C + other colors: contradiction (can't be colorless AND colored)
+                where.append("1 = 0")
+            # at_least with C + others: suppress C, match remaining colors only
+        if color_chars:
+            if color_rule == "exact":
+                where.append("c.colors = ?")
+                params.append(", ".join(sorted(color_chars)))
+                where.append(f"LENGTH(c.colors) - LENGTH(REPLACE(c.colors, ',', '')) + (CASE WHEN c.colors = '' THEN 0 ELSE 1 END) = ?")
                 params.append(len(color_chars))
+            elif color_rule == "at_most":
+                # Subset: card colors ⊆ selected colors. Exclude cards containing any non-selected color.
+                for ch in "WUBRG":
+                    if ch not in color_chars:
+                        where.append("c.colors NOT LIKE ?")
+                        params.append(f"%{ch}%")
+            else:  # at_least
+                for ch in color_chars:
+                    where.append("c.colors LIKE ?")
+                    params.append(f"%{ch}%")
 
     # Color identity
     if ci:
         ci_chars = [ch for ch in ci.upper() if ch in "WUBRGC"]
-        if ci_rule == "exact":
-            where.append("c.colorIdentity = ?")
-            params.append(", ".join(sorted(ci_chars)))
-        elif ci_rule == "at_most":
-            for ch in ci_chars:
-                where.append("c.colorIdentity LIKE ?")
-                params.append(f"%{ch}%")
-            where.append("LENGTH(c.colorIdentity) - LENGTH(REPLACE(c.colorIdentity, ',', '')) + (CASE WHEN c.colorIdentity = '' THEN 0 ELSE 1 END) <= ?")
-            params.append(len(ci_chars))
-        else:  # at_least
-            for ch in ci_chars:
-                where.append("c.colorIdentity LIKE ?")
-                params.append(f"%{ch}%")
+        has_c = "C" in ci_chars
+        ci_chars = [ch for ch in ci_chars if ch != "C"]
+        if has_c and ci_rule != "at_most":
+            if not ci_chars:
+                # Only C selected: colorless identity cards have colorIdentity = ''
+                where.append("c.colorIdentity = ''")
+            elif ci_rule == "exact":
+                # C + other colors: contradiction
+                where.append("1 = 0")
+        if ci_chars:
+            if ci_rule == "exact":
+                where.append("c.colorIdentity = ?")
+                params.append(", ".join(sorted(ci_chars)))
+            elif ci_rule == "at_most":
+                # Subset: color identity ⊆ selected colors
+                for ch in "WUBRG":
+                    if ch not in ci_chars:
+                        where.append("c.colorIdentity NOT LIKE ?")
+                        params.append(f"%{ch}%")
+            else:  # at_least
+                for ch in ci_chars:
+                    where.append("c.colorIdentity LIKE ?")
+                    params.append(f"%{ch}%")
 
     # Mana value
+    _MV_OPS = {"=", "<", ">", "<=", ">="}
     if mv:
-        if mv_op in ("<", ">", "<=", ">="):
-            where.append(f"c.manaValue {mv_op} ?")
-            params.append(float(mv))
-        elif "-" in mv:
-            lo, hi = mv.split("-", 1)
-            where.append("c.manaValue BETWEEN ? AND ?")
-            params.extend([float(lo.strip()), float(hi.strip())])
-        else:
-            where.append("c.manaValue = ?")
-            params.append(float(mv))
+        try:
+            if mv_op in ("<", ">", "<=", ">="):
+                val = float(mv)
+                where.append(f"c.manaValue {mv_op} ?")
+                params.append(val)
+            elif re.match(r"^\s*\d+(\.\d+)?\s*-\s*\d+(\.\d+)?\s*$", mv):
+                lo, hi = mv.split("-", 1)
+                lo_val, hi_val = float(lo.strip()), float(hi.strip())
+                where.append("c.manaValue BETWEEN ? AND ?")
+                params.extend([lo_val, hi_val])
+            elif mv_op == "=":
+                val = float(mv)
+                where.append("c.manaValue = ?")
+                params.append(val)
+        except (ValueError, TypeError):
+            pass  # ponytail: invalid mv input → silently skip filter
 
     # Power (text column, needs CAST for comparisons)
     if pow_val:
@@ -708,8 +752,9 @@ def card_detail(set_code, number):
     )
 
 
+@app.route("/similar", methods=["GET", "POST"])
 @app.route("/cards/<set_code>/similar", methods=["GET", "POST"])
-def similar_landing(set_code):
+def similar_landing(set_code=None):
     """Landing page for the similarity tool — search by card name or drop image."""
     db = get_db()
 
@@ -908,13 +953,20 @@ def similar_cards(set_code, number):
         FROM cards c
         JOIN cardIdentifiers ci ON c.uuid = ci.uuid
         JOIN sets s ON c.setCode = s.code
+        JOIN (
+            SELECT c2.name, MAX(s2.releaseDate) as maxDate
+            FROM cards c2
+            JOIN sets s2 ON c2.setCode = s2.code
+            WHERE c2.language = 'English'
+              AND (c2.side IS NULL OR c2.side = 'a')
+            GROUP BY c2.name
+        ) latest ON c.name = latest.name AND s.releaseDate = latest.maxDate
         WHERE c.language = 'English'
           AND (c.side IS NULL OR c.side = 'a')
           AND c.uuid != ?
           AND c.name != ?
           AND (c.manaValue BETWEEN ? AND ? OR c.manaValue IS NULL)
         GROUP BY c.name
-        ORDER BY s.releaseDate DESC
     """, [base_card["uuid"], base_card["name"], mv_min, mv_max]).fetchall()
 
     # --- Score and sort ---
@@ -1521,7 +1573,7 @@ def commander_eval(set_code, number):
     # If no fresh analysis, seed eval_key + _eval_cache so expand/save routes work
     if analysis and not session.get("eval_key"):
         session["eval_key"] = str(uuid.uuid4())
-        _eval_cache[session["eval_key"]] = {"_card": f"{set_code}/{number}", "analysis": analysis}
+        _cache_put(session["eval_key"], {"_card": f"{set_code}/{number}", "analysis": analysis})
         if report_data:
             _eval_cache[session["eval_key"]]["expands"] = report_data.get("expands", {})
             _eval_cache[session["eval_key"]]["similar"] = report_data.get("similar", [])
@@ -1600,7 +1652,7 @@ def commander_eval_analyze(set_code, number):
             ("strategy", f"{name} commander strategy synergies"),
             ("discussion", f'"{name}" commander review reddit'),
             ("unique_archetypes", f"{name} commander unusual underrated hidden archetype brew"),
-            ("mechanics", f"mtg rules {keywords} comprehensive rules guide") if keywords else None,
+            ("mechanics", f"mtg rules {keywords} comprehensive rules guide") if keywords else ("mechanics", None),
         ]:
             if query is None:
                 continue
@@ -1669,14 +1721,14 @@ Output ONLY valid JSON:
             pass
 
         session["eval_key"] = str(uuid.uuid4())
-        _eval_cache[session["eval_key"]] = {"_card": f"{set_code}/{number}", "analysis": analysis}
+        _cache_put(session["eval_key"], {"_card": f"{set_code}/{number}", "analysis": analysis})
         return {"success": True}
 
     except Exception as e:
         import traceback
         traceback.print_exc()
         session["eval_key"] = str(uuid.uuid4())
-        _eval_cache[session["eval_key"]] = {"_card": f"{set_code}/{number}", "error": str(e)}
+        _cache_put(session["eval_key"], {"_card": f"{set_code}/{number}", "error": str(e)})
         return {"error": str(e)}, 500
 
 

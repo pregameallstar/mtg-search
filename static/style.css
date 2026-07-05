@@ -848,6 +848,12 @@ footer {
 }
 
 /* Error message */
+.empty-state {
+    padding: 1rem;
+    text-align: center;
+    color: var(--text-muted);
+    font-style: italic;
+}
 .similar-error {
     padding: 0.5rem 0.75rem;
     background: #3a1a1a;

@@ -44,7 +44,7 @@
     </div>
 
     <button class="btn-clear-base"
-            onclick="window.location.href='/cards/PDFT/similar?{{ tuning_params[1:] if tuning_params else '' }}'"
+            onclick="window.location.href='/similar?{{ tuning_params[1:] if tuning_params else '' }}'"
             style="margin-bottom:1rem;">Clear Commander</button>
 
     {% if by_name_error %}
@@ -202,6 +202,8 @@
         </div>
         {% endfor %}
     </div>
+    {% elif total == 0 %}
+    <div class="empty-state">No cards matched the similarity threshold. Try lowering the score requirement or adjusting factors.</div>
     {% endif %}
 
     {# --- Remaining results --- #}

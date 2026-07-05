@@ -10,6 +10,9 @@
         {# --- Cards section --- #}
         <fieldset><legend>Cards</legend>
             <div class="field-row">
+                <label>Text Search <input type="text" name="q" placeholder="Search name, type & oracle text…"></label>
+            </div>
+            <div class="field-row">
                 <label>Name <input type="text" name="name" placeholder="Card name contains…"></label>
                 <label>Oracle Text <input type="text" name="oracle" placeholder="Rules text contains…"></label>
             </div>
@@ -24,7 +27,7 @@
             <div class="field-row">
                 <label>Card Colors</label>
                 <div class="color-chips multi" data-target="color">
-                    {% for c, name in [('W','White'),('U','Blue'),('B','Black'),('R','Red'),('G','Green')] %}
+                    {% for c, name in [('W','White'),('U','Blue'),('B','Black'),('R','Red'),('G','Green'),('C','Colorless')] %}
                     <label class="chip color-{{ c.lower() }}">
                         <input type="checkbox" value="{{ c }}" autocomplete="off" onchange="syncColorChips(this, 'color')">
                         <span class="ms ms-{{ c.lower() }}"></span> {{ name }}
@@ -41,7 +44,7 @@
             <div class="field-row">
                 <label>Color Identity</label>
                 <div class="color-chips multi" data-target="ci">
-                    {% for c, name in [('W','White'),('U','Blue'),('B','Black'),('R','Red'),('G','Green')] %}
+                    {% for c, name in [('W','White'),('U','Blue'),('B','Black'),('R','Red'),('G','Green'),('C','Colorless')] %}
                     <label class="chip color-{{ c.lower() }}">
                         <input type="checkbox" value="{{ c }}" autocomplete="off" onchange="syncColorChips(this, 'ci')">
                         <span class="ms ms-{{ c.lower() }}"></span> {{ name }}
@@ -116,6 +119,7 @@
                 <label class="chip"><input type="checkbox" name="is_fullart" value="1"> Full Art</label>
                 <label class="chip"><input type="checkbox" name="is_textless" value="1"> Textless</label>
                 <label class="chip"><input type="checkbox" name="is_promo" value="1"> Promo</label>
+                <label class="chip"><input type="checkbox" name="is_rebalanced" value="1"> Rebalanced</label>
             </div>
             <div class="field-row" style="margin-top:0.75rem">
                 <label>Border <select name="border">
@@ -123,6 +127,8 @@
                     <option value="black">Black</option>
                     <option value="white">White</option>
                     <option value="silver">Silver</option>
+                    <option value="gold">Gold</option>
+                    <option value="yellow">Yellow</option>
                     <option value="borderless">Borderless</option>
                 </select></label>
                 <label>Layout <select name="layout">

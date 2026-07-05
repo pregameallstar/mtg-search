@@ -95,13 +95,19 @@
     </div>
     {% endif %}
 
-    {% if analysis %}
-
     {% if not is_commander %}
     <div class="eval-notice">
         ⚠ {{ card['name'] }} is not a legal Commander. Analysis shown for reference.
     </div>
     {% endif %}
+
+    {% if isGameChanger %}
+    <div class="eval-notice" style="margin-top: 1rem;">
+        🚨 {{ card['name'] }} is a <strong>Game Changer</strong> — must be declared before the game in Commander bracket system.
+    </div>
+    {% endif %}
+
+    {% if analysis %}
 
     {% set verification = analysis.get('_verification', {}) %}
     {% if verification.get('warnings') %}
@@ -224,12 +230,6 @@
             {% endif %}
         </div>
         {% endfor %}
-    </div>
-    {% endif %}
-
-    {% if isGameChanger %}
-    <div class="eval-notice" style="margin-top: 2rem;">
-        🚨 {{ card['name'] }} is a <strong>Game Changer</strong> — must be declared before the game in Commander bracket system.
     </div>
     {% endif %}
 
