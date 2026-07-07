@@ -1145,7 +1145,7 @@ def similar_cards(set_code, number):
 
 # --- Web Search (SearXNG) ---
 
-SEARXNG_URL = "http://localhost:8888"
+SEARXNG_URL = os.environ.get("SEARXNG_URL", "http://localhost:8888")
 
 def _web_search(query, max_results=10):
     """Query SearXNG, return list of {title, url, snippet} dicts."""
@@ -2721,4 +2721,4 @@ def commander_eval_reports_delete():
 # --- Run ---
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(host="0.0.0.0", debug=os.environ.get("FLASK_DEBUG", "").lower() in ("1", "true", "yes"))

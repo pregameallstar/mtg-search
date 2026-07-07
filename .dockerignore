@@ -1,0 +1,22 @@
+# Data — mounted as volumes, not baked in
+AllPrintings.sqlite
+embeddings/
+images/
+eval_reports/
+.secret_key
+.last_ingest.json
+.server.pid
+.server.log
+
+# Dev
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.git/
+.vscode/
+.idea/
+test_scripts/
+
+# Env (secrets passed via docker-compose or .env)
+.env

@@ -1,0 +1,36 @@
+services:
+  app:
+    build: .
+    container_name: mtg-search
+    ports:
+      - "${PORT:-5000}:5000"
+    volumes:
+      - ./AllPrintings.sqlite:/app/AllPrintings.sqlite:ro
+      - ./embeddings:/app/embeddings
+      - ./images:/app/images
+      - ./eval_reports:/app/eval_reports
+      - ./searxng/settings.yml:/app/searxng/settings.yml:ro
+      - ./searxng/limiter.toml:/app/searxng/limiter.toml:ro
+      - ./.secret_key:/app/.secret_key
+      - ./.last_ingest.json:/app/.last_ingest.json
+    environment:
+      - SEARXNG_URL=http://searxng:8080
+      - LLM_BACKEND=${LLM_BACKEND:-openai}
+      - LLM_BASE_URL=${LLM_BASE_URL:-}
+      - LLM_MODEL=${LLM_MODEL:-}
+      - LLM_API_KEY=${LLM_API_KEY:-}
+    restart: unless-stopped
+    depends_on:
+      - searxng
+
+  searxng:
+    image: searxng/searxng:latest
+    container_name: mtg-searxng
+    ports:
+      - "127.0.0.1:${SEARXNG_HOST_PORT:-8888}:8080"
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+      - ./searxng/limiter.toml:/etc/searxng/limiter.toml:ro
+    environment:
+      - SEARXNG_SECRET=${SEARXNG_SECRET?SEARXNG_SECRET is required}
+    restart: unless-stopped
