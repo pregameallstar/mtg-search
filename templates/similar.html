@@ -56,6 +56,29 @@
         <input type="hidden" name="by_name" value="">
         <input type="hidden" name="tuned" value="1">
         <fieldset>
+            <legend>Method</legend>
+            <div style="display:flex; gap:0.5rem; align-items:center;">
+                <label style="font-size:0.85rem;">
+                    <input type="radio" name="method" value="embed"
+                           {% if method == 'embed' %}checked{% endif %}
+                           onchange="this.form.submit()">
+                    Semantic (AI embeddings)
+                </label>
+                <label style="font-size:0.85rem;">
+                    <input type="radio" name="method" value="legacy"
+                           {% if method != 'embed' %}checked{% endif %}
+                           onchange="this.form.submit()">
+                    Legacy (TF-IDF tuning)
+                </label>
+            </div>
+            {% if method == 'embed' %}
+            <p style="font-size:0.75rem; color:var(--text-dim); margin:0.25rem 0 0 0;">
+                Semantic similarity uses AI embeddings to find cards with similar function,
+                regardless of exact wording. Factor tuning is not applicable.
+            </p>
+            {% endif %}
+        </fieldset>
+        <fieldset>
             <legend>Optional Factors</legend>
             <details class="tuning-help">
                 <summary>How this works</summary>

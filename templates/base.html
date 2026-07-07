@@ -37,6 +37,14 @@
         </div>
     </div>
 
+    {# Lightbox for zooming card images #}
+    <div id="card-lightbox" class="card-panel-overlay" onclick="closeLightbox(event)">
+        <div style="position:relative;margin:auto;max-width:90vw;max-height:90vh;">
+            <button class="panel-close" style="position:absolute;top:0;right:0;z-index:10;" onclick="document.getElementById('card-lightbox').classList.remove('open')">&times;</button>
+            <img id="card-lightbox-img" src="" style="max-width:90vw;max-height:90vh;object-fit:contain;border-radius:12px;">
+        </div>
+    </div>
+
     <script>
     function openPanel(setCode, number) {
         var panel = document.getElementById('card-panel');
@@ -62,11 +70,34 @@
         }
     });
     window.addEventListener('keydown', function(e) {
-        if (e.key === 'Escape') { closePanel({target: document.getElementById('card-panel')}); }
+        if (e.key === 'Escape') {
+            var lb = document.getElementById('card-lightbox');
+            if (lb.classList.contains('open')) { lb.classList.remove('open'); return; }
+            var dd = document.getElementById('deep-dive-panel');
+            if (dd && dd.classList.contains('open')) { dd.classList.remove('open'); return; }
+            closePanel({target: document.getElementById('card-panel')});
+        }
     });
 
+    function closeDeepDive(e) {
+        if (e && e.target !== document.getElementById('deep-dive-panel')) return;
+        document.getElementById('deep-dive-panel').classList.remove('open');
+    }
+
+    function closeLightbox(e) {
+        if (e && e.target !== document.getElementById('card-lightbox')) return;
+        document.getElementById('card-lightbox').classList.remove('open');
+    }
+
     // ponytail: delegate click on .card-cell to open panel
+    // ponytail: delegate click on .card-zoom to lightbox (images without setCode/number)
     document.addEventListener('click', function(e) {
+        var img = e.target.closest('.card-zoom');
+        if (img) {
+            document.getElementById('card-lightbox-img').src = img.src;
+            document.getElementById('card-lightbox').classList.add('open');
+            return;
+        }
         var cell = e.target.closest('.card-cell');
         if (!cell) return;
         e.preventDefault();

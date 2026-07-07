@@ -89,6 +89,20 @@
             </div>
 
             <div id="db-result" style="margin-top: 0.75rem; font-size: 0.82rem;"></div>
+
+            <div id="embed-status" style="margin-top: 0.75rem; font-size: 0.82rem;">
+                {% if embed_status.building %}
+                <span style="color: var(--text-dim);">⏳ Embedding index: In Progress… (started {{ embed_status.started_at }})</span>
+                {% elif embed_status.built %}
+                <span style="color: #3fb950;">✓ Embedding index: Completed! {{ embed_status.cards }} cards indexed at {{ embed_status.built_at }}</span>
+                {% elif embed_status.error %}
+                <span style="color: #f85149;">✗ Embedding index: Failed — {{ embed_status.error }}</span>
+                {% else %}
+                <span style="color: var(--text-dim);">Embedding index: Not built.
+                    <button type="button" id="embed-build-btn" style="margin-left: 0.5rem; font-size: 0.78rem; padding: 2px 8px; cursor: pointer; background: var(--btn-bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px;">Build Now</button>
+                </span>
+                {% endif %}
+            </div>
         </div>
     </div>
 
@@ -177,6 +191,87 @@
     })();
     </script>
 
+    <script>
+    (function() {
+        var statusEl = document.getElementById('embed-status');
+        var buildBtn = document.getElementById('embed-build-btn');
+
+        // Auto-poll if building on page load
+        {% if embed_status.building %}
+        pollStatus();
+        {% endif %}
+
+        function pollStatus() {
+            fetch('/config/embed-status')
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.building) {
+                        statusEl.innerHTML = '<span style="color: var(--text-dim);">⏳ Embedding index: In Progress…</span>';
+                        setTimeout(pollStatus, 3000);
+                    } else if (data.built) {
+                        statusEl.innerHTML = '<span style="color: #3fb950;">✓ Embedding index: Completed! ' +
+                            data.cards.toLocaleString() + ' cards indexed at ' + data.built_at + '</span>';
+                    } else if (data.error) {
+                        statusEl.innerHTML = '<span style="color: #f85149;">✗ Embedding index: Failed — ' + data.error + '</span>';
+                    } else {
+                        statusEl.innerHTML = '<span style="color: var(--text-dim);">Embedding index: Not built.' +
+                            ' <button type="button" id="embed-build-btn" style="margin-left: 0.5rem; font-size: 0.78rem; padding: 2px 8px; cursor: pointer; background: var(--btn-bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px;">Build Now</button></span>';
+                        document.getElementById('embed-build-btn').addEventListener('click', buildNow);
+                    }
+                });
+        }
+
+        function buildNow() {
+            statusEl.innerHTML = '<span style="color: var(--text-dim);">⏳ Embedding index: In Progress…</span>';
+            fetch('/config/embed-build', { method: 'POST' })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.success) {
+                        setTimeout(pollStatus, 2000);
+                    } else if (data.error) {
+                        statusEl.innerHTML = '<span style="color: #f85149;">✗ ' + data.error + '</span>';
+                    }
+                });
+        }
+
+        if (buildBtn) {
+            buildBtn.addEventListener('click', buildNow);
+        }
+    })();
+    </script>
+
+    <div class="eval-config" style="margin-top: 1.5rem;">
+        <h2 class="eval-config-heading">Search Logic</h2>
+        <div style="padding: 1rem;">
+            <p style="margin:0 0 0.75rem 0; color:var(--text-dim); font-size:0.9rem;">
+                Controls how the "Find Similar" search on the
+                Commander Eval page works when looking for similar commanders.
+            </p>
+            <div class="eval-config-row">
+                <label for="similar_method">Similarity Method</label>
+                <select name="similar_method" id="similar_method" form="search-logic-form">
+                    <option value="embed" {% if similar_method == 'embed' %}selected{% endif %}>Semantic (AI-Powered)</option>
+                    <option value="legacy" {% if similar_method == 'legacy' %}selected{% endif %}>Legacy (TF-IDF Word Overlap)</option>
+                </select>
+                <span class="eval-config-hint">
+                    <strong>Semantic:</strong> Uses AI embedding vectors to find cards with similar meaning —
+                    catches reworded abilities, mechanical cousins, and conceptually similar designs.
+                    Requires the embedding index to be built.<br>
+                    <strong>Legacy:</strong> Classic TF-IDF word-overlap search that loosens match strictness
+                    across multiple rounds until it finds enough results. Works without embeddings.
+                </span>
+            </div>
+            <form method="post" id="search-logic-form" style="margin-top: 0.75rem;">
+                <input type="hidden" name="save_search_logic" value="1">
+                {# pass through existing config fields so Save doesn't wipe them #}
+                <input type="hidden" name="llm_backend" value="{{ llm_backend }}">
+                <input type="hidden" name="llm_base_url" value="{{ llm_base_url }}">
+                <input type="hidden" name="llm_model" value="{{ llm_model }}">
+                <button type="submit" class="eval-config-save" style="margin-left:0;">Save</button>
+            </form>
+        </div>
+    </div>
+
     <div class="eval-config" style="margin-top: 1.5rem;">
         <h2 class="eval-config-heading">Commander Eval Prompt</h2>
         <div style="padding: 1rem;">
@@ -197,19 +292,38 @@
     </div>
 
     <div class="eval-config" style="margin-top: 1.5rem;">
-        <h2 class="eval-config-heading">Expand Strategy Prompt</h2>
+        <h2 class="eval-config-heading">Deep Dive Prompt</h2>
         <div style="padding: 1rem;">
-            <textarea name="expand_prompt" form="expand-prompt-form" class="prompt-editor expand-prompt-area"
-                      placeholder="Enter system prompt for Strategy/Unique Build expansion…">{{ expand_prompt or default_expand_prompt }}</textarea>
-            <form method="post" id="expand-prompt-form" style="margin-top: 0.75rem;">
-                <input type="hidden" name="save_expand_prompt" value="1">
+            <textarea name="deepdive_prompt" form="deepdive-prompt-form" class="prompt-editor deepdive-prompt-area"
+                      placeholder="Enter system prompt for Strategy/Unique Build deep-dive…">{{ deepdive_prompt or default_deepdive_prompt }}</textarea>
+            <form method="post" id="deepdive-prompt-form" style="margin-top: 0.75rem;">
+                <input type="hidden" name="save_deepdive_prompt" value="1">
                 {# pass through existing config fields so Save doesn't wipe them #}
                 <input type="hidden" name="llm_backend" value="{{ llm_backend }}">
                 <input type="hidden" name="llm_base_url" value="{{ llm_base_url }}">
                 <input type="hidden" name="llm_model" value="{{ llm_model }}">
                 <div style="display:flex; gap:0.5rem;">
                     <button type="submit" class="eval-config-save" style="margin-left:0;">Save Prompt</button>
-                    <button type="button" id="reset-expand-prompt" class="eval-test-btn">Reset to Default</button>
+                    <button type="button" id="reset-deepdive-prompt" class="eval-test-btn">Reset to Default</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="eval-config" style="margin-top: 1.5rem;">
+        <h2 class="eval-config-heading">Verification Prompt</h2>
+        <div style="padding: 1rem;">
+            <textarea name="verify_prompt" form="verify-prompt-form" class="prompt-editor verify-prompt-area"
+                      placeholder="Enter system prompt for second-pass verification…">{{ verify_prompt or default_verify_prompt }}</textarea>
+            <form method="post" id="verify-prompt-form" style="margin-top: 0.75rem;">
+                <input type="hidden" name="save_verify_prompt" value="1">
+                {# pass through existing config fields so Save doesn't wipe them #}
+                <input type="hidden" name="llm_backend" value="{{ llm_backend }}">
+                <input type="hidden" name="llm_base_url" value="{{ llm_base_url }}">
+                <input type="hidden" name="llm_model" value="{{ llm_model }}">
+                <div style="display:flex; gap:0.5rem;">
+                    <button type="submit" class="eval-config-save" style="margin-left:0;">Save Prompt</button>
+                    <button type="button" id="reset-verify-prompt" class="eval-test-btn">Reset to Default</button>
                 </div>
             </form>
         </div>
@@ -221,8 +335,11 @@
 document.getElementById('reset-prompt').addEventListener('click', function() {
     document.querySelector('.eval-prompt-area').value = {{ default_prompt | tojson | safe }};
 });
-document.getElementById('reset-expand-prompt').addEventListener('click', function() {
-    document.querySelector('.expand-prompt-area').value = {{ default_expand_prompt | tojson | safe }};
+document.getElementById('reset-deepdive-prompt').addEventListener('click', function() {
+    document.querySelector('.deepdive-prompt-area').value = {{ default_deepdive_prompt | tojson | safe }};
+});
+document.getElementById('reset-verify-prompt').addEventListener('click', function() {
+    document.querySelector('.verify-prompt-area').value = {{ default_verify_prompt | tojson | safe }};
 });
 </script>
 

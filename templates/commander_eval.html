@@ -83,7 +83,7 @@
                 <span id="loading-step-text">Initializing…</span>
             </div>
             <div style="font-size:0.85rem; color:var(--text-muted, #888); display:flex; gap:1.5rem;">
-                <span>Step <span id="loading-step-num">1</span> of <span id="loading-step-total">5</span></span>
+                <span>Step <span id="loading-step-num">—</span> of <span id="loading-step-total">—</span></span>
                 <span>Elapsed: <span id="loading-elapsed">00:00</span></span>
             </div>
         </div>
@@ -108,6 +108,18 @@
     {% endif %}
 
     {% if analysis %}
+
+    {% set pipeline = analysis.get('_pipeline', {}) %}
+    {% if pipeline %}
+    {% set embed_ok = pipeline.get('embed') is none or pipeline.get('embed', 0) > 0 %}
+    {% set ws_total = pipeline.get('web_search', {}).values() | sum %}
+    {% if not embed_ok or ws_total == 0 %}
+    <div class="eval-notice" style="background:#1a1a2e; border-color:#4a3d6e; margin-bottom:1rem;">
+        {% if not embed_ok %}⚠ Card similarity index unavailable — analysis runs without card recommendations.{% endif %}
+        {% if ws_total == 0 %}⚠ Web search returned no results — analysis based on card text only.{% endif %}
+    </div>
+    {% endif %}
+    {% endif %}
 
     {% set verification = analysis.get('_verification', {}) %}
     {% if verification.get('warnings') %}
@@ -155,9 +167,9 @@
                     data-description="{{ strat.get('description', '') | e }}"
                     data-type="strategy"
                     {% set btn_key = 'strategy:' + strat.get('name', '') %}
-                    {% if saved_expands and saved_expands.get(btn_key) %}
+                    {% if saved_deepdives and saved_deepdives.get(btn_key) %}
                     data-done="1"
-                    {% endif %}>{% if saved_expands and saved_expands.get(btn_key) %}&check; {% endif %}Deep Dive</button>
+                    {% endif %}>{% if saved_deepdives and saved_deepdives.get(btn_key) %}&check; {% endif %}Deep Dive</button>
             <div class="expand-result" hidden></div>
         </div>
         {% endfor %}
@@ -191,9 +203,9 @@
                     data-description="{{ build.get('description', '') | e }}"
                     data-type="unique_build"
                     {% set btn_key = 'unique_build:' + build.get('name', '') %}
-                    {% if saved_expands and saved_expands.get(btn_key) %}
+                    {% if saved_deepdives and saved_deepdives.get(btn_key) %}
                     data-done="1"
-                    {% endif %}>{% if saved_expands and saved_expands.get(btn_key) %}&check; {% endif %}Deep Dive</button>
+                    {% endif %}>{% if saved_deepdives and saved_deepdives.get(btn_key) %}&check; {% endif %}Deep Dive</button>
             <div class="expand-result" hidden></div>
         </div>
         {% endfor %}
@@ -261,25 +273,12 @@
 </div>
 </div>
 
-{# Deep Dive side panel #}
-<div id="deep-dive-panel" class="card-panel-overlay" onclick="closeDeepDive(event)">
-    <div class="card-panel-sheet" id="deep-dive-panel-sheet">
+{# Deep Dive centered modal #}
+<div id="deep-dive-panel" class="deep-dive-overlay" onclick="closeDeepDive(event)">
+    <div class="deep-dive-sheet" id="deep-dive-panel-sheet">
         <div class="panel-loading">Loading…</div>
     </div>
 </div>
-
-<script>
-function closeDeepDive(e) {
-    if (e && e.target !== document.getElementById('deep-dive-panel')) return;
-    document.getElementById('deep-dive-panel').classList.remove('open');
-}
-window.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') {
-        var panel = document.getElementById('deep-dive-panel');
-        if (panel.classList.contains('open')) { panel.classList.remove('open'); }
-    }
-});
-</script>
 
 <script>
     // --- Analyze button: AJAX pipeline with loading indicator ---
@@ -288,32 +287,22 @@ window.addEventListener('keydown', function(e) {
         var loading = document.getElementById('analyze-loading');
         if (btn) {
             var analyzeUrl = window.location.pathname.replace(/\/$/, '') + '/analyze';
+            var progressUrl = window.location.pathname.replace(/\/eval.*/, '/eval/progress');
 
             btn.addEventListener('click', function(e) {
                 e.preventDefault();
                 btn.style.display = 'none';
                 loading.style.display = 'flex';
 
-                var steps = [
-                    'Loading card data…',
-                    'Searching deck guides…',
-                    'Searching strategy discussions…',
-                    'Searching community reviews…',
-                    'Searching unique archetypes…',
-                    'Searching mechanic rules…',
-                    'Analyzing with LLM…',
-                    'Verifying analysis…',
-                    'Processing results…',
-                ];
-                var stepNum = document.getElementById('loading-step-num');
                 var stepText = document.getElementById('loading-step-text');
+                var stepNum = document.getElementById('loading-step-num');
                 var stepTotal = document.getElementById('loading-step-total');
                 var elapsedEl = document.getElementById('loading-elapsed');
                 var start = Date.now();
 
-                stepTotal.textContent = steps.length;
-                stepNum.textContent = '1';
-                stepText.textContent = steps[0];
+                stepText.textContent = 'Starting…';
+                stepNum.textContent = '0';
+                stepTotal.textContent = '0';
 
                 var elapsedTimer = setInterval(function() {
                     var s = Math.floor((Date.now() - start) / 1000);
@@ -322,24 +311,24 @@ window.addEventListener('keydown', function(e) {
                     elapsedEl.textContent = m + ':' + sec;
                 }, 1000);
 
-                // Cycle steps
-                var stepIdx = 1;
-                var intervals = [500, 1500, 1500, 1500, 1500, 1500, 12000, 8000, 3000];
-                function advance() {
-                    if (stepIdx < steps.length) {
-                        stepNum.textContent = stepIdx + 1;
-                        stepText.textContent = steps[stepIdx];
-                        setTimeout(advance, intervals[stepIdx]);
-                        stepIdx++;
-                    }
-                }
-                setTimeout(advance, intervals[0]);
+                // Poll server for pipeline progress
+                var progressTimer = setInterval(function() {
+                    fetch(progressUrl)
+                        .then(function(r) { return r.json(); })
+                        .then(function(p) {
+                            stepNum.textContent = p.step;
+                            stepTotal.textContent = p.total;
+                            stepText.textContent = p.label;
+                        })
+                        .catch(function() { /* best-effort */ });
+                }, 1000);
 
                 // Fire the real work via fetch; reload when done
                 fetch(analyzeUrl, {method: 'POST'})
                     .then(function(r) { return r.json(); })
                     .then(function(data) {
                         clearInterval(elapsedTimer);
+                        clearInterval(progressTimer);
                         if (data.success) {
                             window.location.reload();
                         } else {
@@ -348,6 +337,7 @@ window.addEventListener('keydown', function(e) {
                     })
                     .catch(function(err) {
                         clearInterval(elapsedTimer);
+                        clearInterval(progressTimer);
                         window.location.href = window.location.pathname + '?error=' + encodeURIComponent('Network error: ' + err.message);
                     });
             });
@@ -366,9 +356,11 @@ window.addEventListener('keydown', function(e) {
         btn.addEventListener('click', function() {
             btn.textContent = 'Searching…';
             btn.disabled = true;
-            progressEl.textContent = 'Round 1 — scanning candidates…';
+            progressEl.textContent = 'Searching…';
             progressEl.hidden = false;
-            fetch(similarUrl, {method: 'POST'})
+            fetch(similarUrl, {method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: '{}'})
                 .then(function(r) { return r.json(); })
                 .then(function(data) {
                     btn.textContent = 'Find Similar';
@@ -396,7 +388,9 @@ window.addEventListener('keydown', function(e) {
             var section = document.getElementById('similar-commanders');
             var html = '';
             results.forEach(function(c) {
-                var imgSrc = 'https://cards.scryfall.io/normal/front/' + (c.scryfallId || '') + '.jpg';
+                var imgSrc = c.scryfallId
+                    ? '/img/normal/front/' + c.scryfallId[0] + '/' + c.scryfallId[1] + '/' + c.scryfallId + '.jpg'
+                    : '';
                 var imgHtml = c.scryfallId
                     ? '<img src="' + imgSrc + '" alt="' + c.name + '" loading="lazy" width="244" height="340">'
                     : '<div class="card-placeholder">' + c.name + '</div>';
@@ -477,6 +471,20 @@ window.addEventListener('keydown', function(e) {
                 });
                 html += '</div>';
             }
+            if (data.example_cards && data.example_cards.length) {
+                html += '<h2 style="font-size:0.85rem; margin-bottom:0.5rem;">Example Cards</h2><div style="display:flex; flex-wrap:wrap; gap:0.75rem; margin-bottom:1rem;">';
+                data.example_cards.forEach(function(rc) {
+                    var imgTag = rc.scryfallId
+                        ? '<img src="/img/normal/front/' + rc.scryfallId[0] + '/' + rc.scryfallId[1] + '/' + rc.scryfallId + '.jpg" alt="' + rc.name + '" loading="lazy" class="card-zoom" style="width:244px; height:340px; border-radius:10px; display:block; margin-bottom:0.3rem; cursor:pointer;">'
+                        : '<div class="card-placeholder" style="width:244px; height:340px;">' + rc.name + '</div>';
+                    var cellClass = rc.setCode && rc.number ? 'card-cell' : '';
+                    var cellAttrs = rc.setCode && rc.number ? ' data-set-code="' + rc.setCode + '" data-number="' + rc.number + '"' : '';
+                    html += '<div class="' + cellClass + '"' + cellAttrs + ' style="text-align:center;">' + imgTag
+                        + '<div style="font-size:0.78rem; font-weight:600; margin-bottom:0.15rem;">' + rc.name + '</div>'
+                        + '<div style="font-size:1rem; color:var(--text-dim); line-height:1.3;">' + (rc.reason || '') + '</div></div>';
+                });
+                html += '</div>';
+            }
             return html;
         }
 
@@ -498,8 +506,35 @@ window.addEventListener('keydown', function(e) {
                 '#analyze-area, #commander-search, #clear-commander, #export-report, #find-similar, #save-report, script, .eval-error, .expand-result'
             ).forEach(function(el) { el.remove(); });
 
-            // Build cache JSON for embedding in the export
-            var cacheJSON = JSON.stringify(window._deepDiveCache || {});
+            // Pre-fetch deepdive card images so example cards render offline.
+            var ddCache = window._deepDiveCache || {};
+            var ddImgPromises = [];
+            Object.keys(ddCache).forEach(function(key) {
+                var rc = ddCache[key].example_cards;
+                if (!rc) return;
+                rc.forEach(function(card) {
+                    if (!card.scryfallId) return;
+                    var url = '/img/normal/front/' + card.scryfallId[0] + '/' + card.scryfallId[1] + '/' + card.scryfallId + '.jpg';
+                    if (card._imgData) return;
+                    ddImgPromises.push(
+                        fetch(url)
+                            .then(function(r) { return r.blob(); })
+                            .then(function(blob) {
+                                return new Promise(function(resolve) {
+                                    var reader = new FileReader();
+                                    reader.onload = function() { card._imgData = reader.result; resolve(); };
+                                    reader.onerror = function() { resolve(); };
+                                    reader.readAsDataURL(blob);
+                                });
+                            })
+                            .catch(function() {})
+                    );
+                });
+            });
+
+            var ddCacheReady = ddImgPromises.length
+                ? Promise.all(ddImgPromises).then(function() { return ddCache; })
+                : Promise.resolve(ddCache);
 
             // Fetch and inline CSS so the export works offline
             var cssPromises = [];
@@ -517,16 +552,58 @@ window.addEventListener('keydown', function(e) {
                 cssPromises.push(Promise.resolve('<style>' + s.textContent + '</style>'));
             });
 
-            Promise.all(cssPromises).then(function(styles) {
-                var html = '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width, initial-scale=1.0">\n<title>'
-                    + document.title + '</title>\n'
-                    + styles.join('\n')
+            Promise.all([Promise.all(cssPromises), ddCacheReady]).then(function(results) {
+                var styles = results[0];
+                var ddCache = results[1];
+                var cacheJSON = JSON.stringify(ddCache);
+
+                // Inline all card images as base64 data URIs so the export works offline.
+                var imgs = clone.querySelectorAll('img[src^="/img/"]');
+                var imgPromises = [];
+                imgs.forEach(function(img) {
+                    var src = img.getAttribute('src');
+                    imgPromises.push(
+                        fetch(src)
+                            .then(function(r) { return r.blob(); })
+                            .then(function(blob) {
+                                return new Promise(function(resolve) {
+                                    var reader = new FileReader();
+                                    reader.onload = function() { resolve({src: src, data: reader.result}); };
+                                    reader.onerror = function() { resolve(null); };
+                                    reader.readAsDataURL(blob);
+                                });
+                            })
+                            .catch(function() { return null; })
+                    );
+                });
+
+                Promise.all(imgPromises).then(function(imgResults) {
+                    // Build src -> dataURI map
+                    var imgMap = {};
+                    (imgResults || []).forEach(function(r) {
+                        if (r) imgMap[r.src] = r.data;
+                    });
+
+                    var bodyHTML = clone.innerHTML;
+                    // Replace img src attributes with data URIs
+                    Object.keys(imgMap).forEach(function(src) {
+                        bodyHTML = bodyHTML.split('src="' + src + '"').join('src="' + imgMap[src] + '"');
+                    });
+
+                    var html = '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width, initial-scale=1.0">\n<title>'
+                        + document.title + '</title>\n'
+                        + styles.join('\n')
                     + '</head>\n<body style="max-width:900px; margin:2rem auto; padding:0 1rem; height:auto; overflow:visible; color:var(--text); background:var(--bg); font-family:sans-serif;">\n'
-                    + clone.innerHTML
+                    + bodyHTML
                     + '\n'
-                    // Self-contained deep-dive panel — matches live page behavior
+                    // Self-contained deep-dive panel + card lightbox — offline compatible
                     + '<div id="export-panel" class="card-panel-overlay" onclick="closeExportPanel(event)">'
                     + '<div class="card-panel-sheet" id="export-panel-sheet"><div class="panel-loading">Loading…</div></div></div>\n'
+                    + '<div id="card-lightbox" class="card-panel-overlay" onclick="closeLightbox(event)">'
+                    + '<div style="position:relative;margin:auto;max-width:90vw;max-height:90vh;">'
+                    + '<button class="panel-close" style="position:absolute;top:0;right:0;z-index:10;" onclick="closeLightboxClick()">&times;</button>'
+                    + '<img id="card-lightbox-img" src="" style="max-width:90vw;max-height:90vh;object-fit:contain;border-radius:12px;">'
+                    + '</div></div>\n'
                     + '<script>'
                     + 'var _deepDiveCache = ' + cacheJSON + ';\n'
                     + 'function buildPanelHTML(data,type,name){'
@@ -553,6 +630,21 @@ window.addEventListener('keydown', function(e) {
                     + 'h+=\'<div class="eval-strategy" style="padding:0.5rem 0.75rem;"><h3 style="font-size:0.8rem;">\'+(wc.name||"")+\'</h3><p style="font-size:0.78rem;">\'+(wc.description||"")+\'</p></div>\';'
                     + '});'
                     + 'h+=\'</div>\';}'
+                    + 'if(data.example_cards&&data.example_cards.length){'
+                    + 'h+=\'<h2 style="font-size:0.9rem;margin-bottom:0.5rem;">Example Cards</h2><div style="display:flex;flex-wrap:wrap;gap:0.75rem;margin-bottom:1rem;">\';'
+                    + 'data.example_cards.forEach(function(rc){'
+                    + 'var img=rc._imgData?\'<img src="\'+rc._imgData+\'" alt="\'+rc.name+\'" loading=lazy class=card-zoom style="width:244px;height:340px;border-radius:10px;display:block;margin-bottom:0.3rem;cursor:pointer">\''
+                    + ':rc.scryfallId?"<img src=/img/normal/front/"+rc.scryfallId[0]+"/"+rc.scryfallId[1]+"/"+rc.scryfallId+".jpg alt="+rc.name+" loading=lazy class=card-zoom style=width:244px;height:340px;border-radius:10px;display:block;margin-bottom:0.3rem;cursor:pointer>"'
+                    + ':"<div class=card-placeholder style=width:244px;height:340px>"+rc.name+"</div>";'
+                    + 'if(rc.setCode&&rc.number){'
+                    + 'h+=\'<div class="card-cell" data-set-code="\'+rc.setCode+\'" data-number="\'+rc.number+\'" style="text-align:center;">\'+img'
+                    + '}else{'
+                    + 'h+=\'<div style="text-align:center;">\'+img'
+                    + '}'
+                    + 'h+=\'<div style="font-size:0.72rem;font-weight:600;margin-bottom:0.15rem;">\'+(rc.name||"")+\'</div>\''
+                    + '+\'<div style="font-size:1rem;color:var(--text-dim);line-height:1.3;">\'+(rc.reason||"")+\'</div></div>\';'
+                    + '});'
+                    + 'h+=\'</div>\';}'
                     + 'return h;}'
                     + 'function openExportPanel(data,type,name){'
                     + 'document.getElementById("export-panel-sheet").innerHTML=buildPanelHTML(data,type,name);'
@@ -566,10 +658,19 @@ window.addEventListener('keydown', function(e) {
                     + 'if(e.key==="Escape")document.getElementById("export-panel").classList.remove("open");});'
                     + 'document.addEventListener("click",function(e){'
                     + 'var btn=e.target.closest(".btn-expand");'
-                    + 'if(!btn)return;'
+                    + 'if(btn){'
                     + 'var key=btn.dataset.type+":"+btn.dataset.name;'
                     + 'if(_deepDiveCache[key]){openExportPanel(_deepDiveCache[key],btn.dataset.type,btn.dataset.name);}'
-                    + '});'
+                    + 'return;}'
+                    + 'var img=e.target.closest(".card-zoom");'
+                    + 'if(img){'
+                    + 'document.getElementById("card-lightbox-img").src=img.src;'
+                    + 'document.getElementById("card-lightbox").classList.add("open");'
+                    + '}});'
+                    + 'function closeLightbox(e){'
+                    + 'if(e&&e.target!==document.getElementById("card-lightbox"))return;'
+                    + 'document.getElementById("card-lightbox").classList.remove("open");}'
+                    + 'function closeLightboxClick(){document.getElementById("card-lightbox").classList.remove("open");}'
                     + '<\/script>\n'
                     + '</body>\n</html>';
 
@@ -584,7 +685,8 @@ window.addEventListener('keydown', function(e) {
                 URL.revokeObjectURL(url);
             });
         });
-    })();
+    });
+})();
 
     // --- Commander search: autocomplete + drag-drop + clear ---
     (function() {
@@ -742,12 +844,12 @@ window.addEventListener('keydown', function(e) {
     (function() {
         var panel = document.getElementById('deep-dive-panel');
         var sheet = document.getElementById('deep-dive-panel-sheet');
-        var expandUrl = window.location.pathname.replace(/\/$/, '') + '/expand';
+        var deepdiveUrl = window.location.pathname.replace(/\/$/, '') + '/deepdive';
 
-        // Pre-seed from saved expands and expose for export (key: "strategy:Name" or "unique_build:Name")
+        // Pre-seed from saved deepdives and expose for export (key: "strategy:Name" or "unique_build:Name")
         window._deepDiveCache = {};
-        {% if saved_expands %}
-        {% for key, val in saved_expands.items() %}
+        {% if saved_deepdives %}
+        {% for key, val in saved_deepdives.items() %}
         window._deepDiveCache[{{ key | tojson }}] = {{ val | tojson }};
         {% endfor %}
         {% endif %}
@@ -787,6 +889,23 @@ window.addEventListener('keydown', function(e) {
                 html += '</div>';
             }
 
+            // Example Cards
+            if (data.example_cards && data.example_cards.length) {
+                html += '<h2 style="font-size:0.9rem; margin-bottom:0.5rem;">Example Cards</h2>';
+                html += '<div style="display:flex; flex-wrap:wrap; gap:0.75rem; margin-bottom:1rem;">';
+                data.example_cards.forEach(function(rc) {
+                    var imgTag = rc.scryfallId
+                        ? '<img src="/img/normal/front/' + rc.scryfallId[0] + '/' + rc.scryfallId[1] + '/' + rc.scryfallId + '.jpg" alt="' + rc.name + '" loading="lazy" class="card-zoom" style="width:244px; height:340px; border-radius:10px; display:block; margin-bottom:0.3rem; cursor:pointer;">'
+                        : '<div class="card-placeholder" style="width:244px; height:340px;">' + rc.name + '</div>';
+                    var cellCls = rc.setCode && rc.number ? 'card-cell' : '';
+                    var cellAttr = rc.setCode && rc.number ? ' data-set-code="' + rc.setCode + '" data-number="' + rc.number + '"' : '';
+                    html += '<div class="' + cellCls + '"' + cellAttr + ' style="text-align:center;">' + imgTag
+                        + '<div style="font-size:0.78rem; font-weight:600; margin-bottom:0.15rem;">' + rc.name + '</div>'
+                        + '<div style="font-size:1rem; color:var(--text-dim); line-height:1.3;">' + (rc.reason || '') + '</div></div>';
+                });
+                html += '</div>';
+            }
+
             return html;
         }
 
@@ -816,7 +935,7 @@ window.addEventListener('keydown', function(e) {
             sheet.innerHTML = '<div class="analyze-loading" style="display:flex; padding:1.5rem;"><span class="spinner"></span> <span style="color:var(--text-dim); font-size:0.85rem;">Generating deep-dive…</span></div>';
             panel.classList.add('open');
 
-            fetch(expandUrl, {
+            fetch(deepdiveUrl, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({

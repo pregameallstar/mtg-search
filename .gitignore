@@ -33,3 +33,9 @@ QA*.md
 
 # Saved eval reports
 eval_reports/*.json
+
+# Embedding index (generated, large)
+embeddings/
+
+# Lazy image cache (generated, large)
+images/

@@ -8,6 +8,8 @@ import sys
 
 def _parse_json(text):
     """Parse JSON from LLM output, robust against common formatting mistakes."""
+    if not text or not text.strip():
+        raise ValueError("LLM returned empty response")
     # Strip markdown code fences
     text = text.strip()
     if text.startswith("```"):
@@ -24,6 +26,18 @@ def _parse_json(text):
     # Fix trailing commas before } or ]
     text = re.sub(r",\s*([}\]])", r"\1", text)
 
+    # Fix missing commas between JSON tokens
+    # ponytail: LLMs often forget commas between array elements or object pairs.
+    # These patterns match two adjacent JSON values without a comma between them.
+    text = re.sub(r'"\s*\n\s*"', '",\n"', text)          # "val"\n"val"  — string followed by string
+    text = re.sub(r'"\s*\n\s*\{', '",\n{', text)          # "val"\n{      — string followed by object
+    text = re.sub(r'}\s*\n\s*"', '},\n"', text)           # }\n"val"      — object followed by string
+    text = re.sub(r'}\s*\n\s*\{', '},\n{', text)          # }\n{          — object followed by object
+    text = re.sub(r'\]\s*\n\s*"', '],\n"', text)          # ]\n"val"      — array close followed by string
+    text = re.sub(r'\]\s*\n\s*\{', '],\n{', text)         # ]\n{          — array close followed by object
+    text = re.sub(r'(\d+|true|false|null)\s*\n\s*"', r'\1,\n"', text)  # number/bool\n"val"
+    text = re.sub(r'(\d+|true|false|null)\s*\n\s*\{', r'\1,\n{', text)  # number/bool\n{
+
     # Fix unescaped newlines/tabs inside quoted strings (LLMs sometimes do this)
     def _fix_strings(m):
         inner = m.group(1)
@@ -33,6 +47,11 @@ def _parse_json(text):
         return '"' + inner + '"'
 
     text = re.sub(r'"([^"\\]*(?:\\.[^"\\]*)*)"', _fix_strings, text)
+
+    # ponytail: fix invalid JSON escape sequences — LLMs sometimes use
+    # Python/shell escaping in JSON (e.g. \', \=, \s). Valid JSON escapes:
+    # \" \\ \/ \b \f \n \r \t \uXXXX. Drop the backslash on others.
+    text = re.sub(r'\\([^"\\\/bfnrtu])', r'\1', text)
 
     try:
         return json.loads(text)
@@ -87,9 +106,14 @@ def _anthropic(api_key, model, system_prompt, user_prompt):
     client = anthropic.Anthropic(api_key=api_key)
     resp = client.messages.create(
         model=model,
-        max_tokens=4096,
+        max_tokens=8192,
         system=system_prompt,
         messages=[{"role": "user", "content": user_prompt}],
     )
-    text = resp.content[0].text
+    # ponytail: skip thinking/reasoning blocks, find the text response
+    text = ""
+    for block in resp.content:
+        if hasattr(block, "text"):
+            text = block.text
+            break
     return _parse_json(text)

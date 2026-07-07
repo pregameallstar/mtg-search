@@ -1,0 +1,1408 @@
+{
+  "test_ran_at": "2026-07-06T23:03:06.613247+00:00",
+  "commanders_tested": 3,
+  "results": [
+    {
+      "commander": {
+        "name": "Captain Ripley Vance",
+        "set_code": "CMM",
+        "number": "209"
+      },
+      "analyze": {
+        "ok": true,
+        "filename": "CMM_209_2026-07-06T22-51-24.190081+00-00.json"
+      },
+      "deepdives": [
+        {
+          "type": "strategy",
+          "item": {
+            "name": "Spellslinger Burn",
+            "description": "Focusing on casting low-cost cantrips and burn spells to maximize the number of spells per turn. The goal is to consistently hit the three-spell threshold, achieving both counter growth and immediate damage pings that chip away at opponents' life totals."
+          },
+          "result": {
+            "_pipeline": {
+              "embed": 80,
+              "web_search": {
+                "deck_guides": 5,
+                "discussion": 5,
+                "strategy": 5
+              }
+            },
+            "_verification": {
+              "verified": true,
+              "warnings": []
+            },
+            "example_cards": [
+              {
+                "name": "Eidolon of the Great Revel",
+                "number": "12",
+                "reason": "This card serves as the primary synergistic engine: it rewards the core action (casting cheap spells) by dealing direct damage, immediately compounding the burn damage before Vance even triggers.",
+                "scryfallId": "976452de-9cc9-4ca7-8c32-e384e5607149",
+                "setCode": "EA2"
+              },
+              {
+                "name": "Firebrand Archer",
+                "number": "196",
+                "reason": "This is a foundational utility piece that ensures every single noncreature spell cast contributes to the burn plan. It maximizes the value of cantrips and low-cost interaction spells, which are the lifeblood of the strategy.",
+                "scryfallId": "fe0312f1-4c98-4b7f-8a34-0059ea80edef",
+                "setCode": "FDN"
+              },
+              {
+                "name": "Inner-Flame Igniter",
+                "number": "120",
+                "reason": "This card acts as a specialized payoff piece that directly mirrors Vance's mechanic (triggering on the third ability use). It rewards counter growth and provides an early First Strike threat, accelerating both board presence and damage output.",
+                "scryfallId": "107b3dbc-fc02-4548-90cf-844da42db13f",
+                "setCode": "MM2"
+              }
+            ],
+            "priorities": [
+              {
+                "category": "Mana Curve",
+                "reason": "The deck must be packed with 1- and 2-mana noncreature instant/sorcery cards (cantrips, removal). This ensures that reaching the third spell threshold is consistent."
+              },
+              {
+                "category": "Cantrip Density",
+                "reason": "Card selection is paramount. The goal is not just to cast spells, but to draw into multiple cheap spells over a turn, maintaining engine fuel for repeated triggers."
+              },
+              {
+                "category": "Synergistic Payoffs",
+                "reason": "Including cards that generate damage or counters *whenever* a spell is cast ensures that even when Vance isn't the primary trigger, resources are still being expended to push chip damage toward victory."
+              }
+            ],
+            "strengths": [
+              "Massive Mana Efficiency: The core strategy relies on low-mana cantrips and burn spells, allowing the player to cast 3+ spells with very little total resource expenditure.",
+              "Repeatable Trigger Loop: Cards like Eidolon of the Great Revel and Firebrand Archer provide immediate damage payoffs every time a noncreature spell is successfully cast, amplifying the overall board state before Vance even triggers.",
+              "Cumulative Threat Growth: The +1/+1 counters placed on Captain Ripley Vance allow her to become an ever-increasing threat that deals significantly more burn damage with each trigger.",
+              "High Tempo Play: Because the primary goal involves casting many spells quickly, the deck naturally operates at a high tempo, constantly pressuring opponents' life totals."
+            ],
+            "weaknesses": [
+              "Vulnerability to Board Wipes: Since the engine relies on keeping cheap noncreature spells in hand and having creatures on board (like Eidolon of the Great Revel), mass removal can severely hamper the game plan.",
+              "Reliance on Casting Spells: If counterspells are used, or if the opponent successfully disrupts the casting sequence, the entire primary damage source (Vance) stalls.",
+              "Lack of Scalable Board Presence: While Vance grows, the deck's primary interaction is direct damage and small creatures. It struggles against opponents who build resilient boards that require combat removal.",
+              "Engine Dependence: The strategy is highly dependent on maintaining a consistent flow of cheap spells; running out of cantrips or burn targets halts the momentum."
+            ],
+            "win_conditions": [
+              {
+                "description": "By continuously casting cheap spells, the deck generates persistent pings of damage from multiple sources (Eidolon, Firebrand Archer, and Vance herself). This chip damage goal is reliable and difficult to stabilize against.",
+                "name": "Overwhelming Burn Damage"
+              },
+              {
+                "description": "If the board state allows it, maximizing counter growth on Captain Ripley Vance until she reaches sufficiently high power. Her final trigger can deal massive amounts of unexpected burn damage in a single turn.",
+                "name": "The Game-Ending Trigger"
+              }
+            ]
+          },
+          "ok": true
+        },
+        {
+          "type": "strategy",
+          "item": {
+            "name": "Voltron Escalation",
+            "description": "Treating Captain Ripley Vance as a primary attacker (a Voltron threat). The strategy revolves around accumulating +1/+1 counters through the third-spell trigger and stacking power/toughness to make it an overwhelming force that cannot be ignored, culminating in a lethal blow."
+          },
+          "result": {
+            "_pipeline": {
+              "embed": 66,
+              "web_search": {
+                "deck_guides": 5,
+                "discussion": 5,
+                "strategy": 5
+              }
+            },
+            "_verification": {
+              "verified": true,
+              "warnings": []
+            },
+            "example_cards": [
+              {
+                "name": "Arena Trickster",
+                "number": "126",
+                "reason": "Serves as a consistent Support Piece, providing repeatable counter generation outside of the commander's primary trigger. This helps build up power even when the player cannot cast enough spells to hit the 'third spell' mark.",
+                "scryfallId": "e096049d-9f02-4abb-bb5a-97b14fd17099",
+                "setCode": "THB"
+              },
+              {
+                "name": "Extremis Elite",
+                "number": "763",
+                "reason": "Acts as a Payoff Piece, allowing for massive burst counter generation on demand. Its 'Power-up' mechanic provides repeatable ways to stack multiple counters quickly, bypassing the need for strict trigger timing.",
+                "scryfallId": "102840eb-2fc2-4e93-ac60-035160b4a182",
+                "setCode": "MSC"
+              },
+              {
+                "name": "Pyrostatic Pillar",
+                "number": "B25",
+                "reason": "Functions as an early Support Enabler/Pressure Engine. It rewards the very act of playing low-cost spells (which is necessary to hit Ripley's 'third spell' trigger) by providing consistent damage against opponents, accelerating the win condition.",
+                "scryfallId": "b08185a4-a0b6-4bfc-9611-cf3256e2fa54",
+                "setCode": "TD0"
+              }
+            ],
+            "priorities": [
+              {
+                "category": "Spellslinger Density",
+                "reason": "The core engine requires casting multiple cheap spells (especially 3rd, 6th, 9th, etc.) per turn to generate the counters and damage required for the payoff."
+              },
+              {
+                "category": "Counter Generation Consistency",
+                "reason": "Reliable ways to generate +1/+1 counters are critical. These act as both resources (damage) and power multipliers for Ripley's attack."
+              },
+              {
+                "category": "Low Mana Curve",
+                "reason": "To maintain spell density, the deck needs a high proportion of 1-3 mana spells to ensure triggers fire reliably throughout the game."
+              }
+            ],
+            "strengths": [
+              "The exponential scaling of counters allows for explosive combat damage (Voltron).",
+              "The primary trigger rewards high spell density, encouraging a spellslinger approach.",
+              "Counter stacking mechanics enable repeated burst damage that can quickly overwhelm defenses.",
+              "Red's aggressive nature complements the strategy by promoting low-cost, high-volume spells."
+            ],
+            "weaknesses": [
+              "The entire plan relies on casting a consistent number of spells (3rd spell trigger). If the board is wiped or removal slows down the spell flow, the engine stalls.",
+              "Counter manipulation effects (e.g., bounce, permanent counter removal) can completely neutralize accumulated power and damage potential.",
+              "Reliance on generating multiple copies of low-cost spells makes the deck susceptible to targeted spot removal against key enablers."
+            ],
+            "win_conditions": [
+              {
+                "description": "By stacking multiple +1/+1 counters, Captain Ripley Vance grows into an insurmountable threat. The resulting power/toughness allows her to deal lethal damage in combat or through her trigger effect.",
+                "name": "Overwhelming Combat Damage"
+              }
+            ]
+          },
+          "ok": true
+        },
+        {
+          "type": "strategy",
+          "item": {
+            "name": "Tempo Control Engine",
+            "description": "Utilizing repeatable instant or sorcery effects (like removal) not only for board control but also to contribute to the spell count. This approach uses interaction as fuel, ensuring that even defensively cast spells help advance the commander's power and damage output."
+          },
+          "result": {
+            "_pipeline": {
+              "embed": 69,
+              "web_search": {
+                "deck_guides": 5,
+                "discussion": 5,
+                "strategy": 5
+              }
+            },
+            "_verification": {
+              "verified": true,
+              "warnings": []
+            },
+            "example_cards": [
+              {
+                "name": "Pyrostatic Pillar",
+                "number": "B25",
+                "reason": "This card serves as a passive, repeatable burn engine that specifically rewards opponents for casting cheap spells. It ensures that even if the player is focused on removal, the opponent's actions contribute to the overall damage plan.",
+                "scryfallId": "b08185a4-a0b6-4bfc-9611-cf3256e2fa54",
+                "setCode": "TD0"
+              },
+              {
+                "name": "Kessig Flamebreather",
+                "number": "431",
+                "reason": "This creature acts as a direct reward mechanism for the core strategy: casting noncreature spells. It turns every piece of interaction or utility spell into immediate, unavoidable burn damage against the opponents.",
+                "scryfallId": "04d9b71a-cbe6-4187-8fac-84d8ccd9a9cb",
+                "setCode": "DBL"
+              },
+              {
+                "name": "Ashling the Pilgrim",
+                "number": "205",
+                "reason": "This card models the payoff potential of the strategy perfectly. Its ability requires multiple triggers (multiple casts resolving) to reach its massive climax, mirroring how Ripley Vance builds up counters and hits a critical damage spike on her third trigger.",
+                "scryfallId": "4c687123-6c34-4aef-8350-70a72b5fb58f",
+                "setCode": "CMM"
+              }
+            ],
+            "priorities": [
+              {
+                "category": "Interaction Spells",
+                "reason": "The strategy requires repeatable, low-cost spells (especially instants and sorceries) that are cast defensively. These cards are the 'fuel' for running Ripley Vance."
+              },
+              {
+                "category": "Card Selection/Cantrips",
+                "reason": "To ensure reliable casting of the 1st, 2nd, and 3rd spell each turn, efficient card draw or cantrip effects that cost minimal mana are critical to maintaining a steady flow of spells."
+              },
+              {
+                "category": "Damage Payoffs",
+                "reason": "The deck must include powerful payoffs (like those scaling with multiple triggers) that can close the game when Ripley Vance's damage output reaches critical mass."
+              }
+            ],
+            "strengths": [
+              "The ability to treat defensive interaction (like removal or counterspells) as offensive fuel, ensuring the commander's power grows even when playing reactively.",
+              "The strategy establishes a repeatable damage engine by leveraging permanent enchantments and creatures that trigger off any spell being cast, providing consistent burn damage alongside Ripley's combat damage.",
+              "By utilizing multiple cheap spells (the 1st and 2nd spells), the deck can force opponents into casting additional, often high-value, low-cost spells, which then fuel both board control and Ripley's triggers.",
+              "The escalating nature of the commander's ability means that successful turns create a growing clock, making it difficult for opponents to stall or stabilize."
+            ],
+            "weaknesses": [
+              "The entire strategy hinges on casting multiple spells per turn; disruption like mass counterspells or removal of key permanents (like enchantments) can halt the engine immediately.",
+              "If the board state is cleared by an opponent's wipe effect, the deck loses its primary source of value and cannot capitalize on built-up counters until creatures reappear.",
+              "The damage output relies heavily on hitting the third spell trigger. If many turns pass without casting three spells in a row (e.g., due to sequencing or board stalls), Ripley's threat level drops significantly.",
+              "Over-reliance on cheap instant/sorceries can make the deck vulnerable to targeted spot removal of key interaction pieces."
+            ],
+            "win_conditions": [
+              {
+                "description": "By consistently casting spells, Captain Ripley Vance grows its power and deals accumulating direct damage each turn. The goal is to scale the counter growth until the cumulative damage output overwhelms opposing life totals.",
+                "name": "Direct Damage Overrun"
+              }
+            ]
+          },
+          "ok": true
+        },
+        {
+          "type": "unique_build",
+          "item": {
+            "name": "Pauper Spellslinger",
+            "description": "A budget-conscious approach that leverages the commander's ability with extremely low-cost common and uncommon cards (e.g., cantrips, cheap burn spells). This focuses on maximizing spell count density regardless of card rarity."
+          },
+          "result": {
+            "_pipeline": {
+              "embed": 57,
+              "web_search": {
+                "deck_guides": 5,
+                "discussion": 5,
+                "strategy": 5
+              }
+            },
+            "_verification": {
+              "verified": true,
+              "warnings": []
+            },
+            "example_cards": [
+              {
+                "name": "Emeritus of Conflict // Lightning Bolt",
+                "number": "113",
+                "reason": "This card is a perfect mechanical enabler, directly rewarding the casting of the 3rd spell with counter-triggers. Its low mana cost and ability to generate repeatable value make it ideal for a Pauper Spellslinger approach.",
+                "scryfallId": "f58dba4f-1abb-47a3-a684-29c32bab95c0",
+                "setCode": "SOS"
+              },
+              {
+                "name": "Ashling the Pilgrim",
+                "number": "205",
+                "reason": "This card serves as a powerful payoff piece. It specifically rewards reaching the third trigger count, delivering massive, game-ending damage that scales dramatically with sustained spellcasting.",
+                "scryfallId": "4c687123-6c34-4aef-8350-70a72b5fb58f",
+                "setCode": "CMM"
+              },
+              {
+                "name": "Eidolon of the Great Revel",
+                "number": "12",
+                "reason": "This is essential support, defining the 'Pauper Spellslinger' subtheme. It ensures that every cheap cantrip or burn spell cast (the core engine) contributes immediate, consistent damage to the opponent.",
+                "scryfallId": "976452de-9cc9-4ca7-8c32-e384e5607149",
+                "setCode": "EA2"
+              }
+            ],
+            "priorities": [
+              {
+                "category": "Cantrips and Draw Engines",
+                "reason": "To reliably ensure that multiple low-cost spells are cast within a single turn, maintaining the high volume of triggers needed for Ripley's ability."
+              },
+              {
+                "category": "Low-Cost Damage Payoffs",
+                "reason": "Including cards like Eidolon of the Great Revel ensures that even non-combat damage sources contribute to the overall damage plan and reward the low mana curve strategy."
+              },
+              {
+                "category": "Tutors for Utility Spells",
+                "reason": "Since the entire deck hinges on casting specific, cheap spells quickly, having access to critical interaction (removal, draw) is paramount. Consistency trumps power level in this budget build."
+              }
+            ],
+            "strengths": [
+              "The synergy between cheap cantrips/burn spells and Ripley's ability allows for extreme spell density, maximizing trigger frequency.",
+              "The Pauper focus ensures that the deck remains highly resilient to budget constraints while maintaining a low mana curve necessary for rapid casting of multiple spells.",
+              "Multiple cards reward specific spell counts (2nd or 3rd), creating compounding damage and counter-attack potential upon triggering Ripley's ability.",
+              "The damage output is consistent, scaling with the number of cheap spells cast, allowing for reliable damage over time that bypasses high toughness creatures."
+            ],
+            "weaknesses": [
+              "The strategy requires a massive amount of card draw and low-cost interaction; if the initial few turns are disrupted or blocked by board wipes, the engine stalls.",
+              "Reliance on triggering effects makes the deck susceptible to spot removal targeting key permanents before optimal spell sequencing is achieved.",
+              "The damage dealt by Ripley can be easily absorbed by opponents with high amounts of indestructible or protection effects, requiring follow-up combos.",
+              "If counterspells are used excessively on cheap cantrips (the primary enablers), the player may struggle to reach the 3rd spell threshold."
+            ],
+            "win_conditions": [
+              {
+                "description": "By chaining multiple low-cost spells, Captain Ripley Vance gains increasingly large power and deals a massive amount of damage directly to an opponent's life total or creatures.",
+                "name": "Overwhelming Combat Damage"
+              },
+              {
+                "description": "The cumulative damage from cheap enchantments (like Eidolon) combined with the burst damage from multiple triggered effects rapidly depletes opponent health and board state.",
+                "name": "Damage Through Synergy"
+              }
+            ]
+          },
+          "ok": true
+        },
+        {
+          "type": "unique_build",
+          "item": {
+            "name": "Instant Combo Engine",
+            "description": "Building around repeatable instant effects or triggered abilities that are hard to remove, allowing the player to reliably cast three different types of spells (or three copies of a low-cost spell) even if opponents try to disrupt the board."
+          },
+          "result": {
+            "_pipeline": {
+              "embed": 51,
+              "web_search": {
+                "deck_guides": 5,
+                "discussion": 5,
+                "strategy": 5
+              }
+            },
+            "_verification": {
+              "verified": true,
+              "warnings": []
+            },
+            "example_cards": [
+              {
+                "name": "Emeritus of Conflict // Lightning Bolt",
+                "number": "113",
+                "reason": "This card directly mirrors the commander's core ability trigger ('Whenever you cast your third spell each turn'), making it a primary payoff engine. It ensures that even if Ripley is removed, another powerful source exists to capitalize on casting volume and deal damage.",
+                "scryfallId": "f58dba4f-1abb-47a3-a684-29c32bab95c0",
+                "setCode": "SOS"
+              },
+              {
+                "name": "Pyrostatic Pillar",
+                "number": "B25",
+                "reason": "This serves as essential support by providing consistent, low-cost damage whenever the spellslinger core performs its function. It rewards the fundamental act of casting cheap instant/sorcery spells needed to reach the three-spell threshold.",
+                "scryfallId": "b08185a4-a0b6-4bfc-9611-cf3256e2fa54",
+                "setCode": "TD0"
+              },
+              {
+                "name": "Ashling the Pilgrim",
+                "number": "205",
+                "reason": "This is a high-impact payoff piece that scales payoffs beyond Ripley's single attack. By triggering on the third ability resolution, it allows for massive counter stacking and dealing significant damage to multiple opponents or threats in a single turn.",
+                "scryfallId": "4c687123-6c34-4aef-8350-70a72b5fb58f",
+                "setCode": "CMM"
+              }
+            ],
+            "priorities": [
+              {
+                "category": "Mana Acceleration",
+                "reason": "The ability to cast three spells reliably requires increasing the speed and volume of low-cost mana sources (ramp), making every untapped land or acceleration artifact critical."
+              },
+              {
+                "category": "Cantrips/Draw Engines",
+                "reason": "Fast, cheap cards that draw through the deck are vital for setting up the three required triggers while simultaneously providing card advantage to fuel future turns."
+              },
+              {
+                "category": "Protection for Triggers",
+                "reason": "The core synergy is fragile. Counterspells or targeted removal aimed at key trigger pieces (like Ashling) must be mitigated through countermagic or indestructibility effects."
+              }
+            ],
+            "strengths": [
+              "High redundancy in triggers: The strategy relies on multiple card types (spells) triggering effects that scale with casting volume.",
+              "Compounding damage and power increases: By stacking +1/+1 counters (via Ripley, Ashling, or other sources), the damage dealt by the third spell grows exponentially each turn.",
+              "Efficiency of resource deployment: The focus on low-cost instant/sorcery spells ensures that the necessary trigger volume can be achieved even when resources are light.",
+              "High tempo feel: Since the engine revolves around casting multiple cheap spells, it allows the player to maintain board presence and pressure opponents every turn."
+            ],
+            "weaknesses": [
+              "Vulnerability to counterspells: Since the entire engine relies on resolving three specific spells, a well-timed counterspell targeting any of those key triggers can halt the combo entirely.",
+              "Reliance on consistent mana flow: If the player cannot generate enough mana early enough to cast 3+ low-cost spells, the core engine stalls.",
+              "Difficulty maintaining tempo against board wipes: While the damage output is high, if the entire board state or the commander itself is removed by mass removal, the game plan must restart.",
+              "Limited interaction beyond burn/combat: The deck excels at dealing direct damage but lacks robust mechanisms for generating card advantage outside of general spellslinger effects."
+            ],
+            "win_conditions": [
+              {
+                "description": "By consistently fulfilling the third spell requirement, Captain Ripley Vance stacks counters and deals escalating damage each turn. This repeatable, reliable source of combat damage overwhelms opponents' life totals.",
+                "name": "Overwhelming Combat Damage"
+              }
+            ]
+          },
+          "ok": true
+        },
+        {
+          "type": "unique_build",
+          "item": {
+            "name": "Non-Creature Focus",
+            "description": "A strategy dedicated entirely to non-creature permanents (instants, sorceries, enchantments). This maximizes the efficiency of spellslinger payoffs while keeping the commander's battlefield presence focused on damage output rather than board state management."
+          },
+          "result": {
+            "_pipeline": {
+              "embed": 54,
+              "web_search": {
+                "deck_guides": 5,
+                "discussion": 5,
+                "strategy": 5
+              }
+            },
+            "_verification": {
+              "verified": true,
+              "warnings": []
+            },
+            "example_cards": [
+              {
+                "name": "Kessig Flamebreather",
+                "number": "431",
+                "reason": "This card acts as the core synergy generator. It directly rewards the unique build's main action (casting non-creature spells) by dealing damage to every opponent, making every spell cast contribute to the overall burn plan.",
+                "scryfallId": "04d9b71a-cbe6-4187-8fac-84d8ccd9a9cb",
+                "setCode": "DBL"
+              },
+              {
+                "name": "Pyromancer's Assault",
+                "number": "297",
+                "reason": "This serves as a strong scaling payoff. It rewards the consistent casting of multiple non-creature spells (specifically the second one), creating linear, cumulative damage that complements Ripley\u2019s growing threat.",
+                "scryfallId": "4f7dfeb0-2569-48cf-8220-76db84a779c8",
+                "setCode": "PIO"
+              },
+              {
+                "name": "Pyrostatic Pillar",
+                "number": "B25",
+                "reason": "This is the early sustained pressure engine. By rewarding any cheap non-creature spell cast at any time during the game (MV 3 or less), it ensures that even common cantrips keep the board damage ticking up, setting up Ripley's later massive hit.",
+                "scryfallId": "b08185a4-a0b6-4bfc-9611-cf3256e2fa54",
+                "setCode": "TD0"
+              }
+            ],
+            "priorities": [
+              {
+                "category": "Card Advantage Draw/Cantrips",
+                "reason": "To ensure the consistent casting of multiple non-creature spells required to trigger Ripley's ability and fuel supporting payoffs like Pyrostatic Pillar or Kessig Flamebreather."
+              },
+              {
+                "category": "Ramp (Mana Acceleration)",
+                "reason": "Early mana acceleration is critical for dropping high-impact, non-creature sorceries and enchantments quickly, allowing the three-spell trigger to happen earlier than expected."
+              },
+              {
+                "category": "Interaction/Counterspells",
+                "reason": "Controlling the flow of spells ensures that opponents cannot easily stifle our cumulative spell casting, which is the engine of this entire strategy."
+              }
+            ],
+            "strengths": [
+              "The continuous scaling damage output from Captain Ripley Vance (R) acts as a built-in, escalating threat.",
+              "Focusing exclusively on non-creature spells maximizes synergy with dedicated spellslinger payoffs that ignore creature costs or types.",
+              "Reliable damage generation comes from multiple sources (e.g., Kessig Flamebreather, Pyrostatic Pillar), ensuring consistent board pressure even if Ripley is removed.",
+              "Non-creature effects facilitate high card velocity and resource management by allowing the casting of cheap cantrips to set up larger spells."
+            ],
+            "weaknesses": [
+              "The strategy relies heavily on having enough spell volume; if opponents interrupt or remove key non-creature permanents, the tempo can drop sharply.",
+              "Ripley's damage is tied directly to its current power/counters, making it vulnerable to board wipes that target +1/+1 counters.",
+              "If the early spells are too expensive, generating the necessary three spells per turn cycle becomes challenging and slow.",
+              "The build lacks dedicated removal or interaction outside of targeted instants, potentially struggling against opponents with overwhelming board presence."
+            ],
+            "win_conditions": [
+              {
+                "description": "The primary win condition involves chaining multiple non-creature spells to trigger Captain Ripley Vance repeatedly. Each trigger enhances its power and deals escalating burn damage, chipping away at opponents' life totals until victory.",
+                "name": "Attrition Through Damage Pinging"
+              }
+            ]
+          },
+          "ok": true
+        }
+      ],
+      "ok": true
+    },
+    {
+      "commander": {
+        "name": "Kestia, the Cultivator",
+        "set_code": "C18",
+        "number": "42"
+      },
+      "analyze": {
+        "ok": true,
+        "filename": "C18_42_2026-07-06T22-55-32.886503+00-00.json"
+      },
+      "deepdives": [
+        {
+          "type": "strategy",
+          "item": {
+            "name": "Aggro Enchantress Assault",
+            "description": "Focus on casting as many Bestow creatures and Auras as possible to maximize the number of bodies. Each attack provides a massive +4/+4 boost, aiming to overwhelm opponents through sheer combat damage before they can react."
+          },
+          "result": {
+            "_pipeline": {
+              "embed": 138,
+              "web_search": {
+                "deck_guides": 5,
+                "discussion": 5,
+                "strategy": 5
+              }
+            },
+            "_verification": {
+              "verified": true,
+              "warnings": []
+            },
+            "example_cards": [
+              {
+                "name": "Nyxborn Shieldmate",
+                "number": "21",
+                "reason": "This low-cost Bestow creature serves as an excellent initial enabler. Its small mana cost and immediate pump (+1/+2) allow the player to build board presence quickly, setting up the core army for Kestia's massive boosts.",
+                "scryfallId": "64204816-6e1d-4bf8-acd0-8f83ca7eb8c7",
+                "setCode": "BNG"
+              },
+              {
+                "name": "Take Flight",
+                "number": "65",
+                "reason": "This Aura is a critical synergy piece that directly amplifies Kestia's ability. It ensures that simply attacking with the creature grants repeatable card draw, fueling the aggressive tempo and maintaining the hand size needed for continuous assaults.",
+                "scryfallId": "46a2108e-e45e-4b21-a03b-5f644b6043be",
+                "setCode": "BRO"
+              },
+              {
+                "name": "Nylea's Emissary",
+                "number": "168",
+                "reason": "This serves as a powerful payoff threat. It provides not only an early body but also scales its power with Bestow, granting Trample and reaching higher combat numbers necessary to push through damage against blocked opponents.",
+                "scryfallId": "2f133775-09b3-4df4-a97f-0df75809b724",
+                "setCode": "THS"
+              }
+            ],
+            "priorities": [
+              {
+                "category": "Early Board Presence (Enablers)",
+                "reason": "Deploying multiple low-to-the-ground Bestow creatures immediately establishes the board state, maximizing bodies for subsequent pump effects and combat damage."
+              },
+              {
+                "category": "Sustained Card Advantage",
+                "reason": "The goal is not just to attack, but to attack repeatedly. Drawing cards off of every successful combat trigger ensures you have gas to continue casting more Bestow pieces."
+              },
+              {
+                "category": "Combat Tempo",
+                "reason": "Every turn must end with an aggressive attack profile. The value of the deck is directly correlated with how many creatures can participate in the assault."
+              }
+            ],
+            "strengths": [
+              "Bestow synergy allows for efficient board development by treating Auras as permanent creatures after they attach.",
+              "The commander's ability provides a secondary draw engine, rewarding every combat action taken by the amassed army.",
+              "Pump effects (like +4/+4 from Kestia and specific Aura boosts) allow the strategy to scale rapidly into lethal damage.",
+              "Auras with Bestow ensure that even if creatures are removed or die, the enchantment remains on the battlefield as a creature."
+            ],
+            "weaknesses": [
+              "The entire plan hinges on attacking; disruption that prevents combat (e.g., Hexproof effects or inability to attack) can stall the engine.",
+              "Mass removal spells (like Wrath of God or Farewell) instantly reset board state, requiring significant recovery resources.",
+              "If creatures are targeted by single-source removal, the loss of a key attacker can severely reduce immediate combat power and draw potential.",
+              "The strategy requires casting many low-cost permanents to generate enough attack triggers to sustain card advantage."
+            ],
+            "win_conditions": [
+              {
+                "description": "The core win condition involves stacking +4/+4 (from Kestia) onto multiple combatants, resulting in an army that deals lethal damage across the board before opponents can stabilize.",
+                "name": "Overwhelming Combat Damage"
+              },
+              {
+                "description": "By generating card draw from every attacker, the deck can maintain overwhelming resource parity, allowing it to deploy high-impact finishers or defensive pieces repeatedly.",
+                "name": "Card Advantage Swing"
+              }
+            ]
+          },
+          "ok": true
+        },
+        {
+          "type": "strategy",
+          "item": {
+            "name": "Scaling Card Advantage Engine",
+            "description": "Prioritize building wide boards with several distinct enchanted creatures and enchantment permanents. The goal is not just the power boost, but maximizing the number of attackers in a single turn to achieve massive card draw through Kestia's combat trigger."
+          },
+          "result": {
+            "_pipeline": {
+              "embed": 139,
+              "web_search": {
+                "deck_guides": 5,
+                "discussion": 5,
+                "strategy": 5
+              }
+            },
+            "_verification": {
+              "verified": true,
+              "warnings": []
+            },
+            "example_cards": [
+              {
+                "name": "Nyxborn Shieldmate",
+                "number": "21",
+                "reason": "Serves as a foundational enabler. This 1-mana Bestow creature provides an extremely efficient, low-risk body that can immediately be enchanted and contribute to the attack count early in the game.",
+                "scryfallId": "64204816-6e1d-4bf8-acd0-8f83ca7eb8c7",
+                "setCode": "BNG"
+              },
+              {
+                "name": "Leafcrown Dryad",
+                "number": "183",
+                "reason": "Acts as a support piece providing combat utility (Reach) while contributing to the trigger. Its inherent ability to gain reach on an enchanted creature ensures that even if blocked, it maintains offensive pressure and helps maximize attack count.",
+                "scryfallId": "abe8fbdd-c0a7-4745-88f6-68544aab9dab",
+                "setCode": "PIO"
+              },
+              {
+                "name": "Nyxborn Triton",
+                "number": "46",
+                "reason": "Functions as a key payoff piece. This card demonstrates how scaling draw is achieved\u2014its combination of Bestow cost and strong combat stats allows it to be the primary point of resource generation when the board is wide.",
+                "scryfallId": "65371de6-13a2-401f-9334-ae9e19619487",
+                "setCode": "BNG"
+              }
+            ],
+            "priorities": [
+              {
+                "category": "Board Wide Enchantress Payoffs",
+                "reason": "The core engine requires multiple sources of card draw that trigger when enchantments are placed or creatures attack. These payoffs accelerate the deck's ability to afford high-cost Auras."
+              },
+              {
+                "category": "Low-Cost, High-Impact Bestow Pieces",
+                "reason": "Cheap, reliable attackers (1-2 mana) that benefit from being enchanted are crucial for generating early combat triggers and establishing board presence before the main payoff pieces arrive."
+              },
+              {
+                "category": "Protection/Board Retention",
+                "reason": "Since Kestia requires her permanents to survive until combat, protective Auras or enchantment effects that prevent removal (e.g., Hexproof, Indestructible) are vital for protecting the investment."
+              }
+            ],
+            "strengths": [
+              "The synergy between Bestow Auras and Kestia's ability allows a single creature to act as both an attacker and a persistent source of card triggers.",
+              "Massive card advantage is achieved by building wide boards; the draw trigger scales linearly with the number of enchanted attackers.",
+              "Enchantments provide inherent resilience, allowing repeated casting or attachment without needing dedicated recursion outlets.",
+              "The combination of enchantment synergy (e.g., 'draw cards when an enchantment enters') and Kestia's combat trigger creates multiple overlapping resource generation loops."
+            ],
+            "weaknesses": [
+              "Reliance on the combat step means that board wipes or removal before combat severely cripple the primary engine.",
+              "The strategy can be slow to ramp up, requiring early plays to generate enough enchanted creatures and enchantments to make Kestia's trigger meaningful.",
+              "Opponents can target specific key enchantment pieces (like a low-cost attacker) to prevent them from contributing to combat damage or attack count.",
+              "Over-reliance on Bestow means the deck is sensitive to removal that targets Auras, necessitating flexible board construction."
+            ],
+            "win_conditions": [
+              {
+                "description": "By generating massive amounts of card draw through combat triggers, the player out-resources opponents, allowing them to deploy board wipes, game-ending threats (like auras with large stats), or counterspells at will.",
+                "name": "Overwhelming Card Advantage"
+              },
+              {
+                "description": "The cumulative power boost from multiple enchantments and Auras allows the player to build an unstoppable army that can overwhelm opponents through sheer combat damage, especially if combined with evasion (Flying/Reach).",
+                "name": "Combat Superiority"
+              }
+            ]
+          },
+          "ok": true
+        },
+        {
+          "type": "strategy",
+          "item": {
+            "name": "Persistent Board Buffing",
+            "description": "Use Bestow Auras primarily as permanent equipment and buffing tools rather than relying on attacking for value. The +4/+4 boost provides consistent, lasting power increases to key permanents that remain on the battlefield."
+          },
+          "result": {
+            "_pipeline": {
+              "embed": 139,
+              "web_search": {
+                "deck_guides": 5,
+                "discussion": 5,
+                "strategy": 5
+              }
+            },
+            "_verification": {
+              "verified": true,
+              "warnings": []
+            },
+            "example_cards": [
+              {
+                "name": "Boon Satyr",
+                "number": "167",
+                "reason": "This card serves as critical support utility. Its Flash ability allows the player to attach a significant buff (+4/+2) at any point in the turn, bypassing tempo limitations and immediately bolstering board presence when needed.",
+                "scryfallId": "a380d201-e5cd-49b2-8bcd-fdeeb912d023",
+                "setCode": "PIO"
+              },
+              {
+                "name": "Eidolon of Countless Battles",
+                "number": "144",
+                "reason": "This is a powerful payoff card. With its low cost and ability to bestow two separate boosts upon casting, it represents the 'peak' of the buffing mechanic\u2014a massive immediate power spike that defines the strategy's potential.",
+                "scryfallId": "4ad6fcb1-7c35-4111-8f1e-d18a2fae5638",
+                "setCode": "SOC"
+              },
+              {
+                "name": "Nyxborn Unicorn",
+                "number": "37",
+                "reason": "This card acts as a strong enabler by providing consistent growth and repeatable value. The Mentor ability ensures that every attack contributes to increasing the creature's stats, reinforcing the theme of continuous, reliable buffing.",
+                "scryfallId": "fa3a9f8f-b74f-44f1-a8b5-d21a55358a6c",
+                "setCode": "MH3"
+              }
+            ],
+            "priorities": [
+              {
+                "category": "Early Board Presence",
+                "reason": "The strategy requires establishing a few key permanents early on. These serve as targets for subsequent Bestow assignments and establish the baseline threat level before Kestia's full power can be realized."
+              },
+              {
+                "category": "Creature Protection/Recursion",
+                "reason": "Keeping the buffing base alive is paramount. The goal is to ensure that when a critical Aura or buff source leaves the battlefield, it doesn't simply disappear, but rather returns to the field (or hand) for re-use."
+              },
+              {
+                "category": "Card Advantage Engine",
+                "reason": "Finding more Bestow Auras is key. The goal of drawing cards with Kestia and through other means ensures a continuous supply of buffs, enabling repeated plays."
+              }
+            ],
+            "strengths": [
+              "Bestow Auras retain permanence: Unlike standard auras, Bestow allows permanents to remain on the battlefield as enchantment creatures if they lose their attached aura or are otherwise removed, ensuring consistent power boosts.",
+              "Scalable Board Buffing: The core mechanic is stacking permanent, passive +X/+Y counters/stats. This creates an exponential increase in threat level that often overwhelms opponents' removal spells (e.g., a 3/3 becomes a 12/12).",
+              "High Redundancy and Flexibility: Bestow Auras can be attached to any permanent type, allowing the player to buff key creatures, artifacts, or even enchantments that become creature-like.",
+              "Threat Mitigation via Multiplicative Buffs: Because Kestia's own ability triggers whenever an enchanted creature attacks, stacking buffs not only increases damage but also fuels card advantage."
+            ],
+            "weaknesses": [
+              "Vulnerability to Mass Removal: The entire strategy hinges on maintaining a board of buffed permanents. Broad sweeps (Wrath effects) can wipe out the investment instantly.",
+              "Reliance on Aura/Bestow Synergy: If opponents consistently interact with or remove Auras, the payoff for having expensive Bestow cards is negated.",
+              "Setup Dependency: The strategy is slow and requires multiple turns to establish meaningful board presence. It struggles against hyper-aggressive decks that win before the buffs stabilize.",
+              "Countering Recursion: If opposing players have ways to exile or counter the Auras themselves, the buffing chain breaks."
+            ],
+            "win_conditions": [
+              {
+                "description": "The primary win-con is simply overwhelming the opponent's life total with high-power, buffed threats. The +4/+4 from Kestia, combined with multiple Bestow Auras, rapidly turns small creatures into game-ending beatsticks.",
+                "name": "Overrun Combat Damage"
+              },
+              {
+                "description": "By constantly attaching buffs and drawing cards, the player establishes a board state so dense and powerful that opponents are unable to effectively manage or remove all threats simultaneously, leading to gradual attrition of life totals.",
+                "name": "Board Overload/Attrition"
+              },
+              {
+                "description": "While primarily an aggressive strategy, in certain scenarios, the constant card draw and overwhelming board presence can function as a control win-con by simply generating enough value that the opponent cannot keep up with tempo or resources.",
+                "name": "Engine Lock (Control)"
+              }
+            ]
+          },
+          "ok": true
+        },
+        {
+          "type": "unique_build",
+          "item": {
+            "name": "Nymph Tribal Synergy",
+            "description": "Focusing specifically on Nymph types. Since Kestia herself is a Nymph and many similar cards appear in the 'similar_cards' list (e.g., Nimbus Naiad, Observant Alseid), this build maximizes creature-type synergy while running Bestow to ensure these nymphs gain Aura protection and power boosts."
+          },
+          "result": {
+            "_pipeline": {
+              "embed": 133,
+              "web_search": {
+                "deck_guides": 5,
+                "discussion": 5,
+                "strategy": 5
+              }
+            },
+            "_verification": {
+              "verified": true,
+              "warnings": []
+            },
+            "example_cards": [
+              {
+                "name": "Observant Alseid",
+                "number": "24",
+                "reason": "Serves as a reliable Enabler. As a low-cost Nymph with Vigilance, it can attack safely every turn without tapping out, guaranteeing Kestia's draw trigger while providing crucial early board presence.",
+                "scryfallId": "e1410d10-476a-4ed2-ae44-75383ed0e359",
+                "setCode": "THS"
+              },
+              {
+                "name": "Nimbus Naiad",
+                "number": "67",
+                "reason": "Acts as a primary Payoff/Threat. It is an explicit Nymph that gains substantial stats via Bestow and Flying, making it a difficult target for opponents to handle in combat while maximizing Kestia's ability.",
+                "scryfallId": "e579516f-9007-40a8-ab7e-a70641eada90",
+                "setCode": "PIO"
+              },
+              {
+                "name": "Leafcrown Dryad",
+                "number": "183",
+                "reason": "Functions as Support. This card brings the Nymph theme into a different creature type (Dryad) and provides Reach, which is an excellent utility stat that allows it to hit key targets even if they are blocked by creatures with reach.",
+                "scryfallId": "abe8fbdd-c0a7-4745-88f6-68544aab9dab",
+                "setCode": "PIO"
+              }
+            ],
+            "priorities": [
+              {
+                "category": "Nymph Payoffs",
+                "reason": "These creatures are the explicit focus of this unique build. Prioritizing them ensures that the tribal synergies and Nymph-specific abilities (which complement Kestia's) are maximized."
+              },
+              {
+                "category": "Enchantress Effects & Card Draw",
+                "reason": "Card advantage is the core engine. Supporting card draw effects, especially those triggered by entering or attacking with an enchanted creature, is critical for fuel."
+              }
+            ],
+            "strengths": [
+              "High Card Draw Consistency: The combination of Bestow Auras, Nymph types, and Kestia's trigger allows for massive card advantage simply by attacking with your board state.",
+              "Resilient Board State: Due to the mechanics surrounding Bestow, enchanted permanents do not leave the battlefield when they become unattached or are targeted (they resolve as enchantment creatures), making the Nymph core durable.",
+              "Synergistic Power Scaling: The Nymph tribal theme provides multiple sources of power and abilities that stack with Kestia's base +4/+4 boost, creating overwhelming combat threats.",
+              "Versatile Attacker Profile: By focusing on various creature types (Nymph, Dryad, etc.), the deck can field attackers with different strengths (Flying, Reach, Vigilance) to maximize draw triggers against diverse opponent blockers."
+            ],
+            "weaknesses": [
+              "Reliance on Combat Triggers: The entire card advantage engine is predicated on attacking. If the board is shut down or combat is prevented, the primary resource loop stalls.",
+              "Vulnerability to Board Wipes: Being an enchantment-heavy and creature-dependent strategy, mass removal (Wrath effects) can severely diminish the deck's immediate threat level.",
+              "Bestow Vulnerability: The Bestow mechanic requires casting/attaching Auras. If opponents manage to exile or destroy key Nymphs before they gain protection/power boosts, the tempo swing is lost.",
+              "Mid-Game Tempo Requirement: The strategy needs time to deploy multiple Nymph bodies and enchantments; it struggles against highly proactive early aggression."
+            ],
+            "win_conditions": [
+              {
+                "description": "By cycling through multiple Nymphs and other tribal creatures that are all boosted by Kestia's Aura effect (+4/+4) and potentially additional Auras, the goal is to field an unstoppable force that overwhelms opponents in combat.",
+                "name": "Overwhelming Combat Damage"
+              },
+              {
+                "description": "The deck aims to draw itself into a state where it has too many threats on the board (board presence) and enough card advantage to stabilize behind its army, winning through attrition or sheer overwhelming force over multiple turns.",
+                "name": "Card Advantage Spiral"
+              }
+            ]
+          },
+          "ok": true
+        },
+        {
+          "type": "unique_build",
+          "item": {
+            "name": "Sacrifice Outlets for Value",
+            "description": "While Kestia does not have a sacrifice trigger, the board state requires constant upkeep. Supporting the strategy with efficient removal that also generates card advantage (or allowing repeat recursion of key Bestow bodies) can keep the engine running even if creatures are removed."
+          },
+          "result": {
+            "_pipeline": {
+              "embed": 104,
+              "web_search": {
+                "deck_guides": 5,
+                "discussion": 5,
+                "strategy": 5
+              }
+            },
+            "_verification": {
+              "verified": true,
+              "warnings": []
+            },
+            "example_cards": [
+              {
+                "name": "Heliod's Emissary",
+                "number": "18",
+                "reason": "This card serves as a high-value payoff. It is an excellent Bestow body that rewards the attack trigger, ensuring that even individual attackers contribute to our card advantage engine.",
+                "scryfallId": "49663acb-582e-495a-b45e-5fc5f4949f22",
+                "setCode": "THS"
+              },
+              {
+                "name": "Boon Satyr",
+                "number": "167",
+                "reason": "A Boon Satyr acts as a crucial tempo enabler. Its Flash ability allows us to deploy key Bestow bodies or immediate threats into play during opponent turns, maximizing the impact of Kestia's attack trigger.",
+                "scryfallId": "a380d201-e5cd-49b2-8bcd-fdeeb912d023",
+                "setCode": "PIO"
+              },
+              {
+                "name": "Observant Alseid",
+                "number": "24",
+                "reason": "This card provides essential support by granting Vigilance. In a combat-heavy strategy relying on continuous attacks, Vigilance ensures that even if a creature is blocked, we maintain its attacking potential for future turns without losing tempo.",
+                "scryfallId": "e1410d10-476a-4ed2-ae44-75383ed0e359",
+                "setCode": "THS"
+              }
+            ],
+            "priorities": [
+              {
+                "category": "Card Draw / Card Advantage",
+                "reason": "This is the core engine. Drawing cards ensures that even when valuable Bestow bodies are removed, we have the resources to immediately re-establish board presence or deploy alternative threats."
+              },
+              {
+                "category": "Board Protection / Redundancy",
+                "reason": "Since our entire game plan relies on having multiple creatures attacking, protection (like Vigilance or high toughness) and redundancy against removal are critical for repeating the engine turn after turn."
+              },
+              {
+                "category": "Tempo/Efficiency",
+                "reason": "Flash effects allow us to deploy necessary Bestow bodies or threats at optimal times, especially when the board is contested or under threat of damage."
+              }
+            ],
+            "strengths": [
+              "The synergy between Bestow/Auras and combat triggers allows for explosive card advantage, drawing a card every time multiple creatures attack.",
+              "By utilizing 'Sacrifice Outlets for Value,' the deck mitigates board wipes or targeted removal, converting potential losses into resources (mana, life, or further draws).",
+              "The combination of Bestow's cost structure and its persistent nature allows key threats to remain on the battlefield as creatures even if they lose their Aura form.",
+              "Multiple attackers generate cumulative card draw triggers from Kestia, allowing the deck to rapidly rebuild resources and keep up with opponent draw engines."
+            ],
+            "weaknesses": [
+              "The strategy is highly dependent on generating multiple attackers; if the board is stalled or only single creatures attack, the primary engine stalls.",
+              "Auras are susceptible to targeted removal (like Swords) before they can be attached or utilized for their combat buffs.",
+              "If opponents manage to control key sacrifice outlets, our valuable Bestow bodies can be removed without generating compensatory value.",
+              "The upfront investment in high-cost Bestow creatures makes the deck vulnerable to early board wipes if we cannot generate enough card draw before they are hit."
+            ],
+            "win_conditions": [
+              {
+                "description": "By drawing multiple cards every turn through Kestia's trigger, we can deploy an army of synergistic Bestow creatures and Auras faster than opponents can react or recover from board wipes.",
+                "name": "Overwhelming Card Advantage Engine"
+              },
+              {
+                "description": "The cumulative power boosts provided by the Bestow enchantments allow our forces to achieve massive attack damage, overwhelming opponent life totals before they can stabilize their defenses.",
+                "name": "Combat Damage Escalation"
+              }
+            ]
+          },
+          "ok": true
+        }
+      ],
+      "ok": true
+    },
+    {
+      "commander": {
+        "name": "Hildibrand Manderville // Gentleman's Rise",
+        "set_code": "FIC",
+        "number": "173"
+      },
+      "analyze": {
+        "ok": true,
+        "filename": "FIC_173_2026-07-06T22-59-04.397306+00-00.json"
+      },
+      "deepdives": [
+        {
+          "type": "strategy",
+          "item": {
+            "name": "Token Swarm Engine",
+            "description": "Focusing on creating multiple nontoken permanent creatures that are not your commander, ensuring they get the +1/+1 boost when Hildibrand Manderville is active. The goal is to build up a substantial, overwhelming board state and exploit the 'death' trigger for incremental boosts."
+          },
+          "result": {
+            "_pipeline": {
+              "embed": 116,
+              "web_search": {
+                "deck_guides": 5,
+                "discussion": 5,
+                "strategy": 5
+              }
+            },
+            "_verification": {
+              "verified": true,
+              "warnings": []
+            },
+            "example_cards": [
+              {
+                "name": "Dramatic Finale",
+                "number": "180",
+                "reason": "This card is a primary payoff engine, providing both the necessary 'token boost' (+1/+1 to tokens) and the critical trigger source: creating additional tokens whenever nontoken creatures die. It fuels the entire swarming effect.",
+                "scryfallId": "a8ec9be6-c8ad-4a82-8253-c49cdb9443ba",
+                "setCode": "STX"
+              },
+              {
+                "name": "Open the Graves",
+                "number": "97",
+                "reason": "This serves as a potent, unconditional death-trigger enabler. It allows for mass sacrifice of disposable bodies (the 'fuel') to generate new tokens, directly amplifying the swarm aspect of the strategy.",
+                "scryfallId": "11fedd76-ee35-4a17-8cdb-684414783df9",
+                "setCode": "SCD"
+              },
+              {
+                "name": "Phantom General",
+                "number": "85",
+                "reason": "As a synergistic booster, this card replicates the commander's core ability (+1/+1 to tokens). It ensures that even if other boost effects fail or are limited, basic token generation remains powerful and reliable enough to dictate combat.",
+                "scryfallId": "eff5d3da-81d0-4776-9200-928af1b0cf18",
+                "setCode": "ONC"
+              }
+            ],
+            "priorities": [
+              {
+                "category": "Token/Sacrifice Payoffs",
+                "reason": "The core engine requires cheap, consistent ways to generate nontoken creatures that can be sacrificed (e.g., 1-3 mana sacrifices) to trigger the token generation effects."
+              },
+              {
+                "category": "Mass Boost Effects",
+                "reason": "Since tokens are crucial, having repeatable or large-scale +1/+1 boosts ensures that when they appear, they threaten immediate combat damage and survivability."
+              },
+              {
+                "category": "Recursion/Card Advantage",
+                "reason": "The cycling nature of the commander (casting from the graveyard) requires card draw to ensure sufficient fuel for continuous sacrifices and re-cast attempts."
+              }
+            ],
+            "strengths": [
+              "The synergistic loop between creature death triggers (aristocrats) fueling token generation.",
+              "Multiple sources of temporary or permanent +1/+1 boosts ensuring that every generated token contributes to board presence.",
+              "Hildibrand's ability to recast from the graveyard as an Adventure allows for flexible resource management and extends the lifespan of the primary synergy engine.",
+              "The combination of nontoken creature generation (e.g., through sacrifice) and token boost effects rapidly overwhelms opponents with cumulative power."
+            ],
+            "weaknesses": [
+              "Heavy reliance on creatures dying; board wipes or mass removal can completely stall the engine.",
+              "The strategy requires significant early investment in token generators and sacrificial fodder to build momentum.",
+              "Control decks that prevent recursion (graveyard hate) can sideline the commander's primary method of reappearing.",
+              "If tokens are generated but cannot be sacrificed, the entire board state stalls, as the engine relies on continuous death triggers."
+            ],
+            "win_conditions": [
+              {
+                "description": "By continuously generating tokens through sacrifice triggers, these creatures quickly build up high power levels via the +1/+1 counters and boosts. The goal is to achieve combat superiority where multiple bodies cannot be removed efficiently.",
+                "name": "Overwhelming Board State"
+              },
+              {
+                "description": "The army of boosted tokens applies continuous pressure, forcing opponents to dedicate removal resources that could otherwise be used against other threats or board development. The sheer volume of creatures eventually wins the game by attrition and combat damage.",
+                "name": "Damage Loop/Attrition"
+              }
+            ]
+          },
+          "ok": true
+        },
+        {
+          "type": "strategy",
+          "item": {
+            "name": "Graveyard Recursion Loop",
+            "description": "Utilizing graveyard filling synergies (self-mill or opponent removal) to ensure Hildibrand Manderville is always available in the graveyard. The goal is to repeatedly deploy the commander via its 'Adventure' ability, effectively bypassing the escalating cost and maintaining board presence."
+          },
+          "result": {
+            "_pipeline": {
+              "embed": 94,
+              "web_search": {
+                "deck_guides": 5,
+                "discussion": 5,
+                "strategy": 5
+              }
+            },
+            "_verification": {
+              "verified": true,
+              "warnings": []
+            },
+            "example_cards": [
+              {
+                "name": "Desperate Measures",
+                "number": "78",
+                "reason": "This is an excellent, low-cost enabler that forces a creature into the graveyard under player control. This facilitates both self-milling for the recursive loop and provides immediate fodder for death triggers.",
+                "scryfallId": "ccbc6fd0-42bc-4e8b-96bc-69a631ba7106",
+                "setCode": "TDM"
+              },
+              {
+                "name": "Dramatic Finale",
+                "number": "180",
+                "reason": "This card serves as a massive payoff piece. It boosts token synergy while also acting as an auxiliary source of tokens whenever nontoken creatures die, thickening the board state and fueling further recursion attempts.",
+                "scryfallId": "a8ec9be6-c8ad-4a82-8253-c49cdb9443ba",
+                "setCode": "STX"
+              },
+              {
+                "name": "Brood of Cockroaches",
+                "number": "VIS-53",
+                "reason": "This acts as a repeatable support engine for the graveyard loop. When it dies (e.g., through sacrifice), its ability allows you to return itself from the graveyard to your hand, generating value and keeping key cards like Hildibrand readily available for re-casting.",
+                "scryfallId": "c1a1ed04-cc30-46ec-ad96-6933923fd3a4",
+                "setCode": "PLST"
+              }
+            ],
+            "priorities": [
+              {
+                "category": "Mill Engines",
+                "reason": "To ensure Hildibrand is always available for recursion, reliable and efficient ways to fill the graveyard (self-mill or opponent mill) are critical. This fuels both the commander's ability and other payoff cards."
+              },
+              {
+                "category": "Sacrifice Outlets/Death Triggers",
+                "reason": "A continuous source of cheap, reliable creature death is necessary to repeatedly trigger token creation effects, power boosts, and resource payoffs throughout the game. This sustains the loop."
+              },
+              {
+                "category": "Commander Protection (Graveyard)",
+                "reason": "The commander's ability relies on it being in the graveyard. Ways to protect it from opponent removal or recursive spells are paramount for executing the plan."
+              }
+            ],
+            "strengths": [
+              "The synergy between token generation and the +1/+1 boost provided by both Hildibrand's static ability and multiple spell effects.",
+              "Hildibrand's unique Adventure casting allows repeated deployment, bypassing the typical commander tax or high mana costs once established in the graveyard. This is a form of persistent board presence.",
+              "The strategy scales exponentially off death triggers (Aristocrat theme), making every creature interaction impactful for generating more tokens and fueling recursion.",
+              "Graveyard synergy ensures that even if the initial plan fails, the commander can be repeatedly brought back from exile/graveyard using cheap spells or abilities."
+            ],
+            "weaknesses": [
+              "The entire strategy is heavily reliant on consistent sources of card death (combat damage, targeted removal, or dedicated sacrifice outlets).",
+              "Graveyard hate effects are catastrophic, as they remove the core resource needed to trigger Hildibrand's ability and provide value from other payoffs.",
+              "If token generation is restricted by opponent interaction (e.g., creature removal targeting tokens), the board presence stalls quickly.",
+              "The initial setup requires significant investment in milling or self-mill engines to get the commander into range of its own triggered ability."
+            ],
+            "win_conditions": [
+              {
+                "description": "By combining multiple sources of +1/+1 counters and token generation, the board quickly accumulates a massive number of resilient creatures that overwhelm enemy defenses during combat.",
+                "name": "Token Overrun"
+              },
+              {
+                "description": "Repeatedly casting Hildibrand via Adventure ensures continuous threat presence. If opponents cannot remove tokens or repeatedly counter/remove the commander, they lose by attrition.",
+                "name": "Persistent Threat Lockout"
+              }
+            ]
+          },
+          "ok": true
+        },
+        {
+          "type": "strategy",
+          "item": {
+            "name": "Aristocrats/Attrition",
+            "description": "Building an engine that generates fodder (sacrificable permanents or creatures with low inherent value) purely to force Hildibrand Manderville's death trigger. By sacrificing these, you gain temporary board advantage and repeat the cycle of casting it from your graveyard."
+          },
+          "result": {
+            "_pipeline": {
+              "embed": 119,
+              "web_search": {
+                "deck_guides": 5,
+                "discussion": 5,
+                "strategy": 5
+              }
+            },
+            "_verification": {
+              "verified": true,
+              "warnings": []
+            },
+            "example_cards": [
+              {
+                "name": "Rabid Attack",
+                "number": "96",
+                "reason": "This instant acts as a perfect one-shot payoff enabler. It boosts all creatures for combat while simultaneously granting a direct card draw trigger ('When this creature dies, draw a card'), ensuring that the sacrifice of fodder immediately contributes to your resources.",
+                "scryfallId": "f5e67560-3135-4b27-a344-5859edf8bcd9",
+                "setCode": "SOS"
+              },
+              {
+                "name": "On Wings of Gold",
+                "number": "21",
+                "reason": "This is a major payoff piece. It leverages both key mechanics: tokens (synergy with Hildibrand) and death triggers ('Whenever one or more cards leave your graveyard, create a 1/1 white Zombie creature token'). This massively amplifies the resources gained during an attrition turn.",
+                "scryfallId": "7efe6417-9445-40e5-8c37-0973d8645c79",
+                "setCode": "DRC"
+              },
+              {
+                "name": "Phantom General",
+                "number": "85",
+                "reason": "As a reliable support piece, it provides immediate and consistent +1/+1 boosts to all tokens. These boosted creatures are more effective at combat and contribute more value when they die, making them excellent candidates for the sacrifice cycle.",
+                "scryfallId": "eff5d3da-81d0-4776-9200-928af1b0cf18",
+                "setCode": "ONC"
+              }
+            ],
+            "priorities": [
+              {
+                "category": "Sacrifice Outlets",
+                "reason": "The entire strategy hinges on forcing Hildibrand Manderville's death trigger. Having reliable and cheap ways to sacrifice creatures (e.g., using the opponent's interaction or dedicated outlets) is critical for engine uptime."
+              },
+              {
+                "category": "Recursion/Graveyard Synergy",
+                "reason": "Maximizing the graveyard state allows Hildibrand Manderville to be recast from exile as an Adventure, bypassing commander tax and maintaining board presence with minimal investment."
+              },
+              {
+                "category": "Card Advantage Engines",
+                "reason": "Since repeated casting of the Commander is expensive in terms of resources (even if it's 'free' through the ability), securing card draw whenever a creature dies ensures the deck has enough pieces to fuel the sacrifice cycle."
+              }
+            ],
+            "strengths": [
+              "The synergy between token generation and the +1/+1 boost provided by both Hildibrand Manderville's initial ability and supporting enchantments.",
+              "The inherent recursion loop: Sacrificing creatures triggers Hildibrand's death ability, allowing you to recast him immediately from the graveyard (cheating commander tax).",
+              "Multiple sources of value tied directly to creature death (e.g., card draw, token creation), reinforcing the 'aristocrats' theme.",
+              "The combination of Black's graveyard interaction and White's focus on board presence allows for both attrition damage and persistent threats."
+            ],
+            "weaknesses": [
+              "High reliance on having enough expendable creatures (fodder) to trigger Hildibrand Manderville's death ability repeatedly.",
+              "Vulnerability to mass removal spells (like Wrath of God or Farewell) which can wipe the board before the loop is established.",
+              "The strategy requires consistent card flow; if no sources exist for sacrifice, the engine stalls completely.",
+              "Opponents can disrupt the graveyard setup through exile effects or anti-graveyard countermeasures."
+            ],
+            "win_conditions": [
+              {
+                "description": "By sacrificing fodder and repeatedly casting Hildibrand Manderville, you accumulate tokens and creatures that are stacked with +1/+1 counters. These buffs allow the board to achieve insurmountable combat damage before opponents can stabilize.",
+                "name": "Overwhelming Combat Damage"
+              },
+              {
+                "description": "The cycle of sacrificing and re-casting provides continuous card advantage. This allows you to outmaneuver opponents, refilling your hand and keeping pressure on the board while denying them resources.",
+                "name": "Attrition Through Tempo Advantage"
+              }
+            ]
+          },
+          "ok": true
+        },
+        {
+          "type": "unique_build",
+          "item": {
+            "name": "Evasion/Prowess Focus",
+            "description": "Focus on creating tokens with keywords like Flying or Trample. The +1/+1 boost makes these threats significantly more lethal and harder to block, allowing the commander to function as a pseudo-combat engine."
+          },
+          "result": {
+            "_pipeline": {
+              "embed": 95,
+              "web_search": {
+                "deck_guides": 5,
+                "discussion": 5,
+                "strategy": 5
+              }
+            },
+            "_verification": {
+              "verified": true,
+              "warnings": []
+            },
+            "example_cards": [
+              {
+                "name": "Dramatic Finale",
+                "number": "180",
+                "reason": "This card acts as an essential enabler. It not only grants a universal +1/+1 boost to tokens but also generates additional flying tokens whenever non-token creatures die, increasing both the threat count and the evasion rate.",
+                "scryfallId": "a8ec9be6-c8ad-4a82-8253-c49cdb9443ba",
+                "setCode": "STX"
+              },
+              {
+                "name": "On Wings of Gold",
+                "number": "21",
+                "reason": "This card is a powerful payoff piece. It directly addresses two core aspects of the unique build: it provides the necessary +1/+1 boost for tokens, and crucially, it attaches Flying, fulfilling the evasion requirement.",
+                "scryfallId": "7efe6417-9445-40e5-8c37-0973d8645c79",
+                "setCode": "DRC"
+              },
+              {
+                "name": "Cemetery Reaper",
+                "number": "87",
+                "reason": "This serves as a key support engine. It enables repeatable token generation from the graveyard (a core B/W synergy), providing continuous board presence and tokens that can be sacrificed or left on board to benefit future combat turns.",
+                "scryfallId": "b874f27a-2e10-4331-8f6d-fd3575be0885",
+                "setCode": "DRC"
+              }
+            ],
+            "priorities": [
+              {
+                "category": "Token Generation",
+                "reason": "Sustained token creation is paramount. The power of the deck comes not just from the boost, but from having overwhelming numerical superiority in tokens that can be repeatedly boosted and sacrificed/removed."
+              },
+              {
+                "category": "Anthem Effects & Boosters",
+                "reason": "The +1/+1 counter theme is critical. Every card must contribute to scaling these tokens up quickly, maximizing their combat threat before they are removed or used for sacrifice triggers."
+              },
+              {
+                "category": "Evasion Keywords (Flying/Trample)",
+                "reason": "Since the opponent can easily remove small threats, adding evasion keywords ensures that even if the tokens aren't lethal on their own, they guarantee through-the-board damage and pressure."
+              }
+            ],
+            "strengths": [
+              "The synergy between Hildibrand granting +1/+1 to all tokens, combined with permanents like Phantom General or On Wings of Gold, creates immediate combat superiority.",
+              "Token generation (from death triggers or abilities) quickly floods the board, overwhelming opponents' limited removal options.",
+              "Combining the universal boost (+1/+1) with evasion keywords (like Flying from Dramatic Finale or On Wings of Gold) makes the resulting tokens extremely difficult to block or remove profitably.",
+              "The ability to leverage recursion and sacrifice effects (B side) allows the deck to continually generate fodder for both damage and additional value."
+            ],
+            "weaknesses": [
+              "Reliance on generating sufficient death triggers means that board wipes or targeted removal of key token generators can severely derail the game plan.",
+              "The strategy is sensitive to opponent interaction that prevents tokens from attacking or requires paying high costs to remove them (e.g., tax effects).",
+              "If the commander is removed early, and no alternative anthem effects are present, the board's immediate threat level drops significantly until it can be recast.",
+              "The core synergy relies on tokens being kept alive long enough to receive multiple cumulative +1/+1 boosts from various sources."
+            ],
+            "win_conditions": [
+              {
+                "description": "The primary win condition. By generating multiple +1/+1 boosted, evasive tokens in a single turn (fueled by high token generation rate), the deck overwhelms opponents' life totals before they can stabilize.",
+                "name": "Overwhelming Combat Damage"
+              },
+              {
+                "description": "The deck uses its death triggers and repeatable token generation engines to simply out-resource opponents, forcing them to use up their removal spells or board wipes until the victory condition is met.",
+                "name": "Resource Exhaustion/Grind"
+              }
+            ]
+          },
+          "ok": true
+        },
+        {
+          "type": "unique_build",
+          "item": {
+            "name": "Artifact Tax/Value Engine",
+            "description": "Since the primary cost of re-casting is dictated by the rules (2 additional mana), include artifact synergy or card advantage effects that manipulate costs or value, mitigating the scaling Mana Cost increase. The inherent nature of Gentleman's Rise also makes it an excellent pivot point for artifact strategies."
+          },
+          "result": {
+            "_pipeline": {
+              "embed": 93,
+              "web_search": {
+                "deck_guides": 5,
+                "discussion": 5,
+                "strategy": 0
+              }
+            },
+            "_verification": {
+              "verified": true,
+              "warnings": []
+            },
+            "example_cards": [
+              {
+                "name": "Death-Priest of Myrkul",
+                "number": "95",
+                "reason": "Serves as a core ENABLER. Its ability to generate continuous tokens and benefit from creature deaths provides the constant board presence needed to fuel both the token boosts and the necessary death triggers for value extraction.",
+                "scryfallId": "126b2636-030a-4a0e-9307-54c3372afb52",
+                "setCode": "AFR"
+              },
+              {
+                "name": "Dramatic Finale",
+                "number": "180",
+                "reason": "The key PAYOFF piece. It not only grants a massive +1/+1 boost to all tokens but also generates secondary tokens when *non-token* creatures die, multiplying the damage output and reinforcing the token theme exponentially.",
+                "scryfallId": "a8ec9be6-c8ad-4a82-8253-c49cdb9443ba",
+                "setCode": "STX"
+              },
+              {
+                "name": "Rot Farm Mortipede",
+                "number": "102",
+                "reason": "Acts as crucial SUPPORT. It extends the 'Aristocrats' nature of the engine by providing a bonus trigger whenever any creature dies (not just tokens), helping to maintain value generation even if the main token wave is removed.",
+                "scryfallId": "023b0142-663a-47e7-a9f1-0b565a172b60",
+                "setCode": "MKM"
+              }
+            ],
+            "priorities": [
+              {
+                "category": "Sacrifice Outlets",
+                "reason": "To maximize the 'Tax/Value Engine' aspect, highly efficient and repeatable ways to sacrifice tokens are critical for triggering payoffs (e.g., gaining mana, drawing cards)."
+              },
+              {
+                "category": "Token Generation & Anthem Effects",
+                "reason": "The core damage source is the token army. Any way to generate multiple cheap tokens or grant universal buffs accelerates the board state toward an insurmountable threat level."
+              },
+              {
+                "category": "Artifact Cost Reduction / Ramp",
+                "reason": "To make the recursive casting of Hildibrand economically viable, artifact ramp and cost reduction spells are vital for mitigating the scaling mana costs associated with re-casting."
+              }
+            ],
+            "strengths": [
+              "The combination of massive token buffs (Commander ability + synergy enchantments) leading to overwhelming combat damage.",
+              "The engine is self-reinforcing: Tokens die -> Trigger effects/gain value -> Resources gained allow re-casting Hildibrand, restarting the cycle.",
+              "Exponential growth in board presence and resources by linking creature death triggers (Aristocrat theme) with artifact cost reduction payoff.",
+              "Repetitive usage of the Commander's recursive ability allows continuous field pressure without needing to spend excess mana for recurring threats."
+            ],
+            "weaknesses": [
+              "Extreme vulnerability to board wipe effects, as the entire strategy relies on continuously generating and sacrificing creatures/tokens.",
+              "The engine requires constant resource input (mana) to re-cast Hildibrand or resolve key synergy pieces; a mana screw can halt the loop entirely.",
+              "Reliance on specific triggers: if tokens are generated but cannot die efficiently, the value engine stalls.",
+              "Vulnerability to targeted removal of key synergistic permanents (e.g., enchantments like Intangible Virtue)."
+            ],
+            "win_conditions": [
+              {
+                "description": "The primary strategy culminates in a massive swarm of buffed tokens that overwhelm opponents through combat damage, often after multiple cycles have amplified their power level.",
+                "name": "Overwhelming Combat Damage"
+              },
+              {
+                "description": "By generating excessive card advantage and mana through the recursion loop (sacrify -> trigger value/mana -> re-cast commander), the player can deploy game-winning spells or artifacts that end the game before opponents can stabilize.",
+                "name": "Value Loop Exhaustion"
+              }
+            ]
+          },
+          "ok": true
+        },
+        {
+          "type": "unique_build",
+          "item": {
+            "name": "Pauper/Budget Aristocrats",
+            "description": "Given its low initial mana cost and high recursion potential (as noted in community guides), build a budget-focused deck utilizing common, cheap creatures to generate mass tokens and sacrifice fodder, maximizing the sheer number of times the commander can be replayed."
+          },
+          "result": {
+            "_pipeline": {
+              "embed": 84,
+              "web_search": {
+                "deck_guides": 5,
+                "discussion": 5,
+                "strategy": 5
+              }
+            },
+            "_verification": {
+              "verified": true,
+              "warnings": []
+            },
+            "example_cards": [
+              {
+                "name": "Liliana's Devotee",
+                "number": "85",
+                "reason": "Serves as a key enabler by providing repeatable, cheap death triggers. When these creatures die (especially when sacrificed), they generate tokens and empower the overall Aristocrats engine.",
+                "scryfallId": "e5be825b-16ea-49eb-8ffa-79af40ce4f98",
+                "setCode": "SCD"
+              },
+              {
+                "name": "Dramatic Finale",
+                "number": "180",
+                "reason": "Acts as a major payoff piece. It not only gives a powerful token buff (+1/+1) but also generates secondary tokens whenever non-token creatures die, maximizing board presence during massive sacrifice turns.",
+                "scryfallId": "a8ec9be6-c8ad-4a82-8253-c49cdb9443ba",
+                "setCode": "STX"
+              },
+              {
+                "name": "Dark Prophecy",
+                "number": "93",
+                "reason": "This card functions as the core support engine (card advantage). Every time a creature token or fodder sacrifices itself, it feeds Dark Prophecy, drawing cards and fueling further sacrifices in the loop.",
+                "scryfallId": "ecf82c3b-7a35-43dd-8bf3-ebc68dc1b8fc",
+                "setCode": "M14"
+              }
+            ],
+            "priorities": [
+              {
+                "category": "Sacrifice Outlets",
+                "reason": "These are critical for activating the Aristocrats theme, converting disposable creatures into value triggers (e.g., sacrificing for a draw or token)."
+              },
+              {
+                "category": "Token Synergy Payoffs",
+                "reason": "Cards that generate tokens or buffs when other tokens die maximize the impact of Hildibrand Manderville's primary ability."
+              },
+              {
+                "category": "Card Advantage on Death",
+                "reason": "The engine must sustain itself, meaning every death trigger must be capitalized upon to draw cards and keep the sacrifice loop going indefinitely."
+              }
+            ],
+            "strengths": [
+              "The ability to generate massive, repeatable synergy through cheap creature death triggers (Aristocrats core).",
+              "Hildibrand Manderville's token buff (+1/+1) synergizes perfectly with other token-generating effects (e.g., Dramatic Finale, Sanctifier of Souls).",
+              "Commander recursion using the Adventure mechanic allows for continuous board presence and re-casting at low opportunity costs.",
+              "The budget focus encourages high volume and redundancy in cheap sacrifice fodder, ensuring constant trigger opportunities."
+            ],
+            "weaknesses": [
+              "Extreme vulnerability to mass removal (Wrath effects) that wipes out the token core or the sacrificial creatures before triggers can take effect.",
+              "Relies heavily on a consistent stream of low-cost creatures; if mana colors are restricted, generating enough fodder can be difficult.",
+              "The primary win condition is often attrition and overwhelming board presence rather than direct, game-ending combat damage.",
+              "Predictability: The engine's core loop (sacrifice -> trigger -> token/card) is easily identified by opponents."
+            ],
+            "win_conditions": [
+              {
+                "description": "By continuously sacrificing cheap creatures, generating +1/+1 tokens via Hildibrand's ability and synergy payoffs (like Dramatic Finale), the player builds a board of resilient, numerous combat threats that overwhelm opponents.",
+                "name": "Overwhelming Board State"
+              },
+              {
+                "description": "The deck can win by repeatedly cycling Hildibrand Manderville through the graveyard via Adventures and sacrifices. This ensures constant card advantage and resource generation while wearing down opponent's life totals or board state.",
+                "name": "Attrition and Resource Denial"
+              }
+            ]
+          },
+          "ok": true
+        }
+      ],
+      "ok": true
+    }
+  ]
+}

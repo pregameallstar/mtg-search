@@ -17,17 +17,20 @@ import bz2
 import lzma
 import zipfile
 import tarfile
+import threading
 from datetime import datetime, timezone
 from collections import OrderedDict
 from urllib.parse import quote, urljoin
 from urllib.request import Request, urlopen
-from flask import Flask, g, render_template, request, abort, redirect, url_for, make_response, session, jsonify
+from flask import Flask, g, render_template, request, abort, redirect, url_for, make_response, session, jsonify, send_file
 
-# ponytail: optional import — only needed for commander eval
+# ponytail: optional imports — only needed for commander eval / db ingest
 try:
     from llm import generate as llm_generate
 except ImportError:
     llm_generate = None
+import dedup
+import embed
 
 app = Flask(__name__)
 
@@ -44,6 +47,14 @@ if not _secret_key:
             f.write(_secret_key)
 app.secret_key = _secret_key
 
+# ponytail: keep session cookie alive for 30 days so config survives browser restarts.
+# Flask default is None (browser-session cookie — gone when tab closes).
+app.config["PERMANENT_SESSION_LIFETIME"] = 30 * 24 * 3600  # 30 days
+
+@app.before_request
+def _mark_session_permanent():
+    session.permanent = True
+
 @app.after_request
 def _add_security_headers(response):
     response.headers["X-Frame-Options"] = "DENY"
@@ -54,16 +65,23 @@ def _add_security_headers(response):
 # ponytail: server-side analysis cache — Flask cookie sessions cap at ~4KB,
 # expanded bracket+kill-on-sight output exceeds that.
 # ponytail: FIFO-capped at 100 entries, add LRU if eviction order matters.
+# ponytail: _cache_lock guards mutations; dev server is single-thread but any
+# threaded WSGI deployment needs it.  Reads (get) are atomic dict lookups, ok unlocked.
 _eval_cache = OrderedDict()  # {id: {"analysis": {...}, "error": "..."}}
+_cache_lock = threading.Lock()
+
+_progress_cache = {}  # {id: {"step": N, "total": 6, "label": "..."}}
 
 def _cache_put(key, entry):
     """Store in eval cache, evicting oldest if over cap."""
-    _eval_cache[key] = entry
-    while len(_eval_cache) > 100:
-        _eval_cache.popitem(last=False)
+    with _cache_lock:
+        _eval_cache[key] = entry
+        while len(_eval_cache) > 100:
+            _eval_cache.popitem(last=False)
 
 DATABASE = "AllPrintings.sqlite"
 REPORTS_DIR = "eval_reports"
+IMAGE_DIR = "images"
 
 
 # --- DB helpers ---
@@ -84,11 +102,37 @@ def close_db(e=None):
 # --- Image URL ---
 
 def card_image(scryfall_id, face="front", size="normal"):
-    """Build Scryfall CDN image URL."""
+    """Local image URL — served by proxy route, which caches from Scryfall on first hit."""
     if not scryfall_id:
         return ""
     c1, c2 = scryfall_id[0], scryfall_id[1]
-    return f"https://cards.scryfall.io/{size}/{face}/{c1}/{c2}/{scryfall_id}.jpg"
+    return f"/img/{size}/{face}/{c1}/{c2}/{scryfall_id}.jpg"
+
+
+@app.route("/img/<size>/<face>/<c1>/<c2>/<scryfall_id>.jpg")
+def serve_image(size, face, c1, c2, scryfall_id):
+    """Lazy cache-through proxy. First hit fetches from Scryfall and writes to disk."""
+    full_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        IMAGE_DIR, size, face, c1, c2, f"{scryfall_id}.jpg",
+    )
+    if os.path.isfile(full_path):
+        return send_file(full_path)
+
+    # ponytail: fetch from Scryfall, cache, serve. Single urlopen, no retry.
+    try:
+        scryfall_url = f"https://cards.scryfall.io/{size}/{face}/{c1}/{c2}/{scryfall_id}.jpg"
+        req = Request(scryfall_url, headers={"User-Agent": "mtg-search/1.0"})
+        with urlopen(req, timeout=10) as resp:
+            img_data = resp.read()
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        with open(full_path, "wb") as f:
+            f.write(img_data)
+        return send_file(full_path)
+    except Exception:
+        pass
+    abort(404)
+
 
 # --- Mana symbol helpers ---
 
@@ -795,6 +839,7 @@ def similar_landing(set_code=None):
                       "s_mv", "s_color", "s_oracle",
                       "w_types", "w_keywords", "w_subtypes", "w_supertypes",
                       "w_mv", "w_color", "use_weights",
+                      "method",
                       "score_filter", "score_op", "score_value",
                       "mtg_filter", "top_n", "tuned"):
                 v = request.args.get(k)
@@ -899,7 +944,8 @@ def similar_cards(set_code, number):
         if found:
             # Preserve all factor params in the redirect
             keep = {}
-            for k in ("use_types", "use_keywords", "use_subtypes", "use_supertypes",
+            for k in ("method",
+                      "use_types", "use_keywords", "use_subtypes", "use_supertypes",
                       "use_mv", "use_color",
                       "s_types", "s_keywords", "s_subtypes", "s_supertypes",
                       "s_mv", "s_color", "s_oracle",
@@ -940,48 +986,99 @@ def similar_cards(set_code, number):
     idf = _get_idf()
     base_card["_idf_sum"] = sum(idf.get(t, 0) for t in base_card["_terms"])
 
+    # --- Method: embed (semantic) or legacy (TF-IDF with tuning) ---
+    method = request.args.get("method", "legacy")
+    score_method = method  # ponytail: may fall back to legacy for scoring
+
     # --- Candidate query ---
     mv = base_card["manaValue"] or 0
     mv_min = max(0, mv - 3)
     mv_max = mv + 3
 
-    candidates = db.execute("""
-        SELECT c.name, c.manaCost, c.manaValue, c.type, c.types, c.supertypes,
-               c.subtypes, c.keywords, c.text, c.colors, c.colorIdentity,
-               c.setCode, c.number, c.rarity,
-               ci.scryfallId, s.name as setName, s.releaseDate
-        FROM cards c
-        JOIN cardIdentifiers ci ON c.uuid = ci.uuid
-        JOIN sets s ON c.setCode = s.code
-        JOIN (
-            SELECT c2.name, MAX(s2.releaseDate) as maxDate
-            FROM cards c2
-            JOIN sets s2 ON c2.setCode = s2.code
-            WHERE c2.language = 'English'
-              AND (c2.side IS NULL OR c2.side = 'a')
-            GROUP BY c2.name
-        ) latest ON c.name = latest.name AND s.releaseDate = latest.maxDate
-        WHERE c.language = 'English'
-          AND (c.side IS NULL OR c.side = 'a')
-          AND c.uuid != ?
-          AND c.name != ?
-          AND (c.manaValue BETWEEN ? AND ? OR c.manaValue IS NULL)
-        GROUP BY c.name
-    """, [base_card["uuid"], base_card["name"], mv_min, mv_max]).fetchall()
-
-    # --- Score and sort ---
     scored = []
-    for c in candidates:
-        scored.append((_score_similarity(base_card, c, factors, idf, mtg_filter=mtg_filter), c))
-    scored.sort(key=lambda x: x[0], reverse=True)
 
-    # --- Score threshold filter ---
-    if score_filter and score_value > 0:
-        threshold = score_value / 100.0
-        if score_op == "greater_than":
-            scored = [(s, c) for s, c in scored if s > threshold]
-        else:
-            scored = [(s, c) for s, c in scored if s < threshold]
+    if score_method == "embed":
+        # ponytail: semantic similarity via embedding index.
+        # Respects top_n, score_filter, and score_value. Factor tuning not applicable.
+        try:
+            candidates = embed.find(DATABASE, base_card.get("text") or "", top_k=200)
+            candidates = [c for c in candidates if c["name"] != base_card["name"]]
+            for c in candidates:
+                c_mv = c.get("manaValue")
+                if c_mv is not None and (c_mv < mv_min or c_mv > mv_max):
+                    continue
+                # Look up setCode/number for URL
+                row = db.execute(
+                    "SELECT c.setCode, c.number, c.manaCost, c.manaValue, c.type, c.types, c.supertypes, "
+                    "c.subtypes, c.keywords, c.colors, c.colorIdentity, c.rarity, c.text, "
+                    "ci.scryfallId, s.name as setName, s.releaseDate "
+                    "FROM cards c "
+                    "JOIN cardIdentifiers ci ON c.uuid = ci.uuid "
+                    "JOIN sets s ON c.setCode = s.code "
+                    "WHERE c.uuid = ? AND c.language = 'English'",
+                    (c["uuid"],)
+                ).fetchone()
+                if row:
+                    scored.append((c["score"], row))
+            scored.sort(key=lambda x: x[0], reverse=True)
+
+            # Apply score threshold filter
+            if score_filter and score_value > 0:
+                threshold = score_value / 100.0
+                if score_op == "greater_than":
+                    scored = [(s, c) for s, c in scored if s > threshold]
+                else:
+                    scored = [(s, c) for s, c in scored if s < threshold]
+
+            # Convert scores to 0-100 scale (cosine similarity is already 0-1)
+            scored = [(round(s * 100, 1), c) for s, c in scored]
+        except Exception:
+            import sys, traceback
+            traceback.print_exc(file=sys.stderr)
+            print("similar: embed failed, falling back to legacy", file=sys.stderr)
+            score_method = "legacy"  # ponytail: fall back to legacy scoring only
+
+    if score_method == "legacy":
+        candidates = db.execute("""
+            SELECT c.name, c.manaCost, c.manaValue, c.type, c.types, c.supertypes,
+                   c.subtypes, c.keywords, c.text, c.colors, c.colorIdentity,
+                   c.setCode, c.number, c.rarity,
+                   ci.scryfallId, s.name as setName, s.releaseDate
+            FROM cards c
+            JOIN cardIdentifiers ci ON c.uuid = ci.uuid
+            JOIN sets s ON c.setCode = s.code
+            JOIN (
+                SELECT c2.name, MAX(s2.releaseDate) as maxDate
+                FROM cards c2
+                JOIN sets s2 ON c2.setCode = s2.code
+                WHERE c2.language = 'English'
+                  AND (c2.side IS NULL OR c2.side = 'a')
+                GROUP BY c2.name
+            ) latest ON c.name = latest.name AND s.releaseDate = latest.maxDate
+            WHERE c.language = 'English'
+              AND (c.side IS NULL OR c.side = 'a')
+              AND c.uuid != ?
+              AND c.name != ?
+              AND (c.manaValue BETWEEN ? AND ? OR c.manaValue IS NULL)
+            GROUP BY c.name
+        """, [base_card["uuid"], base_card["name"], mv_min, mv_max]).fetchall()
+
+        # --- Score and sort ---
+        scored = []
+        for c in candidates:
+            scored.append((_score_similarity(base_card, c, factors, idf, mtg_filter=mtg_filter), c))
+        scored.sort(key=lambda x: x[0], reverse=True)
+
+        # --- Score threshold filter ---
+        if score_filter and score_value > 0:
+            threshold = score_value / 100.0
+            if score_op == "greater_than":
+                scored = [(s, c) for s, c in scored if s > threshold]
+            else:
+                scored = [(s, c) for s, c in scored if s < threshold]
+
+        # Convert to 0-100 scale
+        scored = [(round(s * 100, 1), c) for s, c in scored]
 
     # --- Split top N from remaining ---
     top_results = scored[:top_n]
@@ -1042,6 +1139,7 @@ def similar_cards(set_code, number):
         score_filter=score_filter,
         score_op=score_op,
         score_value=score_value,
+        method=method,
     )
 
 
@@ -1070,17 +1168,61 @@ def _web_search(query, max_results=10):
 
 # --- Commander Eval ---
 
+# ponytail: helper — a card is legal in the 99 only if every color in its
+# color identity is also in the commander's color identity. Colorless cards
+# (empty CI) are legal everywhere.
+def _color_identity_legal(card_ci, commander_ci):
+    """Return True if card_ci is a subset of commander_ci."""
+    if not card_ci or not card_ci.strip():
+        return True
+    if not commander_ci or not commander_ci.strip():
+        return bool(not card_ci or not card_ci.strip())
+    card_colors = set(card_ci.replace(" ", ""))
+    commander_colors = set(commander_ci.replace(" ", ""))
+    return card_colors <= commander_colors
+
+
+def _is_placeholder_name(name):
+    """ponytail: catch LLM placeholder names like 'Card Name Placeholder'.
+    Returns True if the name looks like a placeholder, not a real card."""
+    if not name:
+        return True
+    lower = name.lower()
+    placeholder_markers = [
+        "placeholder", "card name", "[placeholder", "[card name",
+        "token generator", "sacrifice outlet", "mana dork", "draw engine",
+        "removal spell", "counterspell", "board wipe", "ramp spell",
+    ]
+    return any(m in lower for m in placeholder_markers)
+
+
 COMMANDER_SYSTEM_PROMPT = """You are an expert Magic: The Gathering deck builder specializing in the Commander format. Analyze the given legendary creature as a Commander and produce a structured JSON report.
 
 Commander rules: 100-card singleton, commander starts in the command zone. Each time you cast your commander from the command zone after the first, it costs {2} more. 21 combat damage from a single commander kills a player. Color identity determines which cards are legal.
 
 The user prompt includes web_research — search results from deck guides, strategy discussions, community reviews, and mechanic rules for this commander. The commander object also includes official Oracle rulings (cardRulings). Use rulings as the definitive mechanical interpretation — they resolve ambiguities in the card text. Use web research to inform your strategic analysis. Treat web research as community consensus and lived experience, not as rules text.
 
+The user prompt may also include similar_cards — cards whose oracle text is mechanically similar to the commander's abilities, ranked by cosine similarity. These are real Magic cards that share mechanical DNA with the commander. When available, use them to ground your analysis: they represent cards that naturally fit in the 99. Reference mechanics and card types that appear in the similar_cards list rather than inventing synergies from scratch. You may name specific cards from the similar_cards list — but only cards that appear in that list.
+
 If the card has leadershipSkills (partner, background, doctor's companion, friends forever, choose a background, etc.), analyze how those mechanics affect deck-building — partner pairs expand color identity, backgrounds add a second card choice, etc.
 
-When analyzing, reference specific mechanics from the card's oracle text. Never invent abilities the card does not have. If the commander's ability targets or interacts with a specific zone (graveyard, library, battlefield, exile, hand, command zone), name that zone exactly — do not confuse zones. Never mention other Magic card names in strategies or descriptions. Describe synergies in terms of card types, abilities, and mechanics, not individual cards.
+When analyzing, reference specific mechanics from the card's oracle text. Never invent abilities the card does not have. If the commander's ability targets or interacts with a specific zone (graveyard, library, battlefield, exile, hand, command zone), name that zone exactly — do not confuse zones. Do not mention other card names unless they appear in the similar_cards field. Describe synergies in terms of card types, abilities, and mechanics, not individual cards, unless the card is listed in similar_cards.
+
+Parse abilities literally and preserve every qualifier. Trigger conditions are gated by their exact wording — "if you cast it" excludes tokens and copies; "from your hand" excludes the graveyard; "during an opponent's turn" excludes your own turn; "nontoken" excludes tokens; "one or more" does not mean "each"; "opponent controls" excludes your own permanents; "may" means the effect is optional. Dropping or broadening a qualifier changes what the card does. When describing what triggers an ability, quote or closely paraphrase the trigger condition.
+
+Use precise card-economy language. Card advantage starts with more resources than you had before: drawing extra cards, tutoring to hand, or putting a card onto the battlefield from hand without casting it. Repeatable recursion from graveyard or exile (where you deploy a card again without spending a new one from your library) is virtual card advantage — you gain access to already-used resources without using new cards. Return-to-hand effects that require re-casting at mana cost are card recycling or resilience, not card advantage. Distinguish these three categories explicitly: advantage (net new resources), virtual advantage (repeat access from inaccessible zones at no library cost), and recycling (returning a card you already owned and must re-cast).
+
+Note the relationship between the commander's abilities and the commander's triggering method. A "dies" or "whenever a creature dies" trigger fires on death from any cause (combat, removal, sacrifice). It is a death trigger, not a sacrifice ability — the word "sacrifice" is a specific game action and only applies when the card text uses that word. Death-trigger commanders can be enabled by sacrifice outlets, but the commander itself is not a sacrifice engine unless it says "sacrifice." The trigger's qualifier determines what the ability does: analyze it as written, not as the most common way to trigger it.
+
+If the commander has multiple abilities that don't directly interact, analyze each one's strategic implications separately. A secondary ability (e.g., a +1/+1 counter trigger on a spell-copy commander) is support for the primary build-around, not a separate identity. Self-mill that fuels the commander's strategy (filling the graveyard for recursion) is an enabler, not a weakness — only list it as a weakness if the commander has no graveyard interaction and risks decking.
+
+When the commander copies an object or spell, describe it as creating a copy. Copying is not removing, stealing, exiling, or destroying the original. A spell copy on the stack is not "cast" — it does not trigger cast abilities. A permanent copy (clone) retains only the printed characteristics, not counters or modifications, unless specified otherwise. A spell-copy ability that says "you may choose new targets" means the copy is independent of the original's targets.
+
+When the commander's payoff is delayed (suspend, next upkeep, end step, beginning of combat), state the delay explicitly. A free spell in 3 upkeeps is not equivalent to getting it now — factor the timing into strengths and weaknesses. When the commander's ability grants a spell Suspend, note that suspend is a keyword mechanic that exiles with time counters and casts for free when the last counter is removed — the delay and the zero-mana cast are both relevant.
 
 If the card has keywords (Flying, Ward, etc.), explain how they affect Commander play. Consider how the commander's color identity shapes the card pool available to it and how that interacts with the commander's specific oracle text — the analysis should reflect the intersection of color access and the commander's unique mechanics, not either in isolation. If EDHREC rank is provided, note what it implies about popularity. If salt score is high, note why players find it frustrating.
+
+When the commander has symmetric effects, distinguish them from personal ones. "Each player draws" or "each opponent" is not the same as "you draw" — symmetric effects affect the whole table, which matters in a multiplayer format. Group-hug draw engines (everyone draws) and group-slug punishers (damage on opponent's draw) should be analyzed for their political and symmetrical implications, not presented as single-player value engines.
 
 Commander bracket system (new official power level tiers):
 - Bracket 1 (Exhibition): Ultra-casual, theme/joke/meme decks. Winning is not the goal — the experience is. Jank builds, chair tribal, ladies looking left.
@@ -1090,7 +1232,7 @@ Commander bracket system (new official power level tiers):
 - Bracket 5 (cEDH): Competitive EDH. Win-at-all-costs. Fully optimized lists, meta-driven choices, every card is the most efficient version of its effect.
 
 For strengths/weaknesses, list 3–5 each as an array of strings. Each must cite a concrete mechanic or interaction.
-For strategies, list 2–4 strategies each with a name and a description tied to the commander's specific abilities.
+For strategies, list 1–4 strategies each with a name and a description tied to the commander's specific abilities. Each strategy must differ in its core game plan or primary win condition, not just its name or card choices. If the commander genuinely supports only 1-2 distinct strategies, list fewer rather than creating near-identical variants. A name change without a change in game plan is not a different strategy.
 For priorities, list 3–5 deck-building priority categories (e.g. Card Draw, Ramp, Sacrifice Outlets, Protection, Recursion, Removal, Token Generators, etc.) ranked from most to least important for this specific commander. Each must include a "category" and a "reason" explaining why this category is critical given the commander's abilities and color identity.
 For unique_builds, list 1–3 unconventional ways to build this commander — strategies that deviate from the obvious or most popular approach. Look to the unique_archetypes search results and to under-exploited angles in the card's oracle text. Each must include a "name" and a "description" explaining the off-meta angle and why it works. If the research reveals no viable off-meta builds, return an empty array.
 
@@ -1131,22 +1273,65 @@ Output ONLY valid JSON with these exact keys:
 
 brackets must have exactly 5 entries, one per bracket (1-5)."""
 
-EXPAND_SYSTEM_PROMPT = """You are an expert Magic: The Gathering deck builder specializing in the Commander format. Deep-dive on a specific {type_label} for this commander.
+DEEPDIVE_SYSTEM_PROMPT = """You are an expert Magic: The Gathering deck builder specializing in the Commander format. Deep-dive on a specific {type_label} for this commander.
 
 Produce a detailed analysis of this specific approach — not the commander in general. Focus exclusively on what makes this {type_label} work:
 - Which card types and mechanics does it leverage?
 - What are the key enablers and payoffs?
 - How does it win games?
+- What are 3 example cards that best illustrate this {type_label}?
 
-Remember: never mention other Magic card names. Describe synergies in terms of mechanics, card types, and abilities.
+The user prompt includes web_research — search results for this commander + {type_label} combination. Use it to identify real cards, combos, and deckbuilding patterns the community uses for this specific approach.
+
+The user prompt also includes similar_cards — real Magic cards whose oracle text is mechanically similar, ranked by cosine similarity. The retrieval is biased toward this {type_label}, so these cards should be strong fits. Each card includes a truncated oracle text field — use it to judge whether the card actually fits this {type_label}.
+
+You may name specific cards from the similar_cards list — but ONLY cards that appear in that list. Do not invent card names that are not in similar_cards. Pick 3 cards from similar_cards that best illustrate this {type_label} — cards whose role and synergies clarify how the strategy works. Each card should serve a distinct purpose (enabler, payoff, support piece). If no card in the list fits a particular role, describe the role abstractly (e.g., "a cheap sacrifice outlet" or "a mana dork that produces GU") — never output placeholder names like "Sacrifice Outlet Placeholder" or "Token Generator Placeholder."
+
+Before listing any example card, verify it is legal in the commander's color identity. Cards outside the commander's color identity cannot be included in the deck. If a card in the similar_cards list has a color identity that extends beyond the commander's, do not list it. If no in-color similar card fits a role, describe the role abstractly.
+
+When describing recursion or return effects, specify the destination zone exactly. Returning a card to hand means re-casting it at its mana cost — this is recycling, not free redeployment. Returning to the battlefield means the card is deployed without casting. The distinction matters for deck-building and tempo evaluation.
+
+If this {type_label} is substantially similar to another approach already described for this commander, note the overlap and focus on what genuinely differentiates this approach. If there is no meaningful difference, state that explicitly rather than producing duplicate analysis.
 
 Output ONLY valid JSON with these exact keys:
-{{
+{
   "strengths": ["3-5 strings, each citing a mechanic or interaction specific to this {type_label}"],
   "weaknesses": ["3-5 strings, each citing a vulnerability or counter specific to this {type_label}"],
-  "priorities": [{{"category": "string", "reason": "string, why this is critical for this {type_label}"}}],
-  "win_conditions": [{{"name": "string", "description": "string, how this approach closes out games"}}]
-}}"""
+  "priorities": [{"category": "string", "reason": "string, why this is critical for this {type_label}"}],
+  "win_conditions": [{"name": "string", "description": "string, how this approach closes out games"}],
+  "example_cards": [{"name": "string, MUST be in similar_cards list", "reason": "string, why this card illustrates the {type_label} and what role it serves (enabler, payoff, support)"}]
+}
+
+example_cards must have exactly 3 entries. Pick the 3 cards from similar_cards that best clarify how the {type_label} works. Each should serve a distinct role.
+
+CRITICAL: The "name" field in each example_card entry MUST be the exact, verbatim name of a card that appears in the similar_cards list. Do NOT wrap names in brackets, do NOT append "(Placeholder)", do NOT write descriptions like "Card Name Placeholder" — copy the card name exactly as it appears in similar_cards. If no suitable card exists in similar_cards for a role, you MUST describe the role abstractly in the strengths/weaknesses/priorities fields instead — do not include placeholder entries in example_cards."""
+
+VERIFY_SYSTEM_PROMPT = """You are a Magic: The Gathering rules judge. Verify an AI-generated Commander analysis against the card's actual Oracle text and official rulings.
+
+The user prompt includes allowed_card_names — cards the analysis was explicitly permitted to name. Only flag as hallucinated if a card name appears that is NOT in this list.
+
+Check for these factual errors:
+1. **Invented abilities**: The analysis describes a mechanic the card does not actually have. Only flag if the claimed ability is absent from the oracle text — do NOT flag strategic interpretations or synergy suggestions.
+2. **Wrong zone references**: The card interacts with a specific zone (graveyard, library, battlefield, exile, hand, command zone, stack) and the analysis names the wrong one.
+3. **Hallucinated card names**: The analysis mentions a card by name that is NOT in the allowed_card_names list.
+4. **Color identity errors**: The analysis recommends cards whose color identity symbols are not a subset of the commander's color identity.
+
+CRITICAL — when checking mechanical claims:
+- Read the oracle text literally. If the card text supports the claim, do NOT flag it.
+- Do NOT flag synergy suggestions. "This card combos with Impact Tremors" is a strategic claim, not a rules error.
+- If you are uncertain whether a claim is correct, do NOT flag it. Only flag errors you are certain about.
+- Example: A creature that returns from exile WILL trigger "when a creature enters the battlefield" effects. That is correct rules function — do NOT flag it.
+
+Only flag clear factual rules errors. Do NOT flag:
+- Strategic opinions or card evaluations you disagree with
+- Wording style or phrasing preferences
+- Edhrec rank or salt score interpretations
+- Missing strategies (incompleteness is not an error)
+- Correct card names that appear in allowed_card_names
+- Synergy suggestions between cards (even if you think the combo doesn't work)
+
+Output ONLY valid JSON:
+{"warnings": ["warning 1", "warning 2", ...], "verified": true}"""
 
 
 # ponytail: proxy /models so the browser can fetch from self-hosted endpoints
@@ -1204,12 +1389,25 @@ def config_page():
                 session["eval_prompt"] = eval_prompt
             elif "eval_prompt" in session:
                 session.pop("eval_prompt", None)
-        if request.form.get("save_expand_prompt") == "1":
-            expand_prompt = request.form.get("expand_prompt", "").strip()
-            if expand_prompt:
-                session["expand_prompt"] = expand_prompt
-            elif "expand_prompt" in session:
-                session.pop("expand_prompt", None)
+        if request.form.get("save_deepdive_prompt") == "1":
+            deepdive_prompt = request.form.get("deepdive_prompt", "").strip()
+            if deepdive_prompt:
+                session["deepdive_prompt"] = deepdive_prompt
+            elif "deepdive_prompt" in session:
+                session.pop("deepdive_prompt", None)
+        if request.form.get("save_verify_prompt") == "1":
+            verify_prompt = request.form.get("verify_prompt", "").strip()
+            if verify_prompt:
+                session["verify_prompt"] = verify_prompt
+            elif "verify_prompt" in session:
+                session.pop("verify_prompt", None)
+        # Search Logic config
+        if request.form.get("save_search_logic") == "1":
+            similar_method = request.form.get("similar_method", "").strip()
+            if similar_method in ("embed", "legacy"):
+                session["similar_method"] = similar_method
+            elif "similar_method" in session:
+                session.pop("similar_method", None)
         return redirect(url_for("config_page"))
 
     llm_backend = (session.get("llm_backend") or os.environ.get("LLM_BACKEND", "openai"))
@@ -1217,7 +1415,9 @@ def config_page():
     llm_model = (session.get("llm_model") or os.environ.get("LLM_MODEL", ""))
     llm_has_key = bool(session.get("llm_api_key") or os.environ.get("LLM_API_KEY"))
     eval_prompt = session.get("eval_prompt", "")
-    expand_prompt = session.get("expand_prompt", "")
+    deepdive_prompt = session.get("deepdive_prompt", "")
+    verify_prompt = session.get("verify_prompt", "")
+    similar_method = session.get("similar_method", "embed")
 
     last_ingest = None
     _ingest_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".last_ingest.json")
@@ -1235,17 +1435,45 @@ def config_page():
     except Exception:
         pass
 
+    embed_status = embed.status()
+
     return render_template("config.html",
                            llm_backend=llm_backend,
                            llm_base_url=llm_base_url,
                            llm_model=llm_model,
                            llm_has_key=llm_has_key,
                            eval_prompt=eval_prompt,
-                           expand_prompt=expand_prompt,
+                           deepdive_prompt=deepdive_prompt,
+                           verify_prompt=verify_prompt,
+                           similar_method=similar_method,
                            default_prompt=COMMANDER_SYSTEM_PROMPT,
-                           default_expand_prompt=EXPAND_SYSTEM_PROMPT,
+                           default_deepdive_prompt=DEEPDIVE_SYSTEM_PROMPT,
+                           default_verify_prompt=VERIFY_SYSTEM_PROMPT,
                            last_ingest=last_ingest,
-                           db_card_count=db_card_count)
+                           db_card_count=db_card_count,
+                           embed_status=embed_status)
+
+
+@app.route("/config/embed-status")
+def embed_status():
+    """Return current embedding index build status as JSON."""
+    return jsonify(embed.status())
+
+
+@app.route("/config/embed-build", methods=["POST"])
+def embed_build():
+    """Trigger an embedding index rebuild. Returns immediately; build runs async."""
+    status_info = embed.status()
+    if status_info["building"]:
+        return jsonify({"success": False, "error": "Build already in progress."}), 409
+
+    def _build():
+        try:
+            embed.build(DATABASE)
+        except Exception:
+            pass
+    threading.Thread(target=_build, daemon=True).start()
+    return jsonify({"success": True})
 
 
 @app.route("/config/ingest", methods=["POST"])
@@ -1354,16 +1582,62 @@ def ingest_database():
         if cnt < 1000:
             return jsonify({"error": f"Database has only {cnt} English cards — this doesn't look like a complete MTGJSON export."}), 400
 
+        # ponytail: deduplicate to one row per unique card before replacing live DB.
+        # Non-English rows, older printings, and duplicate rulings removed.
+        tmp_dedup = tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False)
+        tmp_dedup_path = tmp_dedup.name
+        tmp_dedup.close()
+        try:
+            dedup.dedup_db(tmp_sqlite, tmp_dedup_path)
+        except Exception:
+            try:
+                os.unlink(tmp_dedup_path)
+            except OSError:
+                pass
+            raise
+
+        # Validate dedup result
+        dedup_db = sqlite3.connect(tmp_dedup_path)
+        try:
+            dedup_cnt = dedup_db.execute(
+                "SELECT COUNT(*) FROM cards WHERE language='English'"
+            ).fetchone()[0]
+        finally:
+            dedup_db.close()
+
+        if dedup_cnt < 500:
+            try:
+                os.unlink(tmp_dedup_path)
+            except OSError:
+                pass
+            return jsonify({
+                "error": f"Deduplicated database has only {dedup_cnt} English cards — this doesn't look right."
+            }), 400
+
         # Replace the active database — shutil.move handles cross-device (/tmp → project dir)
-        shutil.move(tmp_sqlite, DATABASE)
+        shutil.move(tmp_dedup_path, DATABASE)
 
         # Persist ingest timestamp
         now_iso = datetime.now(timezone.utc).isoformat()
         ingest_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".last_ingest.json")
         with open(ingest_path, "w") as out:
-            json.dump({"timestamp": now_iso, "filename": filename, "cards": cnt}, out)
+            json.dump({
+                "timestamp": now_iso,
+                "filename": filename,
+                "cards": dedup_cnt,
+                "deduplicated": True,
+            }, out)
 
-        return jsonify({"success": True, "cards": cnt, "timestamp": now_iso})
+        # Trigger embedding index rebuild in background — new cards need new vectors.
+        # ponytail: fire-and-forget thread; the config page polls embed.status().
+        def _rebuild():
+            try:
+                embed.build(DATABASE)
+            except Exception:
+                pass
+        threading.Thread(target=_rebuild, daemon=True).start()
+
+        return jsonify({"success": True, "cards": dedup_cnt, "timestamp": now_iso})
 
     except Exception as e:
         import sys
@@ -1474,7 +1748,7 @@ def commander_eval_landing():
     saved_reports = []
     if os.path.isdir(reports_dir):
         for fname in sorted(os.listdir(reports_dir), reverse=True):
-            if not fname.endswith(".json") or fname == ".gitkeep":
+            if not fname.endswith(".json") or fname == ".gitkeep" or fname.endswith("_deepdives.json"):
                 continue
             try:
                 with open(os.path.join(reports_dir, fname)) as f:
@@ -1570,15 +1844,29 @@ def commander_eval(set_code, number):
             except (FileNotFoundError, json.JSONDecodeError, OSError):
                 error = "Saved report not found or unreadable."
 
-    # If no fresh analysis, seed eval_key + _eval_cache so expand/save routes work
-    if analysis and not session.get("eval_key"):
-        session["eval_key"] = str(uuid.uuid4())
-        _cache_put(session["eval_key"], {"_card": f"{set_code}/{number}", "analysis": analysis})
-        if report_data:
-            _eval_cache[session["eval_key"]]["expands"] = report_data.get("expands", {})
-            _eval_cache[session["eval_key"]]["similar"] = report_data.get("similar", [])
+    # Seed eval_key + _eval_cache so deepdive/save routes have access to the
+    # analysis. Always seed when loading a report from disk so the cache belongs
+    # to the current card — stale eval_key from a prior card must not bleed in.
+    if analysis:
+        if report_data or not session.get("eval_key"):
+            session["eval_key"] = str(uuid.uuid4())
+            _cache_put(session["eval_key"], {"_card": f"{set_code}/{number}", "analysis": analysis})
+            if report_data:
+                # ponytail: backwards compat — old reports use "expands" key
+                _eval_cache[session["eval_key"]]["deepdives"] = report_data.get("deepdives") or report_data.get("expands", {})
+                _eval_cache[session["eval_key"]]["similar"] = report_data.get("similar", [])
 
     similar = (report_data or {}).get("similar") if loaded_from else cached.get("similar")
+
+    # ponytail: merge auto-saved deepdives so they survive navigation away.
+    # cached deepdives (from this session) > loaded report > auto-save.
+    _saved_deepdives = _load_auto_deepdives(set_code, number)
+    if report_data:
+        _saved_deepdives.update(report_data.get("deepdives") or report_data.get("expands", {}))
+    _saved_deepdives.update(cached.get("deepdives", {}))
+
+    progress_key = str(uuid.uuid4())
+    session["eval_progress_key"] = progress_key
 
     return render_template(
         "commander_eval.html",
@@ -1590,9 +1878,18 @@ def commander_eval(set_code, number):
         by_name=by_name,
         by_name_error=bool(by_name),
         loaded_from=loaded_from,
-        saved_expands=report_data.get("expands", {}) if report_data else cached.get("expands", {}),
+        saved_deepdives=_saved_deepdives,
         similar=similar,
+        progress_key=progress_key,
     )
+
+
+@app.route("/card/<set_code>/<number>/eval/progress")
+def eval_progress(set_code, number):
+    """Poll for analysis progress — returns {step, total, label}."""
+    key = session.get("eval_progress_key")
+    data = _progress_cache.get(key) if key else None
+    return jsonify(data if data else {"step": 0, "total": 0, "label": "Waiting…"})
 
 
 @app.route("/card/<set_code>/<number>/eval/analyze", methods=["POST"])
@@ -1603,6 +1900,13 @@ def commander_eval_analyze(set_code, number):
     llm_backend = (session.get("llm_backend") or os.environ.get("LLM_BACKEND", "openai"))
     llm_base_url = (session.get("llm_base_url") or os.environ.get("LLM_BASE_URL", ""))
     llm_model = (session.get("llm_model") or os.environ.get("LLM_MODEL", ""))
+
+    progress_key = session.get("eval_progress_key")
+    def _step(n, label):
+        if progress_key:
+            _progress_cache[progress_key] = {"step": n, "total": 6, "label": label}
+
+    _step(1, "Loading card data…")
 
     card = db.execute("""
         SELECT c.*, ci.scryfallId, s.name as setName, s.releaseDate
@@ -1646,6 +1950,12 @@ def commander_eval_analyze(set_code, number):
         name = card["name"]
         keywords = card.get("keywords", "")
 
+        # ponytail: track pipeline health — surface failures so the user
+        # knows when analysis ran with incomplete data.
+        pipeline_status = {"web_search": {}, "embed": None}
+
+        _step(2, "Searching web for deck guides and discussions…")
+
         searches = {}
         for search_label, query in [
             ("deck_guides", f"{name} commander deck guide primer"),
@@ -1656,44 +1966,80 @@ def commander_eval_analyze(set_code, number):
         ]:
             if query is None:
                 continue
-            searches[search_label] = _web_search(query, max_results=5)
+            results = _web_search(query, max_results=5)
+            searches[search_label] = results
+            pipeline_status["web_search"][search_label] = len(results)
 
         user_prompt = json.dumps({
             "commander": card_data,
             "web_research": searches,
         }, indent=2)
 
+        # ponytail: enrich with mechanically similar cards from embedding index.
+        # Gives the LLM real cards to reference instead of guessing at synergies.
+        _step(3, "Retrieving mechanically similar cards…")
+        try:
+            similar_cards = embed.find(DATABASE, card_data["text"], top_k=200)
+            # ponytail: filter out the commander's own card + off-color cards
+            commander_ci = card_data.get("colorIdentity", "")
+            similar_cards = [
+                c for c in similar_cards
+                if c["name"] != card["name"] and _color_identity_legal(c.get("colorIdentity", ""), commander_ci)
+            ]
+            pipeline_status["embed"] = len(similar_cards)
+            if similar_cards:
+                # ponytail: trim to metadata only — oracle text adds 30KB+ that
+                # pushes context limits. The LLM needs names + types to reason,
+                # not the full card text it already knows.
+                slim = []
+                for c in similar_cards:
+                    slim.append({
+                        "name": c["name"],
+                        "type": c.get("type", ""),
+                        "keywords": c.get("keywords", ""),
+                        "colorIdentity": c.get("colorIdentity", ""),
+                        "manaValue": c.get("manaValue"),
+                        "score": c.get("score"),
+                    })
+                user_prompt = json.dumps({
+                    "commander": card_data,
+                    "web_research": searches,
+                    "similar_cards": slim,
+                }, indent=2)
+        except Exception:
+            pipeline_status["embed"] = 0  # ponytail: index missing or model not loaded
+            similar_cards = []  # ponytail: keep verify path safe when embed fails
+
         if llm_generate is None:
             raise RuntimeError("LLM dependencies not installed. Run: pip install openai anthropic")
 
+        _step(4, "Analyzing with LLM…")
+
         api_key = session.get("llm_api_key") or os.environ.get("LLM_API_KEY")
         commander_prompt = session.get("eval_prompt") or COMMANDER_SYSTEM_PROMPT
-        analysis = llm_generate(
-            commander_prompt, user_prompt,
-            backend=llm_backend,
-            api_key=api_key,
-            base_url=llm_base_url or None,
-            model=llm_model or None,
-        )
+
+        # ponytail: retry once on JSON parse failure — Gemma4 occasionally
+        # produces malformed JSON that _parse_json can't repair.
+        analysis = None
+        for attempt in range(2):
+            try:
+                analysis = llm_generate(
+                    commander_prompt, user_prompt,
+                    backend=llm_backend,
+                    api_key=api_key,
+                    base_url=llm_base_url or None,
+                    model=llm_model or None,
+                )
+                break
+            except (json.JSONDecodeError, ValueError):
+                if attempt == 0:
+                    user_prompt += "\n\n---\nYour previous response had a JSON formatting error. Please output ONLY valid JSON. Double-check all braces, brackets, and commas."
+                else:
+                    raise
 
         # Second-pass verification — check for invented abilities, wrong zones, hallucinated card names
-        verify_prompt = """You are a Magic: The Gathering rules judge. Verify an AI-generated Commander analysis against the card's actual Oracle text and official rulings.
-
-Check for these specific factual errors:
-1. **Invented abilities**: The analysis describes a mechanic the card does not actually have.
-2. **Wrong zone references**: The card interacts with a specific zone (graveyard, library, battlefield, exile, hand, command zone, stack) and the analysis names the wrong one.
-3. **Hallucinated card names**: The analysis mentions another specific Magic card by name (the analysis was forbidden from doing this).
-4. **Misstated mechanics**: A keyword or ability is described incorrectly (e.g. saying "Ward {2} counters spells" when Ward triggers on targeting).
-5. **Color identity errors**: The analysis recommends cards or strategies outside the commander's color identity.
-
-Only flag factual rules errors. Do NOT flag:
-- Strategic opinions or card evaluations you disagree with
-- Wording style or phrasing preferences
-- Edhrec rank or salt score interpretations
-- Missing strategies (incompleteness is not an error)
-
-Output ONLY valid JSON:
-{"warnings": ["warning 1", "warning 2", ...], "verified": true}"""
+        _step(5, "Verifying analysis accuracy…")
+        verify_prompt = session.get("verify_prompt") or VERIFY_SYSTEM_PROMPT
 
         verify_user = json.dumps({
             "card": {
@@ -1705,6 +2051,7 @@ Output ONLY valid JSON:
                 "rulings": rulings_texts,
             },
             "analysis_to_verify": analysis,
+            "allowed_card_names": [c["name"] for c in similar_cards] if similar_cards else [],
         }, indent=2)
 
         try:
@@ -1720,6 +2067,9 @@ Output ONLY valid JSON:
             # If verification fails, still return the analysis without it
             pass
 
+        analysis["_pipeline"] = pipeline_status
+
+        _step(6, "Done!")
         session["eval_key"] = str(uuid.uuid4())
         _cache_put(session["eval_key"], {"_card": f"{set_code}/{number}", "analysis": analysis})
         return {"success": True}
@@ -1732,8 +2082,8 @@ Output ONLY valid JSON:
         return {"error": str(e)}, 500
 
 
-@app.route("/card/<set_code>/<number>/eval/expand", methods=["POST"])
-def commander_eval_expand(set_code, number):
+@app.route("/card/<set_code>/<number>/eval/deepdive", methods=["POST"])
+def commander_eval_deepdive(set_code, number):
     """Deep-dive on a specific strategy or unique build for this commander."""
     db = get_db()
 
@@ -1771,8 +2121,8 @@ def commander_eval_expand(set_code, number):
 
     type_label = "strategy" if expand_type == "strategy" else "unique build"
 
-    expand_prompt = session.get("expand_prompt") or EXPAND_SYSTEM_PROMPT
-    system_prompt = expand_prompt.replace("{type_label}", type_label)
+    deepdive_prompt = session.get("deepdive_prompt") or DEEPDIVE_SYSTEM_PROMPT
+    system_prompt = deepdive_prompt.replace("{type_label}", type_label)
 
     user_prompt = json.dumps({
         "commander": {
@@ -1790,27 +2140,220 @@ def commander_eval_expand(set_code, number):
         },
     }, indent=2)
 
+    # ponytail: dual-pass retrieval — commander text + strategy description.
+    # Commander-only retrieval biases toward similar legendaries; strategy-aware
+    # retrieval surfaces enablers, payoffs, and role-players for the 99.
+    dd_pipeline = {"embed": None, "web_search": {}}
+    _card_lookup = {}  # name -> {scryfallId, setCode, number}
+    _allowed_names = []  # ponytail: track for verify allowlist
+    try:
+        commander_cards = embed.find(DATABASE, card.get("text", "") or "", top_k=100)
+        strategy_text = f"{card['name']} {expand_name} {expand_desc}"
+        strategy_cards = embed.find(DATABASE, strategy_text, top_k=100)
+        # ponytail: filter to commander's color identity
+        commander_ci = card.get("colorIdentity", "")
+        commander_cards = [c for c in commander_cards if _color_identity_legal(c.get("colorIdentity", ""), commander_ci)]
+        strategy_cards = [c for c in strategy_cards if _color_identity_legal(c.get("colorIdentity", ""), commander_ci)]
+        dd_pipeline["embed"] = len(commander_cards) + len(strategy_cards)
+        # ponytail: dedupe by name, commander-biased cards first
+        seen = set()
+        merged = []
+        merge_uuids = []
+        for c in commander_cards:
+            if c["name"] != card["name"] and c["name"] not in seen:
+                seen.add(c["name"])
+                merged.append(c)
+                merge_uuids.append(c.get("uuid"))
+        for c in strategy_cards:
+            if c["name"] not in seen:
+                seen.add(c["name"])
+                merged.append(c)
+                merge_uuids.append(c.get("uuid"))
+        # ponytail: resolve uuids to setCode/number in one query
+        if merge_uuids:
+            ph = ", ".join("?" for _ in merge_uuids)
+            uuid_rows = db.execute(
+                f"SELECT uuid, number, setCode FROM cards WHERE uuid IN ({ph}) AND language = 'English'",
+                merge_uuids
+            ).fetchall()
+            uuid_map = {r["uuid"]: dict(r) for r in uuid_rows}
+        else:
+            uuid_map = {}
+        if merged:
+            slim = []
+            for c in merged:
+                slim.append({
+                    "name": c["name"],
+                    "type": c.get("type", ""),
+                    "keywords": c.get("keywords", ""),
+                    "colorIdentity": c.get("colorIdentity", ""),
+                    "manaValue": c.get("manaValue"),
+                    "score": c.get("score"),
+                    "text": (c.get("text") or "")[:200],
+                })
+                info = uuid_map.get(c.get("uuid"), {})
+                _card_lookup[c["name"].lower()] = {
+                    "scryfallId": c.get("scryfallId", ""),
+                    "setCode": info.get("setCode", ""),
+                    "number": info.get("number", ""),
+                }
+                _allowed_names.append(c["name"])
+            user_prompt = json.dumps({
+                "commander": {
+                    "name": card["name"],
+                    "oracle_text": card.get("text", ""),
+                    "type": card["type"],
+                    "keywords": card.get("keywords", ""),
+                    "colorIdentity": card.get("colorIdentity", ""),
+                    "manaValue": card.get("manaValue"),
+                    "rulings": rulings_texts,
+                },
+                expand_type: {
+                    "name": expand_name,
+                    "description": expand_desc,
+                },
+                "similar_cards": slim,
+            }, indent=2)
+    except Exception:
+        dd_pipeline["embed"] = 0  # ponytail: index missing; proceed without
+
+    # ponytail: web research for this specific strategy pairing.
+    # Surfaces real decklists and community card choices the embeddings miss.
+    try:
+        searches = {}
+        for search_label, query in [
+            ("deck_guides", f"{card['name']} {expand_name} commander deck primer"),
+            ("strategy", f"{card['name']} {expand_desc} synergies"),
+            ("discussion", f"{card['name']} {expand_name} commander reddit edh"),
+        ]:
+            results = _web_search(query, max_results=5)
+            searches[search_label] = results
+            dd_pipeline["web_search"][search_label] = len(results)
+        if "similar_cards" in json.loads(user_prompt):
+            data = json.loads(user_prompt)
+            data["web_research"] = searches
+            user_prompt = json.dumps(data, indent=2)
+        else:
+            user_prompt = json.dumps({
+                "commander": {
+                    "name": card["name"],
+                    "oracle_text": card.get("text", ""),
+                    "type": card["type"],
+                    "keywords": card.get("keywords", ""),
+                    "colorIdentity": card.get("colorIdentity", ""),
+                    "manaValue": card.get("manaValue"),
+                    "rulings": rulings_texts,
+                },
+                expand_type: {
+                    "name": expand_name,
+                    "description": expand_desc,
+                },
+                "web_research": searches,
+            }, indent=2)
+    except Exception:
+        pass  # ponytail: SearXNG unavailable; proceed without
+
     if llm_generate is None:
         return jsonify({"error": "LLM dependencies not installed."}), 500
 
     try:
         api_key = session.get("llm_api_key") or os.environ.get("LLM_API_KEY")
-        data = llm_generate(
-            system_prompt, user_prompt,
-            backend=llm_backend,
-            api_key=api_key,
-            base_url=llm_base_url or None,
-            model=llm_model or None,
-        )
 
-        # Stash expand result so it gets included when the report is saved
+        # ponytail: retry once on JSON parse failure.
+        data = None
+        for attempt in range(2):
+            try:
+                data = llm_generate(
+                    system_prompt, user_prompt,
+                    backend=llm_backend,
+                    api_key=api_key,
+                    base_url=llm_base_url or None,
+                    model=llm_model or None,
+                )
+                break
+            except (json.JSONDecodeError, ValueError):
+                if attempt == 0:
+                    user_prompt += "\n\n---\nYour previous response had a JSON formatting error. Please output ONLY valid JSON."
+                else:
+                    raise
+
+        # ponytail: second-pass verification for deepdive results.
+        verify_prompt = session.get("verify_prompt") or VERIFY_SYSTEM_PROMPT
+        try:
+            verify_user = json.dumps({
+                "card": {
+                    "name": card["name"],
+                    "oracle_text": card.get("text", ""),
+                    "type": card["type"],
+                    "keywords": card.get("keywords", ""),
+                    "colorIdentity": card.get("colorIdentity", ""),
+                    "rulings": rulings_texts,
+                },
+                "analysis_to_verify": data,
+                "allowed_card_names": _allowed_names,
+            }, indent=2)
+            verification = llm_generate(
+                verify_prompt, verify_user,
+                backend=llm_backend,
+                api_key=api_key,
+                base_url=llm_base_url or None,
+                model=llm_model or None,
+            )
+            data["_verification"] = verification
+        except Exception:
+            pass  # ponytail: verification is best-effort; deepdive still ships
+
+        # ponytail: resolve recommended card names to Scryfall IDs and set/numbers.
+        # First try embed results (fast, no extra query). Fall back to DB for any
+        # names the embed index didn't cover.
+        if data.get("example_cards"):
+            # ponytail: strip placeholder entries — some models ignore the prompt.
+            filtered = [rc for rc in data["example_cards"]
+                        if not _is_placeholder_name(rc.get("name", ""))]
+            if len(filtered) < len(data["example_cards"]):
+                data["_placeholder_stripped"] = len(data["example_cards"]) - len(filtered)
+            data["example_cards"] = filtered
+            unresolved = []
+            for rc in data["example_cards"]:
+                match = _card_lookup.get(rc["name"].lower())
+                if match and match.get("scryfallId") and match.get("setCode"):
+                    rc["scryfallId"] = match["scryfallId"]
+                    rc["setCode"] = match["setCode"]
+                    rc["number"] = match["number"]
+                else:
+                    unresolved.append(rc)
+            if unresolved:
+                names = [rc["name"] for rc in unresolved]
+                ph = ", ".join("?" for _ in names)
+                rows = db.execute(
+                    f"SELECT c.name, ci.scryfallId, c.setCode, c.number "
+                    f"FROM cards c JOIN cardIdentifiers ci ON c.uuid = ci.uuid "
+                    f"WHERE c.name IN ({ph}) AND c.language = 'English'",
+                    names
+                ).fetchall()
+                db_lookup = {r["name"].lower(): r for r in rows}
+                for rc in unresolved:
+                    match = db_lookup.get(rc["name"].lower())
+                    if match:
+                        rc["scryfallId"] = match["scryfallId"]
+                        rc["setCode"] = match["setCode"]
+                        rc["number"] = match["number"]
+
+        # Stash deepdive result so it gets included when the report is saved
         eval_key = session.get("eval_key")
-        if eval_key and eval_key in _eval_cache:
-            cache_entry = _eval_cache[eval_key]
-            if "expands" not in cache_entry:
-                cache_entry["expands"] = {}
-            cache_entry["expands"][f"{expand_type}:{expand_name}"] = data
+        if eval_key:
+            with _cache_lock:
+                if eval_key in _eval_cache:
+                    cache_entry = _eval_cache[eval_key]
+                    if "deepdives" not in cache_entry:
+                        cache_entry["deepdives"] = {}
+                    cache_entry["deepdives"][f"{expand_type}:{expand_name}"] = data
 
+        # ponytail: auto-persist deepdives so they survive navigation away.
+        # Manual "Save Report" still creates the timestamped copy.
+        _auto_save_deepdives(set_code, number, {f"{expand_type}:{expand_name}": data})
+
+        data["_pipeline"] = dd_pipeline
         return jsonify({"success": True, "data": data})
     except Exception as e:
         import traceback
@@ -1820,8 +2363,16 @@ def commander_eval_expand(set_code, number):
 
 @app.route("/card/<set_code>/<number>/eval/similar", methods=["POST"])
 def commander_eval_similar(set_code, number):
-    """Find similar legendary creatures (Commander-legal) with strictness-loosening loop."""
+    """Find similar legendary creatures (Commander-legal).
+
+    Supports two methods via request body:
+      - method: "embed" (default) — semantic similarity via embedding index
+      - method: "legacy" — TF-IDF strictness-loosening loop
+    """
     db = get_db()
+    body = request.get_json(silent=True) or {}
+    method = body.get("method") or session.get("similar_method", "embed")
+
     card = db.execute("""
         SELECT c.*, ci.scryfallId
         FROM cards c
@@ -1833,6 +2384,105 @@ def commander_eval_similar(set_code, number):
         return jsonify({"error": "Card not found."}), 404
 
     card = dict(card)
+
+    if method == "legacy":
+        results, progress = _eval_similar_legacy(db, card)
+    else:
+        try:
+            results, progress = _eval_similar_embed(db, card)
+        except Exception:
+            # ponytail: fall back to legacy if embeddings unavailable
+            results, progress = _eval_similar_legacy(db, card)
+
+    # ponytail: stash in cache so save picks it up
+    eval_key = session.get("eval_key")
+    if eval_key:
+        with _cache_lock:
+            if eval_key in _eval_cache:
+                _eval_cache[eval_key]["similar"] = results
+
+    return jsonify({"success": True, "results": results, "progress": progress, "method": method})
+
+
+# ponytail: cached UUID sets for _eval_similar_embed — two full table scans per
+# request is wasteful.  TTL'd at 10 minutes; DB doesn't change mid-session.
+_cached_legendary = None
+_cached_cmdr_legal = None
+_cached_filter_ttl = 0
+
+def _get_commander_filter_sets(db):
+    """Return (legendary_uuids, cmdr_legal_uuids), cached for 10 minutes."""
+    global _cached_legendary, _cached_cmdr_legal, _cached_filter_ttl
+    import time as _time
+    now = _time.monotonic()
+    if _cached_legendary is not None and now - _cached_filter_ttl < 600:
+        return _cached_legendary, _cached_cmdr_legal
+    _cached_legendary = {
+        r["uuid"] for r in db.execute(
+            "SELECT uuid FROM cards WHERE supertypes LIKE '%Legendary%'"
+        ).fetchall()
+    }
+    _cached_cmdr_legal = {
+        r["uuid"] for r in db.execute(
+            "SELECT uuid FROM cardLegalities WHERE commander = 'Legal'"
+        ).fetchall()
+    }
+    _cached_filter_ttl = now
+    return _cached_legendary, _cached_cmdr_legal
+
+
+def _eval_similar_embed(db, card):
+    """Semantic similarity via embedding index. Filters to legendary + Cmdr-legal + MV ±3."""
+    from embed import find
+
+    candidates = find(DATABASE, card.get("text") or "", top_k=200)
+    candidates = [c for c in candidates if c["name"] != card["name"]]
+
+    # Filter to legendary, Commander-legal, MV ±3
+    card_mv = card.get("manaValue") or 0
+    mv_min = max(0, card_mv - 3)
+    mv_max = card_mv + 3
+
+    legendary_uuids, cmdr_legal = _get_commander_filter_sets(db)
+
+    results = []
+    seen_names = set()
+    for c in candidates:
+        uuid = c["uuid"]
+        if uuid not in legendary_uuids or uuid not in cmdr_legal:
+            continue
+        mv = c.get("manaValue")
+        if mv is not None and (mv < mv_min or mv > mv_max):
+            continue
+        base_name = c["name"].split(" // ")[0]
+        if base_name in seen_names:
+            continue
+        seen_names.add(base_name)
+
+        # Fetch setCode/number for URL
+        row = db.execute(
+            "SELECT setCode, number, manaCost, type FROM cards WHERE uuid = ?",
+            (uuid,)
+        ).fetchone()
+        if not row:
+            continue
+
+        results.append({
+            "name": c["name"],
+            "setCode": row["setCode"],
+            "number": row["number"],
+            "scryfallId": c.get("scryfallId", ""),
+            "score": round(c["score"] * 100, 1),
+            "manaCost": row["manaCost"] or "",
+            "type": row["type"] or "",
+        })
+
+    progress = [{"round": 1, "label": "Semantic", "count": len(results)}]
+    return results[:10], progress
+
+
+def _eval_similar_legacy(db, card):
+    """TF-IDF strictness-loosening loop — original algorithm."""
     base = dict(card)
     base["_t"] = _split_csv(base["types"])
     base["_kw"] = _split_csv(base["keywords"])
@@ -1840,7 +2490,6 @@ def commander_eval_similar(set_code, number):
     base["_st"] = _split_csv(base["supertypes"])
     base["_ci"] = _split_csv(base["colorIdentity"])
 
-    # Fetch candidates: legendary creatures, Commander-legal, within mana-value ±3
     mv = base["manaValue"] or 0
     mv_min = max(0, mv - 3)
     mv_max = mv + 3
@@ -1865,7 +2514,6 @@ def commander_eval_similar(set_code, number):
 
     idf = _get_idf()
 
-    # Strictness-loosening rounds: (s_oracle, general_strictness, color_strictness, score_threshold, label)
     rounds = [
         (5.0, 200.0, 200.0, 0.75, "Strict"),
         (2.0, 8.0, 6.0, 0.60, "Moderate"),
@@ -1899,9 +2547,18 @@ def commander_eval_similar(set_code, number):
         if len(scored) >= 10:
             break
 
-    top = scored[:10]
+    # ponytail: pull from scored until we have 10 deduped results
     results = []
-    for score, c in top:
+    seen_names = set()
+    for score, c in scored:
+        if len(results) >= 10:
+            break
+        # ponytail: DFC names like "Kardur, Doomscourge // Kardur, Doomscourge"
+        # are distinct from "Kardur, Doomscourge" in the DB but are the same card.
+        base_name = c["name"].split(" // ")[0]
+        if base_name in seen_names:
+            continue
+        seen_names.add(base_name)
         results.append({
             "name": c["name"],
             "setCode": c["setCode"],
@@ -1911,13 +2568,7 @@ def commander_eval_similar(set_code, number):
             "manaCost": c["manaCost"] or "",
             "type": c["type"] or "",
         })
-
-    # ponytail: stash in cache so save picks it up
-    eval_key = session.get("eval_key")
-    if eval_key and eval_key in _eval_cache:
-        _eval_cache[eval_key]["similar"] = results
-
-    return jsonify({"success": True, "results": results, "progress": progress})
+    return results, progress
 
 
 @app.route("/card/<set_code>/<number>/eval/save", methods=["POST"])
@@ -1948,16 +2599,59 @@ def commander_eval_save(set_code, number):
     report_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), REPORTS_DIR, safe_name)
 
     os.makedirs(os.path.dirname(report_path), exist_ok=True)
+
+    # ponytail: merge auto-saved deepdives so save captures everything even after cache eviction.
+    deepdives = cached.get("deepdives", {})
+    _autosaved = _load_auto_deepdives(set_code, number)
+    _autosaved.update(deepdives)  # cache wins over disk
+    deepdives = _autosaved
+
     with open(report_path, "w") as f:
         json.dump({
             "card": dict(card),
             "analysis": cached["analysis"],
-            "expands": cached.get("expands", {}),
+            "deepdives": deepdives,
             "similar": cached.get("similar", []),
             "saved_at": now_iso,
         }, f, indent=2)
 
     return jsonify({"success": True, "filename": safe_name})
+
+
+def _auto_save_deepdives(set_code, number, new_deepdives):
+    """Persist deepdives to a deterministic file so they survive navigation away."""
+    if not new_deepdives:
+        return
+    reports_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), REPORTS_DIR)
+    os.makedirs(reports_dir, exist_ok=True)
+    autosave_path = os.path.join(reports_dir, f"{set_code}_{number}_deepdives.json")
+    try:
+        existing = {}
+        if os.path.exists(autosave_path):
+            with open(autosave_path) as f:
+                existing = json.load(f)
+        merged = existing.get("deepdives", {})
+        merged.update(new_deepdives)
+        with open(autosave_path, "w") as f:
+            json.dump({"deepdives": merged}, f, indent=2)
+    except (OSError, json.JSONDecodeError):
+        pass  # ponytail: fail silently — deepdives still live in cache for this session
+
+
+def _load_auto_deepdives(set_code, number):
+    """Load auto-saved deepdives from the deterministic file."""
+    autosave_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        REPORTS_DIR,
+        f"{set_code}_{number}_deepdives.json",
+    )
+    try:
+        if os.path.exists(autosave_path):
+            with open(autosave_path) as f:
+                return json.load(f).get("deepdives", {})
+    except (OSError, json.JSONDecodeError):
+        pass
+    return {}
 
 
 @app.route("/commander-eval/reports")
@@ -1969,7 +2663,7 @@ def commander_eval_reports():
 
     reports = []
     for fname in sorted(os.listdir(reports_dir), reverse=True):
-        if not fname.endswith(".json") or fname == ".gitkeep":
+        if not fname.endswith(".json") or fname == ".gitkeep" or fname.endswith("_deepdives.json"):
             continue
         try:
             with open(os.path.join(reports_dir, fname)) as f:
