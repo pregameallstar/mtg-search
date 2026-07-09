@@ -85,7 +85,10 @@ def generate(system_prompt, user_prompt, backend=None, api_key=None,
 
 
 def _openai(api_key, base_url, model, system_prompt, user_prompt):
-    from openai import OpenAI
+    try:
+        from openai import OpenAI
+    except ImportError:
+        raise RuntimeError("Missing 'openai' package. Run: pip install openai") from None
 
     client = OpenAI(base_url=base_url, api_key=api_key)
     resp = client.chat.completions.create(
@@ -101,7 +104,10 @@ def _openai(api_key, base_url, model, system_prompt, user_prompt):
 
 
 def _anthropic(api_key, model, system_prompt, user_prompt):
-    import anthropic
+    try:
+        import anthropic
+    except ImportError:
+        raise RuntimeError("Missing 'anthropic' package. Run: pip install anthropic") from None
 
     client = anthropic.Anthropic(api_key=api_key)
     resp = client.messages.create(
