@@ -35,6 +35,8 @@ git clone https://github.com/pregameallstar/mtg-search
 cd mtg-search
 
 python3 -m venv venv
+# bash/zsh:  source venv/bin/activate
+# fish:      source venv/bin/activate.fish
 source venv/bin/activate
 pip install -r requirements.txt
 
