@@ -105,6 +105,16 @@ def get_db():
         g.db.execute("PRAGMA query_only = ON")
     return g.db
 
+
+def _db_ready():
+    """Return True if the cards table exists with at least one row."""
+    try:
+        db = get_db()
+        row = db.execute("SELECT COUNT(*) FROM cards WHERE language='English' LIMIT 1").fetchone()
+        return row is not None and row[0] > 0
+    except sqlite3.OperationalError:
+        return False
+
 @app.teardown_appcontext
 def close_db(e=None):
     db = g.pop("db", None)
@@ -451,11 +461,19 @@ def pagination_url(args, page):
 
 app.jinja_env.globals.update(card_image=card_image, render_mana=render_mana, pagination_url=pagination_url, similarity_label=similarity_label)
 
+
+@app.context_processor
+def _inject_db_state():
+    """ponytail: db_unseeded=False by default. Routes that detect a missing DB set it True."""
+    return {"db_unseeded": False}
+
 # --- Routes ---
 
 @app.route("/")
 def index():
     # Quick counts for homepage
+    if not _db_ready():
+        return render_template("index.html", total_cards=0, db_unseeded=True)
     db = get_db()
     total = db.execute(
         "SELECT COUNT(DISTINCT name) FROM cards WHERE language='English' AND (side IS NULL OR side='a')"
@@ -530,6 +548,22 @@ def search():
     if page < 1:
         page = 1
     per_page = 30
+
+    if not _db_ready():
+        return render_template(
+            "search.html",
+            query=q, name=name, oracle=oracle, type_line=type_line, mana_cost=mana_cost, keywords=keywords,
+            color=color, color_rule=color_rule, ci=ci, ci_rule=ci_rule,
+            mv=mv, mv_op=mv_op, pow_val=pow_val, pow_op=pow_op,
+            tou_val=tou_val, tou_op=tou_op, loy_val=loy_val, loy_op=loy_op,
+            rarities=rarities, fmt=fmt, legality=legality, set_code=set_code,
+            is_reprint=is_reprint, is_reserved=is_reserved, is_funny=is_funny,
+            is_oversized=is_oversized, is_fullart=is_fullart, is_textless=is_textless,
+            is_promo=is_promo, is_rebalanced=is_rebalanced,
+            border=border, layout=layout, frame=frame, unique=unique,
+            results=[], page=page, total=0, total_pages=0,
+            db_unseeded=True,
+        )
 
     db = get_db()
 

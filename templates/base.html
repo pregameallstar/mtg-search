@@ -23,6 +23,11 @@
             </ul>
         </aside>
         <main>
+            {% if db_unseeded %}
+            <div class="db-unseeded" style="background:#4a2511;border:1px solid #d35400;border-radius:8px;padding:0.75rem 1rem;margin-bottom:1.5rem;color:#f5cba7;font-size:0.9rem;text-align:center;">
+                No card database found. <a href="/config" style="color:#e67e22;font-weight:700;">Seed the database</a> (upload an <code>AllPrintings.sqlite</code> from <a href="https://mtgjson.com" style="color:#f39c12;">mtgjson.com</a>).
+            </div>
+            {% endif %}
             {% block content %}{% endblock %}
         </main>
     </div>
