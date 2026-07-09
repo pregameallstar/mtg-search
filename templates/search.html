@@ -5,6 +5,17 @@
 
 <form action="/search" method="get" id="search-form" class="filter-form">
 
+    {# --- Search help --- #}
+    <details class="search-help" style="margin-bottom:1rem;font-size:0.8rem;color:var(--text-dim)">
+        <summary>Search tips</summary>
+        <p style="margin-top:0.5rem"><strong>Text Search</strong> matches card name, type line, and rules text.</p>
+        <p><strong>Name / Oracle Text</strong> are separate fields for precision.</p>
+        <p><strong>Type Line</strong> uses an em-dash between card type and subtype (e.g., <code>Creature — Human</code>). You can type a regular hyphen and it'll still match.</p>
+        <p><strong>Keywords</strong> are comma-separated with AND logic (cards must have ALL keywords listed).</p>
+        <p><strong>Colors</strong> uses WUBRG order. "At most" means the card's colors are a subset of your selection.</p>
+        <p><strong>Mana Value</strong> supports ranges like <code>1-3</code> in addition to operators.</p>
+    </details>
+
     {# --- Cards section --- #}
     <fieldset><legend>Cards</legend>
         <div class="field-row">
@@ -103,7 +114,7 @@
         <div class="field-row">
             <select name="format">
                 <option value="">Any format</option>
-                {% for f in ['standard','modern','legacy','vintage','pioneer','pauper','commander','brawl','historic','oathbreaker','penny','duel','alchemy','gladiator','oldschool','premodern','predh','paupercommander','timeless','standardbrawl'] %}
+                {% for f in ['standard','modern','legacy','vintage','pioneer','pauper','commander','brawl','competitivebrawl','historic','oathbreaker','penny','duel','alchemy','gladiator','oldschool','premodern','predh','paupercommander','timeless','standardbrawl'] %}
                 <option value="{{ f }}" {% if fmt==f %}selected{% endif %}>{{ f | capitalize }}</option>
                 {% endfor %}
             </select>
@@ -215,7 +226,7 @@
     {% else %}
     <span class="page prev disabled">← Previous</span>
     {% endif %}
-    <span class="page-indicator">Page {{ page }} of {{ total_pages }}</span>
+    <span class="page-indicator">Page <input type="number" class="page-jump" id="page-jump-input" value="{{ page }}" min="1" max="{{ total_pages }}" style="width:4em;text-align:center;padding:0.2rem;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;font-size:0.85rem" onchange="jumpPage(this.value, {{ total_pages }})"> of {{ total_pages }}</span>
     {% if page < total_pages %}
     <a href="{{ pagination_url(request.args, page + 1) }}" class="page next">Next →</a>
     {% else %}
@@ -243,5 +254,28 @@ function clearResults() {
     el = document.querySelector('.pagination'); if (el) el.remove();
     el = document.querySelector('.result-count'); if (el) el.textContent = '';
 }
+function jumpPage(page, max) {
+    page = parseInt(page, 10);
+    if (isNaN(page) || page < 1) page = 1;
+    if (page > max) page = max;
+    var url = new URL(window.location.href);
+    url.searchParams.set('page', page);
+    window.location.href = url.toString();
+}
+// Show loading state on form submit / page nav
+document.getElementById('search-form').addEventListener('submit', function() {
+    document.getElementById('search-loading').style.display = 'block';
+});
+// page-jump via Enter key
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && document.activeElement && document.activeElement.id === 'page-jump-input') {
+        e.preventDefault();
+        jumpPage(document.activeElement.value, parseInt(document.activeElement.max, 10));
+    }
+});
 </script>
+<div id="search-loading" style="display:none;text-align:center;padding:2rem;color:var(--text-dim)">
+    <div class="spinner" style="margin:0 auto 0.5rem"></div>
+    <span>Searching…</span>
+</div>
 {% endblock %}

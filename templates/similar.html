@@ -45,7 +45,7 @@
 
     <button class="btn-clear-base"
             onclick="window.location.href='/similar?{{ tuning_params[1:] if tuning_params else '' }}'"
-            style="margin-bottom:1rem;">Clear Commander</button>
+            style="margin-bottom:1rem;">Clear Card</button>
 
     {% if by_name_error %}
     <div class="similar-error">Card "{{ by_name }}" not found. Try a different name.</div>
@@ -56,30 +56,13 @@
         <input type="hidden" name="by_name" value="">
         <input type="hidden" name="tuned" value="1">
         <fieldset>
-            <legend>Method</legend>
-            <div style="display:flex; gap:0.5rem; align-items:center;">
-                <label style="font-size:0.85rem;">
-                    <input type="radio" name="method" value="embed"
-                           {% if method == 'embed' %}checked{% endif %}
-                           onchange="this.form.submit()">
-                    Semantic (AI embeddings)
-                </label>
-                <label style="font-size:0.85rem;">
-                    <input type="radio" name="method" value="legacy"
-                           {% if method != 'embed' %}checked{% endif %}
-                           onchange="this.form.submit()">
-                    Legacy (TF-IDF tuning)
-                </label>
-            </div>
-            {% if method == 'embed' %}
-            <p style="font-size:0.75rem; color:var(--text-dim); margin:0.25rem 0 0 0;">
-                Semantic similarity uses AI embeddings to find cards with similar function,
-                regardless of exact wording. Factor tuning is not applicable.
-            </p>
-            {% endif %}
-        </fieldset>
-        <fieldset>
             <legend>Optional Factors</legend>
+            {% if method == 'embed' %}
+            <p style="font-size:0.82rem; color:var(--text-dim); margin:0.25rem 0 0.75rem 0;">
+                Semantic similarity uses AI embeddings to find cards with similar function.
+                Color identity is applied as a hard filter. Other factor tuning is not applicable.
+            </p>
+            {% else %}
             <details class="tuning-help">
                 <summary>How this works</summary>
                 <p><strong>Oracle text</strong> is always scored using <strong>IDF-weighted</strong> overlap — rare terms like "storm" count more than common terms.</p>
@@ -137,6 +120,7 @@
                 {{ factor_row('Mana Value', 'use_mv', 's_mv') }}
                 {{ factor_row('Color Identity', 'use_color', 's_color') }}
             </div>
+            {% endif %}
 
             {# --- Top N --- #}
             <div class="factor-rows">
@@ -148,24 +132,8 @@
                 </select>
             </div>
 
-            {# --- Score threshold filter --- #}
-            <div class="factor-rows">
-                <label class="factor-toggle">
-                    <input type="checkbox" name="score_filter" value="1"
-                           {% if score_filter %}checked{% endif %}>
-                    Score Filter
-                </label>
-                <select name="score_op" class="strictness-select">
-                    <option value="greater_than" {% if score_op == 'greater_than' %}selected{% endif %}>Greater than</option>
-                    <option value="less_than" {% if score_op == 'less_than' %}selected{% endif %}>Less than</option>
-                </select>
-                <input type="number" name="score_value"
-                       value="{{ request.args.get('score_value', '75') }}"
-                       step="1" min="0" max="100"
-                       class="score-value-input"
-                       placeholder="75">%
-            </div>
 
+            {% if method != 'embed' %}
             {# --- Advanced Weights (collapsed by default) --- #}
             <details class="advanced-weights" {% if use_weights %}open{% endif %}>
                 <summary>Advanced Weights</summary>
@@ -193,6 +161,7 @@
                     {{ weight_row('Color Identity', 'w_color') }}
                 </div>
             </details>
+            {% endif %}
 
             <button type="submit" class="tuning-update">Update Results</button>
             <a href="/card/{{ card['setCode'] }}/{{ card['number'] }}/similar?export=1{{ tuning_params if tuning_params else '' }}"
@@ -215,7 +184,7 @@
             <div class="cell-footer">
                 <div class="cell-name" title="{{ c['name'] }}">{{ c['name'] }}</div>
                 <div class="cell-actions">
-                    <span class="similarity-score">{{ "%.0f"|format(score * 100) }}%</span>
+                    <span class="similarity-score">{{ similarity_label(score, best_score) }}</span>
                     <a href="/card/{{ c['setCode'] }}/{{ c['number'] }}/similar?{{ tuning_params[1:] if tuning_params else '' }}"
                        class="btn-similar-base"
                        onclick="event.stopPropagation();"
@@ -226,7 +195,7 @@
         {% endfor %}
     </div>
     {% elif total == 0 %}
-    <div class="empty-state">No cards matched the similarity threshold. Try lowering the score requirement or adjusting factors.</div>
+    <div class="empty-state">No cards matched. Try a broader quality threshold or adjust factors.</div>
     {% endif %}
 
     {# --- Remaining results --- #}
@@ -246,7 +215,7 @@
             <div class="cell-footer">
                 <div class="cell-name" title="{{ c['name'] }}">{{ c['name'] }}</div>
                 <div class="cell-actions">
-                    <span class="similarity-score">{{ "%.0f"|format(score * 100) }}%</span>
+                    <span class="similarity-score">{{ similarity_label(score, best_score) }}</span>
                     <a href="/card/{{ c['setCode'] }}/{{ c['number'] }}/similar?{{ tuning_params[1:] if tuning_params else '' }}"
                        class="btn-similar-base"
                        onclick="event.stopPropagation();"

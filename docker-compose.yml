@@ -9,8 +9,6 @@ services:
       - ./embeddings:/app/embeddings
       - ./images:/app/images
       - ./eval_reports:/app/eval_reports
-      - ./searxng/settings.yml:/app/searxng/settings.yml:ro
-      - ./searxng/limiter.toml:/app/searxng/limiter.toml:ro
       - ./.secret_key:/app/.secret_key
       - ./.last_ingest.json:/app/.last_ingest.json
     environment:

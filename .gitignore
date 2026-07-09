@@ -12,6 +12,12 @@ __pycache__/
 # Server runtime
 .server.pid
 .server.log
+.mcp_server.pid
+.mcp_server.log
+.mcpo.pid
+.mcpo.log
+.mcp2_server.pid
+.mcp2_server.log
 
 # IDE
 .vscode/

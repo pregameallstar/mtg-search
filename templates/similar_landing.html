@@ -11,10 +11,15 @@
     </div>
 
     {# --- Card name search + Optional Factors (single form) --- #}
-    <form method="get" style="margin-top: 1.5rem;">
+    <form method="get" style="margin-top: 1.5rem;" autocomplete="off">
         <input type="hidden" name="tuned" value="1">
         <div class="base-card-switcher">
-            <input type="text" name="by_name" placeholder="Enter card name…" value="{{ by_name }}" style="flex:1;max-width:400px;" autofocus>
+            <div style="position:relative; flex:1; max-width:400px;">
+                <input type="text" name="by_name" id="similar-search-input"
+                       placeholder="Enter card name…" value="{{ by_name }}"
+                       style="width:100%; box-sizing:border-box;" autofocus>
+                <ul id="autocomplete-list" class="autocomplete-list" hidden></ul>
+            </div>
             <button type="submit">Search</button>
         </div>
 
@@ -84,23 +89,6 @@
                     </select>
                 </div>
 
-                {# --- Score threshold filter --- #}
-                <div class="factor-rows">
-                    <label class="factor-toggle">
-                        <input type="checkbox" name="score_filter" value="1"
-                               {% if request.args.get('score_filter') == '1' %}checked{% endif %}>
-                        Score Filter
-                    </label>
-                    <select name="score_op" class="strictness-select">
-                        <option value="greater_than" {% if request.args.get('score_op', 'greater_than') == 'greater_than' %}selected{% endif %}>Greater than</option>
-                        <option value="less_than" {% if request.args.get('score_op') == 'less_than' %}selected{% endif %}>Less than</option>
-                    </select>
-                    <input type="number" name="score_value"
-                           value="{{ request.args.get('score_value', '75') }}"
-                           step="1" min="0" max="100"
-                           class="score-value-input"
-                           placeholder="75">%
-                </div>
 
                 {# --- Advanced Weights (collapsed by default) --- #}
                 <details class="advanced-weights" {% if request.args.get('use_weights') == '1' %}open{% endif %}>
@@ -143,6 +131,76 @@
 
 <script>
 (function() {
+    // --- Autocomplete ---
+    var input = document.getElementById('similar-search-input');
+    var list = document.getElementById('autocomplete-list');
+    var timer = null;
+    var selectedIndex = -1;
+
+    function clearList() {
+        list.innerHTML = '';
+        list.hidden = true;
+        selectedIndex = -1;
+    }
+
+    function selectItem(item) {
+        input.value = item.dataset.name;
+        clearList();
+        window.location.href = '/card/' + item.dataset.setCode + '/' + item.dataset.number + '/similar';
+    }
+
+    input.addEventListener('input', function() {
+        clearTimeout(timer);
+        var q = input.value.trim();
+        if (q.length < 2) { clearList(); return; }
+        timer = setTimeout(function() {
+            fetch('/card-autocomplete?q=' + encodeURIComponent(q))
+                .then(function(r) { return r.json(); })
+                .then(function(results) {
+                    list.innerHTML = '';
+                    if (!results || results.length === 0) { list.hidden = true; return; }
+                    results.forEach(function(card) {
+                        var li = document.createElement('li');
+                        li.textContent = card.name;
+                        li.dataset.name = card.name;
+                        li.dataset.setCode = card.setCode;
+                        li.dataset.number = card.number;
+                        li.addEventListener('mousedown', function(e) {
+                            e.preventDefault();
+                            selectItem(li);
+                        });
+                        list.appendChild(li);
+                    });
+                    list.hidden = false;
+                    selectedIndex = -1;
+                });
+        }, 150);
+    });
+
+    input.addEventListener('keydown', function(e) {
+        var items = list.querySelectorAll('li');
+        if (!items.length || list.hidden) return;
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            selectedIndex = Math.min(selectedIndex + 1, items.length - 1);
+            items.forEach(function(li, i) { li.classList.toggle('active', i === selectedIndex); });
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            selectedIndex = Math.max(selectedIndex - 1, 0);
+            items.forEach(function(li, i) { li.classList.toggle('active', i === selectedIndex); });
+        } else if (e.key === 'Enter' && selectedIndex >= 0) {
+            e.preventDefault();
+            selectItem(items[selectedIndex]);
+        } else if (e.key === 'Escape') {
+            clearList();
+        }
+    });
+
+    input.addEventListener('blur', function() {
+        setTimeout(clearList, 150);
+    });
+
+    // --- Drag-and-drop ---
     const zone = document.getElementById('drop-zone');
     const loading = document.getElementById('drop-loading');
     const errorEl = document.getElementById('drop-error');

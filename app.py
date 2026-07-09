@@ -41,10 +41,22 @@ if not _secret_key:
     try:
         with open(_key_path, "rb") as f:
             _secret_key = f.read()
-    except FileNotFoundError:
+    except (FileNotFoundError, IsADirectoryError):
+        # ponytail: IsADirectoryError — Docker creates a directory for missing
+        # bind-mount files. Treat it the same as missing.
         _secret_key = os.urandom(24)
-        with open(_key_path, "wb") as f:
-            f.write(_secret_key)
+        # ponytail: writeback may fail if _key_path is a Docker bind-mount directory.
+        # Sessions won't survive restarts in that case, but the app still works.
+        _wrote = False
+        try:
+            with open(_key_path, "wb") as f:
+                f.write(_secret_key)
+            _wrote = True
+        except (OSError, IsADirectoryError):
+            pass
+        if not _wrote:
+            import warnings
+            warnings.warn("Could not persist secret key — sessions will not survive restarts.")
 app.secret_key = _secret_key
 
 # ponytail: keep session cookie alive for 30 days so config survives browser restarts.
@@ -163,6 +175,33 @@ def render_mana(cost):
     return mana_symbols(cost)
 
 # --- Similarity helpers ---
+
+def similarity_label(score, best_score=None):
+    """Rank-based label: score relative to the best match for this card.
+
+    Without best_score, uses absolute thresholds (legacy fallback).
+    With best_score, uses relative ranking — the top match is always meaningful."""
+    if best_score and best_score > 0:
+        pct = score / best_score
+        if pct >= 0.85:
+            return "Near Perfect"
+        elif pct >= 0.65:
+            return "Strong"
+        elif pct >= 0.40:
+            return "Good"
+        elif pct >= 0.15:
+            return "Bad"
+        return "Ignore"
+    # ponytail: absolute fallback — used when best_score is unavailable
+    if score >= 45:
+        return "Near Perfect"
+    elif score >= 35:
+        return "Strong"
+    elif score >= 25:
+        return "Good"
+    elif score >= 15:
+        return "Bad"
+    return "Ignore"
 
 # ponytail: MTG-domain terms that appear on most cards and drown out functional signal.
 MTG_STOP_WORDS = {
@@ -376,15 +415,17 @@ def _score_similarity(base, candidate, factors, idf, mtg_filter=False):
     # --- Color identity gate ---
     if factors.get("use_color"):
         base_ci = base.get("_ci")
-        if base_ci:
-            cand_ci = _split_csv(candidate["colorIdentity"])
-            # s >= 200 means the strict tier — CI is all-or-nothing.
-            if float(factors.get("s_color", 8.0)) >= 200.0:
-                if base_ci != cand_ci:
-                    return 0.0
-            else:  # moderate/loose: Jaccard gate, combined via GM with other factors
-                jaccard = len(base_ci & cand_ci) / len(base_ci | cand_ci)
+        cand_ci = _split_csv(candidate["colorIdentity"])
+        # s >= 200 means the strict tier — CI is all-or-nothing.
+        if float(factors.get("s_color", 8.0)) >= 200.0:
+            if base_ci != cand_ci:
+                return 0.0
+        else:  # moderate/loose: Jaccard gate, combined via GM with other factors
+            union = base_ci | cand_ci
+            if union:
+                jaccard = len(base_ci & cand_ci) / len(union)
                 gates.append(_gate("s_color", 1.0 - jaccard, factors))
+            # ponytail: both colorless → perfect CI match, no gate needed
 
     # --- Combine all gates via geometric mean ---
     if gates:
@@ -408,7 +449,7 @@ def pagination_url(args, page):
     parts.append(f"page={page}")
     return "/search?" + "&".join(parts) if parts else "/search"
 
-app.jinja_env.globals.update(card_image=card_image, render_mana=render_mana, pagination_url=pagination_url)
+app.jinja_env.globals.update(card_image=card_image, render_mana=render_mana, pagination_url=pagination_url, similarity_label=similarity_label)
 
 # --- Routes ---
 
@@ -421,12 +462,25 @@ def index():
     ).fetchone()[0]
     return render_template("index.html", total_cards=total)
 
+# ponytail: WUBRG canonical order — MTGJSON stores colors in this sequence, not alphabetical.
+_WUBRG_ORDER = {c: i for i, c in enumerate("WUBRG")}
+
+def _wubrg_sort(chars):
+    """Sort color chars in canonical WUBRG order."""
+    return sorted(chars, key=lambda c: _WUBRG_ORDER.get(c, 99))
+
+def _normalize_dash(s):
+    """Replace Unicode dashes with ASCII hyphen. MTGJSON uses U+2014 em-dash in types."""
+    return s.replace('—', '-').replace('–', '-').replace('―', '-')
+
 def _n(op, field, cast=False):
     """Return SQL clause for a numeric operator + field. Handles =, <, >, <=, >=.
-    If cast=True, wrap field in CAST(field AS INTEGER) for text columns like power/toughness."""
+    If cast=True, the field is text — use CAST AS REAL for comparison, which
+    handles integer and fractional values. '*' and non-numeric values cast to NULL,
+    which fails any comparison → excluded."""
     ops = {"=": "=", "<": "<", ">": ">", "<=": "<=", ">=": ">="}
     if op in ops:
-        col = f"CAST(c.{field} AS INTEGER)" if cast else f"c.{field}"
+        col = f"CAST(c.{field} AS REAL)" if cast else f"c.{field}"
         return f"{col} {ops[op]} ?"
 
 @app.route("/search")
@@ -473,6 +527,8 @@ def search():
     unique = request.args.get("unique", "cards")                # cards (dedupe) / prints (all)
 
     page = request.args.get("page", 1, type=int)
+    if page < 1:
+        page = 1
     per_page = 30
 
     db = get_db()
@@ -500,8 +556,11 @@ def search():
 
     # Full type line
     if type_line:
-        escaped = type_line.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        where.append("c.type LIKE ? ESCAPE '\\'")
+        # ponytail: normalize dashes — DB stores U+2014 em-dash but users type '-'.
+        # REPLACE on the DB column side so we don't fight LIKE escaping.
+        normalized = _normalize_dash(type_line)
+        escaped = normalized.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        where.append("REPLACE(c.type, '—', '-') LIKE ? ESCAPE '\\'")
         params.append(f"%{escaped}%")
 
     # Exact mana cost
@@ -533,7 +592,7 @@ def search():
         if color_chars:
             if color_rule == "exact":
                 where.append("c.colors = ?")
-                params.append(", ".join(sorted(color_chars)))
+                params.append(", ".join(_wubrg_sort(color_chars)))
                 where.append(f"LENGTH(c.colors) - LENGTH(REPLACE(c.colors, ',', '')) + (CASE WHEN c.colors = '' THEN 0 ELSE 1 END) = ?")
                 params.append(len(color_chars))
             elif color_rule == "at_most":
@@ -561,6 +620,8 @@ def search():
                 where.append("1 = 0")
         if ci_chars:
             if ci_rule == "exact":
+                # ponytail: colorIdentity is stored alphabetically in MTGJSON, unlike colors
+                # which is in WUBRG order.
                 where.append("c.colorIdentity = ?")
                 params.append(", ".join(sorted(ci_chars)))
             elif ci_rule == "at_most":
@@ -575,7 +636,6 @@ def search():
                     params.append(f"%{ch}%")
 
     # Mana value
-    _MV_OPS = {"=", "<", ">", "<=", ">="}
     if mv:
         try:
             if mv_op in ("<", ">", "<=", ">="):
@@ -585,28 +645,45 @@ def search():
             elif re.match(r"^\s*\d+(\.\d+)?\s*-\s*\d+(\.\d+)?\s*$", mv):
                 lo, hi = mv.split("-", 1)
                 lo_val, hi_val = float(lo.strip()), float(hi.strip())
+                if lo_val > hi_val:
+                    lo_val, hi_val = hi_val, lo_val  # ponytail: auto-swap reversed ranges
                 where.append("c.manaValue BETWEEN ? AND ?")
                 params.extend([lo_val, hi_val])
             elif mv_op == "=":
                 val = float(mv)
                 where.append("c.manaValue = ?")
                 params.append(val)
+            else:
+                # ponytail: unrecognized mv format → no valid filter, show nothing
+                import sys
+                print(f"search: invalid mv format '{mv}', showing empty results", file=sys.stderr)
+                where.append("1 = 0")
         except (ValueError, TypeError):
-            pass  # ponytail: invalid mv input → silently skip filter
+            # ponytail: garbage input → no valid filter, show nothing
+            import sys
+            print(f"search: unparseable mv '{mv}', showing empty results", file=sys.stderr)
+            where.append("1 = 0")
 
     # Power (text column, needs CAST for comparisons)
     if pow_val:
-        clause = _n(pow_op, "power", cast=True)
-        if clause:
-            where.append(clause)
-            params.append(pow_val)
+        if pow_val == '*':
+            # ponytail: literal '*' — match cards with variable power
+            where.append("c.power = '*'")
+        else:
+            clause = _n(pow_op, "power", cast=True)
+            if clause:
+                where.append(clause)
+                params.append(pow_val)
 
     # Toughness
     if tou_val:
-        clause = _n(tou_op, "toughness", cast=True)
-        if clause:
-            where.append(clause)
-            params.append(tou_val)
+        if tou_val == '*':
+            where.append("c.toughness = '*'")
+        else:
+            clause = _n(tou_op, "toughness", cast=True)
+            if clause:
+                where.append(clause)
+                params.append(tou_val)
 
     # Loyalty
     if loy_val:
@@ -632,7 +709,7 @@ def search():
         valid_formats = {"standard","commander","modern","legacy","pioneer","vintage",
                          "pauper","brawl","historic","oathbreaker","penny","duel",
                          "alchemy","gladiator","oldschool","premodern","predh",
-                         "paupercommander","timeless","standardbrawl"}
+                         "paupercommander","timeless","standardbrawl","competitivebrawl"}
         fmt_lower = fmt.lower()
         if fmt_lower in valid_formats:
             join_clause = "JOIN cardLegalities cl ON c.uuid = cl.uuid"
@@ -682,9 +759,12 @@ def search():
     where_clause = "WHERE " + " AND ".join(where)
 
     # Count
+    # ponytail: strip DFC suffix " // X" from names for dedup — "Sol Ring // Sol Ring"
+    # is the same card as "Sol Ring".
     group_col = "c.name" if unique == "cards" else "c.uuid"
+    group_expr = f"CASE WHEN instr({group_col}, ' // ') > 0 THEN substr({group_col}, 1, instr({group_col}, ' // ') - 1) ELSE {group_col} END"
     count_sql = f"""
-        SELECT COUNT(DISTINCT {group_col})
+        SELECT COUNT(DISTINCT {group_expr})
         FROM cards c
         {join_clause}
         {where_clause}
@@ -692,15 +772,16 @@ def search():
     total = db.execute(count_sql, params).fetchone()[0]
 
     # Fetch
+    name_expr = "CASE WHEN instr(c.name, ' // ') > 0 THEN substr(c.name, 1, instr(c.name, ' // ') - 1) ELSE c.name END"
     data_sql = f"""
-        SELECT c.name, c.manaCost, c.type, c.rarity, c.setCode, c.colors,
+        SELECT {name_expr} as name, c.manaCost, c.type, c.rarity, c.setCode, c.colors,
                ci.scryfallId, s.name as setName, s.releaseDate, c.number
         FROM cards c
         JOIN cardIdentifiers ci ON c.uuid = ci.uuid
         JOIN sets s ON c.setCode = s.code
         {join_clause}
         {where_clause}
-        GROUP BY {group_col}
+        GROUP BY {group_expr}
         ORDER BY c.name
         LIMIT ? OFFSET ?
     """
@@ -840,7 +921,6 @@ def similar_landing(set_code=None):
                       "w_types", "w_keywords", "w_subtypes", "w_supertypes",
                       "w_mv", "w_color", "use_weights",
                       "method",
-                      "score_filter", "score_op", "score_value",
                       "mtg_filter", "top_n", "tuned"):
                 v = request.args.get(k)
                 if v:
@@ -875,17 +955,16 @@ def similar_cards(set_code, number):
             args_dict[k] = "1"
         for k in default_strict:
             args_dict[k] = "strict"
-        args_dict["score_filter"] = "1"
-        args_dict["score_op"] = "greater_than"
-        args_dict["score_value"] = "75"
+        args_dict["mtg_filter"] = "1"
         return redirect(url_for('similar_cards', set_code=set_code, number=number, **args_dict))
 
     # --- Parse factor toggles, weights, and strictness ---
-    STRICT_VALUES = {"strict": 200.0, "moderate": 8.0, "loose": 1.5}
-    COLOR_STRICT = {"strict": 200.0, "moderate": 6.0, "loose": 0.5}
-    # Oracle uses exponentiation (overlap ** s), not the gate formula.
-    # Exponent > 1 requires near-exact text match; 1.0 = raw IDF overlap.
-    ORACLE_STRICT = {"strict": 5.0, "moderate": 2.0, "loose": 1.0}
+    # ponytail: strictness values calibrated so strict/loose produce meaningful
+    # spreads across real cards. Gates use the formula 1/(1+strictness*mismatch);
+    # oracle uses exponentiation (overlap ** s_oracle).
+    STRICT_VALUES = {"strict": 2.0, "moderate": 0.5, "loose": 0.15}
+    COLOR_STRICT = {"strict": 200.0, "moderate": 2.0, "loose": 0.5}
+    ORACLE_STRICT = {"strict": 1.0, "moderate": 0.5, "loose": 0.3}
 
     factors = {}
     for key in ("use_types", "use_keywords", "use_subtypes", "use_supertypes",
@@ -924,14 +1003,6 @@ def similar_cards(set_code, number):
         top_n = "5"
     top_n = int(top_n)
 
-    # --- Score threshold filter ---
-    score_filter = request.args.get("score_filter", "0") == "1"
-    score_op = request.args.get("score_op", "greater_than")
-    try:
-        score_value = float(request.args.get("score_value", "75"))
-    except (ValueError, TypeError):
-        score_value = 75.0
-
     # --- Name-based lookup ---
     by_name = request.args.get("by_name", "").strip()
     if by_name:
@@ -951,7 +1022,6 @@ def similar_cards(set_code, number):
                       "s_mv", "s_color", "s_oracle",
                       "w_types", "w_keywords", "w_subtypes", "w_supertypes",
                       "w_mv", "w_color", "use_weights",
-                      "score_filter", "score_op", "score_value",
                       "mtg_filter", "top_n", "page", "tuned"):
                 v = request.args.get(k)
                 if v:
@@ -987,7 +1057,8 @@ def similar_cards(set_code, number):
     base_card["_idf_sum"] = sum(idf.get(t, 0) for t in base_card["_terms"])
 
     # --- Method: embed (semantic) or legacy (TF-IDF with tuning) ---
-    method = request.args.get("method", "legacy")
+    # ponytail: read from session (set in config page), fall back to query param, then legacy.
+    method = request.args.get("method") or session.get("similar_method", "legacy")
     score_method = method  # ponytail: may fall back to legacy for scoring
 
     # --- Candidate query ---
@@ -999,7 +1070,7 @@ def similar_cards(set_code, number):
 
     if score_method == "embed":
         # ponytail: semantic similarity via embedding index.
-        # Respects top_n, score_filter, and score_value. Factor tuning not applicable.
+        # Factor toggles are applied as hard post-filters (not scoring gates).
         try:
             candidates = embed.find(DATABASE, base_card.get("text") or "", top_k=200)
             candidates = [c for c in candidates if c["name"] != base_card["name"]]
@@ -1007,6 +1078,17 @@ def similar_cards(set_code, number):
                 c_mv = c.get("manaValue")
                 if c_mv is not None and (c_mv < mv_min or c_mv > mv_max):
                     continue
+                # --- Factor-based post-filters ---
+                if factors.get("use_color"):
+                    cand_ci = _split_csv(c.get("colorIdentity") or "")
+                    base_ci = base_card.get("_ci")
+                    if base_ci != cand_ci:
+                        continue
+                if factors.get("use_types"):
+                    cand_t = _split_csv(c.get("types") or "")
+                    base_t = base_card.get("_t")
+                    if base_t and not (base_t & cand_t):
+                        continue
                 # Look up setCode/number for URL
                 row = db.execute(
                     "SELECT c.setCode, c.number, c.manaCost, c.manaValue, c.type, c.types, c.supertypes, "
@@ -1021,14 +1103,6 @@ def similar_cards(set_code, number):
                 if row:
                     scored.append((c["score"], row))
             scored.sort(key=lambda x: x[0], reverse=True)
-
-            # Apply score threshold filter
-            if score_filter and score_value > 0:
-                threshold = score_value / 100.0
-                if score_op == "greater_than":
-                    scored = [(s, c) for s, c in scored if s > threshold]
-                else:
-                    scored = [(s, c) for s, c in scored if s < threshold]
 
             # Convert scores to 0-100 scale (cosine similarity is already 0-1)
             scored = [(round(s * 100, 1), c) for s, c in scored]
@@ -1069,18 +1143,11 @@ def similar_cards(set_code, number):
             scored.append((_score_similarity(base_card, c, factors, idf, mtg_filter=mtg_filter), c))
         scored.sort(key=lambda x: x[0], reverse=True)
 
-        # --- Score threshold filter ---
-        if score_filter and score_value > 0:
-            threshold = score_value / 100.0
-            if score_op == "greater_than":
-                scored = [(s, c) for s, c in scored if s > threshold]
-            else:
-                scored = [(s, c) for s, c in scored if s < threshold]
-
         # Convert to 0-100 scale
         scored = [(round(s * 100, 1), c) for s, c in scored]
 
     # --- Split top N from remaining ---
+    best_score = scored[0][0] if scored else 0
     top_results = scored[:top_n]
     remaining = scored[top_n:]
 
@@ -1091,6 +1158,7 @@ def similar_cards(set_code, number):
             card=base_card,
             top_results=top_results,
             top_n=top_n,
+            best_score=best_score,
         )
         filename = f"similar-{base_card['name'].replace(' ', '-')}-top{top_n}.html"
         response = make_response(rendered)
@@ -1114,7 +1182,6 @@ def similar_cards(set_code, number):
               "s_mv", "s_color", "s_oracle",
               "w_types", "w_keywords", "w_subtypes", "w_supertypes",
               "w_mv", "w_color", "use_weights",
-              "score_filter", "score_op", "score_value",
               "mtg_filter", "top_n", "tuned"):
         v = request.args.get(k)
         if v:
@@ -1136,10 +1203,8 @@ def similar_cards(set_code, number):
         mtg_filter=mtg_filter,
         tuning_params=tuning_params,
         top_n=top_n,
-        score_filter=score_filter,
-        score_op=score_op,
-        score_value=score_value,
         method=method,
+        best_score=best_score,
     )
 
 
@@ -1408,6 +1473,11 @@ def config_page():
                 session["similar_method"] = similar_method
             elif "similar_method" in session:
                 session.pop("similar_method", None)
+            eval_similar_method = request.form.get("eval_similar_method", "").strip()
+            if eval_similar_method in ("embed", "legacy"):
+                session["eval_similar_method"] = eval_similar_method
+            elif "eval_similar_method" in session:
+                session.pop("eval_similar_method", None)
         return redirect(url_for("config_page"))
 
     llm_backend = (session.get("llm_backend") or os.environ.get("LLM_BACKEND", "openai"))
@@ -1418,13 +1488,14 @@ def config_page():
     deepdive_prompt = session.get("deepdive_prompt", "")
     verify_prompt = session.get("verify_prompt", "")
     similar_method = session.get("similar_method", "embed")
+    eval_similar_method = session.get("eval_similar_method", "embed")
 
     last_ingest = None
     _ingest_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".last_ingest.json")
     try:
         with open(_ingest_path) as f:
             last_ingest = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
+    except (FileNotFoundError, IsADirectoryError, json.JSONDecodeError):
         pass
 
     db_card_count = None
@@ -1446,12 +1517,16 @@ def config_page():
                            deepdive_prompt=deepdive_prompt,
                            verify_prompt=verify_prompt,
                            similar_method=similar_method,
+                           eval_similar_method=eval_similar_method,
                            default_prompt=COMMANDER_SYSTEM_PROMPT,
                            default_deepdive_prompt=DEEPDIVE_SYSTEM_PROMPT,
                            default_verify_prompt=VERIFY_SYSTEM_PROMPT,
                            last_ingest=last_ingest,
                            db_card_count=db_card_count,
-                           embed_status=embed_status)
+                           embed_status=embed_status,
+                           mcp_sse_port=MCP_SSE_PORT,
+                           mcpo_port=MCPO_PORT,
+                           mcp_host=MCP_HOST)
 
 
 @app.route("/config/embed-status")
@@ -1474,6 +1549,121 @@ def embed_build():
             pass
     threading.Thread(target=_build, daemon=True).start()
     return jsonify({"success": True})
+
+
+# ── MCP server status ─────────────────────────────────────────────────────
+
+MCP_SSE_PORT = int(os.environ.get("MCP_SSE_PORT", "8765"))
+MCPO_PORT = int(os.environ.get("MCPO_PORT", "8000"))
+MCP_HOST = os.environ.get("MCP_HOST", "0.0.0.0")
+
+
+def _port_alive(port):
+    import socket
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=2):
+            return True
+    except OSError:
+        return False
+
+
+@app.route("/config/mcp-status")
+def mcp_status():
+    """Return MCP server status — SSE backend + MCPO proxy."""
+    sse_alive = _port_alive(MCP_SSE_PORT)
+    mcpo_alive = _port_alive(MCPO_PORT)
+    return jsonify({
+        "running": sse_alive and mcpo_alive,
+        "host": MCP_HOST,
+        "sse": {
+            "alive": sse_alive,
+            "port": MCP_SSE_PORT,
+        },
+        "mcpo": {
+            "alive": mcpo_alive,
+            "port": MCPO_PORT,
+            "url": f"http://{MCP_HOST}:{MCPO_PORT}/openapi.json",
+        },
+    })
+
+
+def _restart_mcp(transport, port, pid_file, log_file):
+    """Kill existing MCP process by PID file, then re-launch."""
+    import signal, time, subprocess, sys
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    # ponytail: sys.executable works in Docker (system python) and venv
+    venv_python = os.path.join(script_dir, "venv", "bin", "python3")
+    if not os.path.isfile(venv_python):
+        venv_python = sys.executable
+    mcp_script = os.path.join(script_dir, "mcp_server.py")
+
+    try:
+        with open(pid_file) as f:
+            os.kill(int(f.read().strip()), signal.SIGTERM)
+        time.sleep(0.5)
+    except (FileNotFoundError, ValueError, ProcessLookupError, OSError):
+        pass
+
+    proc = subprocess.Popen(
+        [venv_python, mcp_script, "--transport", transport,
+         "--port", str(port), "--host", MCP_HOST],
+        cwd=script_dir,
+        stdout=open(log_file, "a"),
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+    with open(pid_file, "w") as f:
+        f.write(str(proc.pid))
+    return proc.pid
+
+
+@app.route("/config/mcp-restart", methods=["POST"])
+def mcp_restart():
+    """Restart MCP SSE server + MCPO proxy."""
+    try:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        sse_pid = _restart_mcp(
+            "sse", MCP_SSE_PORT,
+            os.path.join(script_dir, ".mcp_server.pid"),
+            os.path.join(script_dir, ".mcp_server.log"),
+        )
+        # Restart MCPO by killing it and letting run.sh re-spawn it
+        import signal, subprocess, time
+        mcpo_pid_file = os.path.join(script_dir, ".mcpo.pid")
+        try:
+            with open(mcpo_pid_file) as f:
+                old = int(f.read().strip())
+            os.kill(old, signal.SIGTERM)
+            time.sleep(0.5)
+        except (FileNotFoundError, ValueError, ProcessLookupError, OSError):
+            pass
+        mcpo_bin = os.path.join(script_dir, "venv", "bin", "mcpo")
+        if not os.path.isfile(mcpo_bin):
+            # ponytail: Docker/system install — mcpo is on PATH
+            import shutil as _shutil
+            found = _shutil.which("mcpo")
+            if not found:
+                return jsonify({"success": False, "error": "mcpo not installed. Run: pip install mcpo"}), 500
+            mcpo_bin = found
+        mcpo_log = os.path.join(script_dir, ".mcpo.log")
+        proc = subprocess.Popen(
+            [mcpo_bin, "--type", "sse", "--port", str(MCPO_PORT),
+             "--name", "mtg-search", "--",
+             f"http://127.0.0.1:{MCP_SSE_PORT}/sse"],
+            cwd=script_dir,
+            stdout=open(mcpo_log, "a"),
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        with open(mcpo_pid_file, "w") as f:
+            f.write(str(proc.pid))
+        return jsonify({
+            "success": True,
+            "sse": {"pid": sse_pid, "port": MCP_SSE_PORT},
+            "mcpo": {"pid": proc.pid, "port": MCPO_PORT},
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @app.route("/config/ingest", methods=["POST"])
@@ -1620,13 +1810,16 @@ def ingest_database():
         # Persist ingest timestamp
         now_iso = datetime.now(timezone.utc).isoformat()
         ingest_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".last_ingest.json")
-        with open(ingest_path, "w") as out:
-            json.dump({
-                "timestamp": now_iso,
-                "filename": filename,
-                "cards": dedup_cnt,
-                "deduplicated": True,
-            }, out)
+        try:
+            with open(ingest_path, "w") as out:
+                json.dump({
+                    "timestamp": now_iso,
+                    "filename": filename,
+                    "cards": dedup_cnt,
+                    "deduplicated": True,
+                }, out)
+        except (OSError, IsADirectoryError):
+            pass  # ponytail: Docker creates dirs for missing bind-mount files
 
         # Trigger embedding index rebuild in background — new cards need new vectors.
         # ponytail: fire-and-forget thread; the config page polls embed.status().
@@ -2371,7 +2564,7 @@ def commander_eval_similar(set_code, number):
     """
     db = get_db()
     body = request.get_json(silent=True) or {}
-    method = body.get("method") or session.get("similar_method", "embed")
+    method = body.get("method") or session.get("eval_similar_method", "embed")
 
     card = db.execute("""
         SELECT c.*, ci.scryfallId
@@ -2515,10 +2708,10 @@ def _eval_similar_legacy(db, card):
     idf = _get_idf()
 
     rounds = [
-        (5.0, 200.0, 200.0, 0.75, "Strict"),
-        (2.0, 8.0, 6.0, 0.60, "Moderate"),
-        (1.0, 1.5, 0.5, 0.40, "Loose"),
-        (0.5, 0.5, 0.5, 0.0, "Very Loose"),
+        (1.0, 2.0, 200.0, 0.45, "Strict"),
+        (0.5, 0.5, 2.0, 0.35, "Moderate"),
+        (0.3, 0.15, 0.5, 0.25, "Loose"),
+        (0.15, 0.05, 0.5, 0.0, "Very Loose"),
     ]
     factors_on = {
         "use_types": True, "use_keywords": True, "use_subtypes": True,

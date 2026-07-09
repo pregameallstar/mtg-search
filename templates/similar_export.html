@@ -129,7 +129,7 @@ h2 {
         {% endif %}
         <div class="cell-footer">
             <div class="cell-name" title="{{ c['name'] }}">{{ c['name'] }}</div>
-            <span class="similarity-score">{{ "%.0f"|format(score * 100) }}%</span>
+            <span class="similarity-score">{{ similarity_label(score, best_score) }}</span>
         </div>
     </a>
     {% endfor %}

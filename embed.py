@@ -138,6 +138,10 @@ def find(db_path, oracle_text, top_k=200):
     model = _get_model()
 
     query_vec = model.encode([oracle_text], normalize_embeddings=True)[0]
+    # Normalize DB vectors — index may predate normalization in build()
+    norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+    norms = np.where(norms == 0, 1.0, norms)  # ponytail: guard zero-norm edge case
+    vectors = vectors / norms
     scores = np.dot(vectors, query_vec)
     top_indices = np.argsort(scores)[::-1][:top_k]
 

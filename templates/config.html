@@ -241,14 +241,73 @@
     </script>
 
     <div class="eval-config" style="margin-top: 1.5rem;">
+        <h2 class="eval-config-heading">MCP Server</h2>
+        <div style="padding: 1rem;">
+            <div id="mcp-status" style="margin-bottom: 0.75rem; font-size: 0.82rem;">
+                <span style="color: var(--text-dim);">Checking…</span>
+            </div>
+
+            <p style="margin:0 0 0.75rem 0; color:var(--text-dim); font-size:0.82rem;">
+                An MCPO proxy bridges the internal MCP SSE server to an OpenAPI-compatible
+                REST API for OpenWebUI. Card search tools (<code>semantic_search</code>,
+                <code>keyword_search</code>, <code>get_card</code>) are exposed as POST endpoints.
+                Started alongside the Flask app by <code>run.sh</code>.
+            </p>
+
+            <table style="width:100%; border-collapse:collapse; font-size:0.82rem; margin-bottom:0.75rem;">
+                <thead>
+                    <tr style="text-align:left; border-bottom:1px solid var(--border);">
+                        <th style="padding:4px 8px;">Service</th>
+                        <th style="padding:4px 8px;">Port</th>
+                        <th style="padding:4px 8px;">URL</th>
+                        <th style="padding:4px 8px;">Role</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td style="padding:4px 8px; font-family:monospace;">MCPO Proxy</td>
+                        <td style="padding:4px 8px;" id="mcp-mcpo-port-cell">{{ mcpo_port }}</td>
+                        <td style="padding:4px 8px;" id="mcp-mcpo-url-cell">
+                            <code>http://{{ mcp_host }}:{{ mcpo_port }}/openapi.json</code>
+                        </td>
+                        <td style="padding:4px 8px; color:var(--text-dim); font-size:0.78rem;">
+                            Public — connect OpenWebUI here
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding:4px 8px; font-family:monospace;">MCP SSE</td>
+                        <td style="padding:4px 8px;" id="mcp-sse-port-cell">{{ mcp_sse_port }}</td>
+                        <td style="padding:4px 8px;" id="mcp-sse-url-cell">
+                            <code>http://127.0.0.1:{{ mcp_sse_port }}/sse</code>
+                        </td>
+                        <td style="padding:4px 8px; color:var(--text-dim); font-size:0.78rem;">
+                            Internal — feeds MCPO proxy
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+                <button type="button" id="mcp-restart-btn" class="eval-test-btn">Restart MCP Servers</button>
+                <span id="mcp-restart-result" style="font-size:0.78rem;"></span>
+            </div>
+            <p style="margin:0.25rem 0 0 0; color:var(--text-dim); font-size:0.75rem;">
+                Ports: <code>MCP_SSE_PORT</code> ({{ mcp_sse_port }}),
+                <code>MCPO_PORT</code> ({{ mcpo_port }}).
+                Host: <code>MCP_HOST</code> ({{ mcp_host }}).
+            </p>
+        </div>
+    </div>
+
+    <div class="eval-config" style="margin-top: 1.5rem;">
         <h2 class="eval-config-heading">Search Logic</h2>
         <div style="padding: 1rem;">
             <p style="margin:0 0 0.75rem 0; color:var(--text-dim); font-size:0.9rem;">
-                Controls how the "Find Similar" search on the
-                Commander Eval page works when looking for similar commanders.
+                Default similarity methods used by each tool. The standalone Similarity tool
+                and Commander Eval each have their own setting.
             </p>
             <div class="eval-config-row">
-                <label for="similar_method">Similarity Method</label>
+                <label for="similar_method">Similarity Tool</label>
                 <select name="similar_method" id="similar_method" form="search-logic-form">
                     <option value="embed" {% if similar_method == 'embed' %}selected{% endif %}>Semantic (AI-Powered)</option>
                     <option value="legacy" {% if similar_method == 'legacy' %}selected{% endif %}>Legacy (TF-IDF Word Overlap)</option>
@@ -257,8 +316,19 @@
                     <strong>Semantic:</strong> Uses AI embedding vectors to find cards with similar meaning —
                     catches reworded abilities, mechanical cousins, and conceptually similar designs.
                     Requires the embedding index to be built.<br>
-                    <strong>Legacy:</strong> Classic TF-IDF word-overlap search that loosens match strictness
-                    across multiple rounds until it finds enough results. Works without embeddings.
+                    <strong>Legacy:</strong> Classic TF-IDF word-overlap search with tunable factor gates.
+                    Works without embeddings.
+                </span>
+            </div>
+            <div class="eval-config-row">
+                <label for="eval_similar_method">Commander Eval</label>
+                <select name="eval_similar_method" id="eval_similar_method" form="search-logic-form">
+                    <option value="embed" {% if eval_similar_method == 'embed' %}selected{% endif %}>Semantic (AI-Powered)</option>
+                    <option value="legacy" {% if eval_similar_method == 'legacy' %}selected{% endif %}>Legacy (TF-IDF Word Overlap)</option>
+                </select>
+                <span class="eval-config-hint">
+                    Controls the "Find Similar" search on the Commander Eval page when
+                    looking for similar legendary commanders.
                 </span>
             </div>
             <form method="post" id="search-logic-form" style="margin-top: 0.75rem;">
@@ -444,6 +514,76 @@ document.getElementById('reset-verify-prompt').addEventListener('click', functio
                 setResult('Connection failed: ' + err.message, false);
             });
     });
+})();
+</script>
+
+<script>
+(function() {
+    var statusEl = document.getElementById('mcp-status');
+    var restartBtn = document.getElementById('mcp-restart-btn');
+    var resultEl = document.getElementById('mcp-restart-result');
+    var mcpoUrlCell = document.getElementById('mcp-mcpo-url-cell');
+
+    function pollStatus() {
+        fetch('/config/mcp-status')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var sseOk = data.sse && data.sse.alive;
+                var mcpoOk = data.mcpo && data.mcpo.alive;
+
+                if (mcpoUrlCell && data.mcpo) {
+                    mcpoUrlCell.innerHTML = '<code>' + data.mcpo.url + '</code>';
+                }
+
+                if (sseOk && mcpoOk) {
+                    statusEl.innerHTML = '<span style="color:#3fb950;">&#x2713; MCP services running</span>' +
+                        '<span style="color:var(--text-dim); font-size:0.75rem;"> — ' +
+                        'MCPO proxy (:' + data.mcpo.port + ') ← MCP SSE (:' + data.sse.port + ')</span>';
+                } else if (sseOk && !mcpoOk) {
+                    statusEl.innerHTML = '<span style="color:#f85149;">&#x2717; MCP SSE is up but MCPO proxy is down.</span>';
+                } else if (!sseOk && mcpoOk) {
+                    statusEl.innerHTML = '<span style="color:#f85149;">&#x2717; MCPO proxy is up but MCP SSE backend is down.</span>';
+                } else {
+                    statusEl.innerHTML = '<span style="color:#f85149;">&#x2717; MCP services not running. ' +
+                        'Run <code>./run.sh start</code>.</span>';
+                }
+            })
+            .catch(function() {
+                statusEl.innerHTML = '<span style="color:#f85149;">&#x2717; Cannot reach MCP status endpoint.</span>';
+            });
+    }
+
+    function showResult(msg, ok) {
+        resultEl.textContent = msg;
+        resultEl.style.color = ok ? '#3fb950' : '#f85149';
+    }
+
+    restartBtn.addEventListener('click', function() {
+        restartBtn.disabled = true;
+        restartBtn.textContent = 'Restarting…';
+        showResult('', true);
+
+        fetch('/config/mcp-restart', { method: 'POST' })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                restartBtn.disabled = false;
+                restartBtn.textContent = 'Restart MCP Servers';
+                if (data.success) {
+                    showResult('Restarted — SSE pid ' + (data.sse ? data.sse.pid : '?') +
+                               ', MCPO pid ' + (data.mcpo ? data.mcpo.pid : '?') + '.', true);
+                    setTimeout(pollStatus, 2000);
+                } else {
+                    showResult('Error: ' + (data.error || 'unknown'), false);
+                }
+            })
+            .catch(function(err) {
+                restartBtn.disabled = false;
+                restartBtn.textContent = 'Restart MCP Servers';
+                showResult('Network error: ' + err.message, false);
+            });
+    });
+
+    pollStatus();
 })();
 </script>
 {% endblock %}
