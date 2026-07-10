@@ -1838,8 +1838,11 @@ def ingest_database():
                 "error": f"Deduplicated database has only {dedup_cnt} English cards — this doesn't look right."
             }), 400
 
-        # Replace the active database — shutil.move handles cross-device (/tmp → project dir)
-        shutil.move(tmp_dedup_path, DATABASE)
+        # Replace the active database.
+        # ponytail: copy + unlink instead of shutil.move — Docker overlay
+        # causes cross-device errors with os.rename in the container.
+        shutil.copyfile(tmp_dedup_path, DATABASE)
+        os.unlink(tmp_dedup_path)
 
         # Persist ingest timestamp
         now_iso = datetime.now(timezone.utc).isoformat()

@@ -7,7 +7,7 @@ services:
       - "${MCP_SSE_PORT:-8765}:8765"
       - "${MCPO_PORT:-8000}:8000"
     volumes:
-      - ./AllPrintings.sqlite:/app/AllPrintings.sqlite:ro
+      - ./AllPrintings.sqlite:/app/AllPrintings.sqlite
       - ./embeddings:/app/embeddings
       - ./images:/app/images
       - ./eval_reports:/app/eval_reports
