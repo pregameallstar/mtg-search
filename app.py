@@ -38,15 +38,15 @@ app = Flask(__name__)
 _secret_key = os.environ.get("SECRET_KEY")
 if not _secret_key:
     _key_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".secret_key")
+    # ponytail: Docker creates a directory when the bind-mount source file
+    # doesn't exist on the host. Read/write inside the directory.
+    if os.path.isdir(_key_path):
+        _key_path = os.path.join(_key_path, ".secret_key")
     try:
         with open(_key_path, "rb") as f:
             _secret_key = f.read()
     except (FileNotFoundError, IsADirectoryError):
-        # ponytail: IsADirectoryError — Docker creates a directory for missing
-        # bind-mount files. Treat it the same as missing.
         _secret_key = os.urandom(24)
-        # ponytail: writeback may fail if _key_path is a Docker bind-mount directory.
-        # Sessions won't survive restarts in that case, but the app still works.
         _wrote = False
         try:
             with open(_key_path, "wb") as f:
@@ -1546,11 +1546,20 @@ def config_page():
 
     last_ingest = None
     _ingest_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".last_ingest.json")
-    try:
-        with open(_ingest_path) as f:
-            last_ingest = json.load(f)
-    except (FileNotFoundError, IsADirectoryError, json.JSONDecodeError):
-        pass
+    # ponytail: Docker creates a directory when bind-mount source is missing
+    _actual = _ingest_path
+    if os.path.isdir(_ingest_path):
+        _inside = os.path.join(_ingest_path, ".last_ingest.json")
+        if os.path.isfile(_inside):
+            _actual = _inside
+        else:
+            _actual = None
+    if _actual:
+        try:
+            with open(_actual) as f:
+                last_ingest = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass
 
     db_card_count = None
     try:
@@ -1880,6 +1889,10 @@ def ingest_database():
         # Persist ingest timestamp
         now_iso = datetime.now(timezone.utc).isoformat()
         ingest_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".last_ingest.json")
+        # ponytail: Docker bind-mount of nonexistent file → directory.
+        # Write inside the directory so it's accessible from both host and container.
+        if os.path.isdir(ingest_path):
+            ingest_path = os.path.join(ingest_path, ".last_ingest.json")
         try:
             with open(ingest_path, "w") as out:
                 json.dump({
@@ -1889,7 +1902,7 @@ def ingest_database():
                     "deduplicated": True,
                 }, out)
         except (OSError, IsADirectoryError):
-            pass  # ponytail: Docker creates dirs for missing bind-mount files
+            pass  # ponytail: survive any other I/O issue
 
         # Trigger embedding index rebuild in background — new cards need new vectors.
         # ponytail: fire-and-forget thread; the config page polls embed.status().
