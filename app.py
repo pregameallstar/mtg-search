@@ -108,6 +108,9 @@ def get_db():
 
 def _db_ready():
     """Return True if the cards table exists with at least one row."""
+    # ponytail: Docker creates a directory when bind-mount source file is missing
+    if os.path.isdir(DATABASE):
+        return False
     try:
         db = get_db()
         row = db.execute("SELECT COUNT(*) FROM cards WHERE language='English' LIMIT 1").fetchone()
@@ -1839,8 +1842,10 @@ def ingest_database():
             }), 400
 
         # Replace the active database.
-        # ponytail: copy + unlink instead of shutil.move — Docker overlay
-        # causes cross-device errors with os.rename in the container.
+        # ponytail: Docker creates a directory when the bind-mount source file
+        # doesn't exist on the host. Remove it so copyfile writes a real file.
+        if os.path.isdir(DATABASE):
+            shutil.rmtree(DATABASE)
         shutil.copyfile(tmp_dedup_path, DATABASE)
         os.unlink(tmp_dedup_path)
 
