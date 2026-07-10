@@ -4,6 +4,8 @@ services:
     container_name: mtg-search
     ports:
       - "${PORT:-5000}:5000"
+      - "${MCP_SSE_PORT:-8765}:8765"
+      - "${MCPO_PORT:-8000}:8000"
     volumes:
       - ./AllPrintings.sqlite:/app/AllPrintings.sqlite:ro
       - ./embeddings:/app/embeddings
@@ -17,6 +19,8 @@ services:
       - LLM_BASE_URL=${LLM_BASE_URL:-}
       - LLM_MODEL=${LLM_MODEL:-}
       - LLM_API_KEY=${LLM_API_KEY:-}
+      - MCP_SSE_PORT=${MCP_SSE_PORT:-8765}
+      - MCPO_PORT=${MCPO_PORT:-8000}
     restart: unless-stopped
     depends_on:
       - searxng

@@ -9,10 +9,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY *.py ./
 COPY static/ static/
 COPY templates/ templates/
+COPY docker-entrypoint.sh ./
 
 # Runtime directories — created empty so VOLUME mounts work cleanly.
 # Images dirs nested inside too (app caches from Scryfall on first hit).
-RUN mkdir -p embeddings images/normal images/large eval_reports
+RUN mkdir -p embeddings images/normal images/large eval_reports && \
+    chmod +x docker-entrypoint.sh
 
 # Runtime data — mounted as volumes at container start
 #   AllPrintings.sqlite
@@ -23,6 +25,6 @@ RUN mkdir -p embeddings images/normal images/large eval_reports
 
 VOLUME ["/app/embeddings", "/app/images", "/app/eval_reports"]
 
-EXPOSE 5000
+EXPOSE 5000 8765 8000
 
-CMD ["python", "app.py"]
+CMD ["./docker-entrypoint.sh"]
