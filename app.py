@@ -98,9 +98,29 @@ IMAGE_DIR = "images"
 
 # --- DB helpers ---
 
+
+def _db_path():
+    """Return the actual SQLite database path.
+
+    Docker bind-mount of a file that doesn't exist on the host creates a
+    directory — we write DB files inside it and pick the newest one.
+    """
+    if os.path.isfile(DATABASE):
+        return DATABASE
+    if os.path.isdir(DATABASE):
+        dbs = sorted(
+            [f for f in os.listdir(DATABASE) if f.endswith(".sqlite")],
+            key=lambda x: os.path.getmtime(os.path.join(DATABASE, x)),
+            reverse=True,
+        )
+        if dbs:
+            return os.path.join(DATABASE, dbs[0])
+    return DATABASE
+
+
 def get_db():
     if "db" not in g:
-        g.db = sqlite3.connect(DATABASE)
+        g.db = sqlite3.connect(_db_path())
         g.db.row_factory = sqlite3.Row
         g.db.execute("PRAGMA query_only = ON")
     return g.db
@@ -108,14 +128,11 @@ def get_db():
 
 def _db_ready():
     """Return True if the cards table exists with at least one row."""
-    # ponytail: Docker creates a directory when bind-mount source file is missing
-    if os.path.isdir(DATABASE):
-        return False
     try:
         db = get_db()
         row = db.execute("SELECT COUNT(*) FROM cards WHERE language='English' LIMIT 1").fetchone()
         return row is not None and row[0] > 0
-    except sqlite3.OperationalError:
+    except (sqlite3.OperationalError, sqlite3.DatabaseError):
         return False
 
 @app.teardown_appcontext
@@ -267,7 +284,7 @@ def _get_idf():
     extraction logic changes."""
     global _idf_cache, _idf_card_count, _idf_version
     import math
-    db = sqlite3.connect(DATABASE)
+    db = sqlite3.connect(_db_path())
     db.row_factory = sqlite3.Row
     total = db.execute(
         "SELECT COUNT(DISTINCT name) FROM cards WHERE language='English' AND (side IS NULL OR side='a')"
@@ -1109,7 +1126,7 @@ def similar_cards(set_code, number):
         # ponytail: semantic similarity via embedding index.
         # Factor toggles are applied as hard post-filters (not scoring gates).
         try:
-            candidates = embed.find(DATABASE, base_card.get("text") or "", top_k=200)
+            candidates = embed.find(_db_path(), base_card.get("text") or "", top_k=200)
             candidates = [c for c in candidates if c["name"] != base_card["name"]]
             for c in candidates:
                 c_mv = c.get("manaValue")
@@ -1581,7 +1598,7 @@ def embed_build():
 
     def _build():
         try:
-            embed.build(DATABASE)
+            embed.build(_db_path())
         except Exception:
             pass
     threading.Thread(target=_build, daemon=True).start()
@@ -1842,12 +1859,23 @@ def ingest_database():
             }), 400
 
         # Replace the active database.
-        # ponytail: Docker creates a directory when the bind-mount source file
-        # doesn't exist on the host. Remove it so copyfile writes a real file.
+        # ponytail: Docker bind-mount of a nonexistent file creates an unremovable
+        # directory. Write the new DB inside it and clean up old ingest temp files.
         if os.path.isdir(DATABASE):
-            shutil.rmtree(DATABASE)
-        shutil.copyfile(tmp_dedup_path, DATABASE)
-        os.unlink(tmp_dedup_path)
+            dst = os.path.join(DATABASE, os.path.basename(tmp_dedup_path))
+            shutil.copyfile(tmp_dedup_path, dst)
+            os.unlink(tmp_dedup_path)
+            # Clean up stale tmp files from previous ingests
+            for f in sorted(os.listdir(DATABASE)):
+                fp = os.path.join(DATABASE, f)
+                if f != os.path.basename(dst) and os.path.isfile(fp):
+                    try:
+                        os.unlink(fp)
+                    except OSError:
+                        pass
+        else:
+            shutil.copyfile(tmp_dedup_path, DATABASE)
+            os.unlink(tmp_dedup_path)
 
         # Persist ingest timestamp
         now_iso = datetime.now(timezone.utc).isoformat()
@@ -1867,7 +1895,7 @@ def ingest_database():
         # ponytail: fire-and-forget thread; the config page polls embed.status().
         def _rebuild():
             try:
-                embed.build(DATABASE)
+                embed.build(_db_path())
             except Exception:
                 pass
         threading.Thread(target=_rebuild, daemon=True).start()
@@ -2214,7 +2242,7 @@ def commander_eval_analyze(set_code, number):
         # Gives the LLM real cards to reference instead of guessing at synergies.
         _step(3, "Retrieving mechanically similar cards…")
         try:
-            similar_cards = embed.find(DATABASE, card_data["text"], top_k=200)
+            similar_cards = embed.find(_db_path(), card_data["text"], top_k=200)
             # ponytail: filter out the commander's own card + off-color cards
             commander_ci = card_data.get("colorIdentity", "")
             similar_cards = [
@@ -2382,9 +2410,9 @@ def commander_eval_deepdive(set_code, number):
     _card_lookup = {}  # name -> {scryfallId, setCode, number}
     _allowed_names = []  # ponytail: track for verify allowlist
     try:
-        commander_cards = embed.find(DATABASE, card.get("text", "") or "", top_k=100)
+        commander_cards = embed.find(_db_path(), card.get("text", "") or "", top_k=100)
         strategy_text = f"{card['name']} {expand_name} {expand_desc}"
-        strategy_cards = embed.find(DATABASE, strategy_text, top_k=100)
+        strategy_cards = embed.find(_db_path(), strategy_text, top_k=100)
         # ponytail: filter to commander's color identity
         commander_ci = card.get("colorIdentity", "")
         commander_cards = [c for c in commander_cards if _color_identity_legal(c.get("colorIdentity", ""), commander_ci)]

@@ -20,6 +20,21 @@ from mcp.server.fastmcp import FastMCP
 
 DATABASE = os.environ.get("MTG_DATABASE", "AllPrintings.sqlite")
 
+
+def _db_path():
+    """Return the actual SQLite database path."""
+    if os.path.isfile(DATABASE):
+        return DATABASE
+    if os.path.isdir(DATABASE):
+        dbs = sorted(
+            [f for f in os.listdir(DATABASE) if f.endswith(".sqlite")],
+            key=lambda x: os.path.getmtime(os.path.join(DATABASE, x)),
+            reverse=True,
+        )
+        if dbs:
+            return os.path.join(DATABASE, dbs[0])
+    return DATABASE
+
 mcp = FastMCP(
     "mtg-search",
     instructions="Magic: The Gathering card search engine — semantic similarity + keyword lookup",
@@ -30,7 +45,7 @@ mcp = FastMCP(
 
 
 def _get_db():
-    db = sqlite3.connect(DATABASE)
+    db = sqlite3.connect(_db_path())
     db.row_factory = sqlite3.Row
     return db
 
@@ -104,7 +119,7 @@ def semantic_search(
     """
     import embed
 
-    results = embed.find(DATABASE, query, top_k=200)
+    results = embed.find(_db_path(), query, top_k=200)
     if not results:
         return []
 
