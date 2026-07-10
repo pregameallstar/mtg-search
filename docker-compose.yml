@@ -31,8 +31,7 @@ services:
     ports:
       - "127.0.0.1:${SEARXNG_HOST_PORT:-8888}:8080"
     volumes:
-      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
-      - ./searxng/limiter.toml:/etc/searxng/limiter.toml:ro
+      - ./searxng/:/etc/searxng/
     environment:
       - SEARXNG_SECRET=${SEARXNG_SECRET?SEARXNG_SECRET is required}
     restart: unless-stopped

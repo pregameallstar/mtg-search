@@ -45,3 +45,9 @@ embeddings/
 
 # Lazy image cache (generated, large)
 images/
+
+# SearXNG — only config files are tracked, runtime data is generated
+searxng/*
+!searxng/settings.yml
+!searxng/limiter.toml
+!searxng/docker-compose.yml
