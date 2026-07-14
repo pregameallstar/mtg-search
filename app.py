@@ -590,11 +590,17 @@ def search():
     where = ["c.language = 'English'", "(c.side IS NULL OR c.side = 'a')"]
     params = []
 
-    # Free-text: search name + type + oracle text
+    # Free-text: search name + type + oracle text (comma-separated, AND logic)
     if q:
-        escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        where.append("(c.name LIKE ? ESCAPE '\\' OR c.type LIKE ? ESCAPE '\\' OR c.text LIKE ? ESCAPE '\\')")
-        params.extend([f"%{escaped}%"] * 3)
+        for term in q.split(","):
+            term = term.strip().strip("\"'")
+            if term:
+                escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                where.append(
+                    "(c.name LIKE ? ESCAPE '\\' OR c.type LIKE ? ESCAPE '\\' "
+                    "OR c.text LIKE ? ESCAPE '\\')"
+                )
+                params.extend([f"%{escaped}%"] * 3)
 
     # Exact name search (separate from free-text)
     if name:
@@ -602,11 +608,14 @@ def search():
         where.append("c.name LIKE ? ESCAPE '\\'")
         params.append(f"%{escaped}%")
 
-    # Oracle text only
+    # Oracle text only (comma-separated, AND logic)
     if oracle:
-        escaped = oracle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        where.append("c.text LIKE ? ESCAPE '\\'")
-        params.append(f"%{escaped}%")
+        for term in oracle.split(","):
+            term = term.strip().strip("\"'")
+            if term:
+                escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                where.append("c.text LIKE ? ESCAPE '\\'")
+                params.append(f"%{escaped}%")
 
     # Full type line
     if type_line:

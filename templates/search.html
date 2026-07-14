@@ -8,8 +8,8 @@
     {# --- Search help --- #}
     <details class="search-help" style="margin-bottom:1rem;font-size:0.8rem;color:var(--text-dim)">
         <summary>Search tips</summary>
-        <p style="margin-top:0.5rem"><strong>Text Search</strong> matches card name, type line, and rules text.</p>
-        <p><strong>Name / Oracle Text</strong> are separate fields for precision.</p>
+        <p style="margin-top:0.5rem"><strong>Text Search</strong> matches card name, type line, and rules text. Comma-separate multiple terms (e.g., <code>draw, discard</code>) — cards must match ALL terms.</p>
+        <p><strong>Name / Oracle Text</strong> are separate fields for precision. Oracle Text also supports comma-separated AND logic.</p>
         <p><strong>Type Line</strong> uses an em-dash between card type and subtype (e.g., <code>Creature — Human</code>). You can type a regular hyphen and it'll still match.</p>
         <p><strong>Keywords</strong> are comma-separated with AND logic (cards must have ALL keywords listed).</p>
         <p><strong>Colors</strong> uses WUBRG order. "At most" means the card's colors are a subset of your selection.</p>
@@ -19,11 +19,11 @@
     {# --- Cards section --- #}
     <fieldset><legend>Cards</legend>
         <div class="field-row">
-            <label>Text Search <input type="text" name="q" value="{{ query }}" placeholder="Search name, type & oracle text…"></label>
+            <label>Text Search <input type="text" name="q" value="{{ query }}" placeholder="e.g. draw, discard…"></label>
         </div>
         <div class="field-row">
             <label>Name <input type="text" name="name" value="{{ name }}" placeholder="Card name contains…"></label>
-            <label>Oracle Text <input type="text" name="oracle" value="{{ oracle }}" placeholder="Rules text contains…"></label>
+            <label>Oracle Text <input type="text" name="oracle" value="{{ oracle }}" placeholder="e.g. draw, discard…"></label>
         </div>
         <div class="field-row">
             <label>Type Line <input type="text" name="type_line" value="{{ type_line }}" placeholder="e.g. 'Legendary Creature — Elf'"></label>
