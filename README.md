@@ -65,9 +65,10 @@ Stop with `./run.sh stop`. Status with `./run.sh status`.
 git clone https://github.com/pregameallstar/mtg-search
 cd mtg-search
 
-# Place your database and generate a SearXNG secret
-export SEARXNG_SECRET=$(openssl rand -hex 32)
-echo "SEARXNG_SECRET=$SEARXNG_SECRET" > .env
+# Create .env from template and generate a SearXNG secret
+cp .env.example .env
+python3 -c "import secrets; print(secrets.token_hex(32))"  # copy the output
+# Edit .env and paste the secret: SEARXNG_SECRET=<output>
 
 # Build and start (app + SearXNG)
 docker compose up -d
@@ -112,9 +113,9 @@ Environment variables for the app container:
 `GET /search` — Full card search with 30+ filter fields.
 
 **Text filters:**
-- `q` — free-text search across name, type line, and oracle text
+- `q` — free-text search across name, type line, and oracle text. Comma-separated, AND logic (cards must match all terms)
 - `name` — card name contains (separate from free-text)
-- `oracle` — rules text contains
+- `oracle` — rules text contains. Comma-separated, AND logic (cards must match all terms)
 - `type_line` — type line search (normalizes em-dashes so you can type regular hyphens)
 - `mana_cost` — exact mana cost, e.g. `{1}{R}{G}`
 - `keywords` — comma-separated, AND logic (card must have all listed keywords)
@@ -313,9 +314,10 @@ searxng/
 ## First-Time Setup Checklist
 
 1. **Get a database**: Download `AllPrintings.sqlite` from [mtgjson.com](https://mtgjson.com/downloads/all-files/) and place it in the project root.
-2. **Build embeddings**: Go to Configuration → Database → "Build Now" (or upload the database via the ingest UI, which triggers a rebuild automatically). This takes ~2 minutes for ~35,000 cards on a modern CPU.
-3. **Configure LLM**: Go to Configuration → LLM Connection. Enter your API key, test the connection, and select a model. Claude Opus 4.8 or Claude Sonnet 5 are recommended; any OpenAI-compatible model works.
-4. **Start the MCP servers**: `./run.sh start` starts all three services. Docker Compose starts only the Flask app + SearXNG (MCP servers are optional).
+2. **Configure environment**: Copy `.env.example` to `.env`, generate a `SEARXNG_SECRET`, and configure any LLM credentials you need.
+3. **Build embeddings**: Go to Configuration → Database → "Build Now" (or upload the database via the ingest UI, which triggers a rebuild automatically). This takes ~2 minutes for ~35,000 cards on a modern CPU.
+4. **Configure LLM**: Go to Configuration → LLM Connection. Enter your API key, test the connection, and select a model. Claude Opus 4.8 or Claude Sonnet 5 are recommended; any OpenAI-compatible model works.
+5. **Start the MCP servers**: `./run.sh start` starts all three services. Docker Compose starts only the Flask app + SearXNG (MCP servers are optional).
 
 ## License
 
