@@ -251,7 +251,8 @@
                 An MCPO proxy bridges the internal MCP SSE server to an OpenAPI-compatible
                 REST API for OpenWebUI. Card search tools (<code>semantic_search</code>,
                 <code>keyword_search</code>, <code>get_card</code>) are exposed as POST endpoints.
-                Started alongside the Flask app by <code>run.sh</code>.
+                Started alongside the Flask app by <code>run.sh</code> (native) or
+                <code>docker-entrypoint.sh</code> (Docker).
             </p>
 
             <table style="width:100%; border-collapse:collapse; font-size:0.82rem; margin-bottom:0.75rem;">
@@ -268,7 +269,7 @@
                         <td style="padding:4px 8px; font-family:monospace;">MCPO Proxy</td>
                         <td style="padding:4px 8px;" id="mcp-mcpo-port-cell">{{ mcpo_port }}</td>
                         <td style="padding:4px 8px;" id="mcp-mcpo-url-cell">
-                            <code>http://{{ mcp_host }}:{{ mcpo_port }}/openapi.json</code>
+                            <code>http://{{ mcp_display_host }}:{{ mcpo_port }}/openapi.json</code>
                         </td>
                         <td style="padding:4px 8px; color:var(--text-dim); font-size:0.78rem;">
                             Public — connect OpenWebUI here
@@ -278,7 +279,7 @@
                         <td style="padding:4px 8px; font-family:monospace;">MCP SSE</td>
                         <td style="padding:4px 8px;" id="mcp-sse-port-cell">{{ mcp_sse_port }}</td>
                         <td style="padding:4px 8px;" id="mcp-sse-url-cell">
-                            <code>http://127.0.0.1:{{ mcp_sse_port }}/sse</code>
+                            <code>http://{{ mcp_display_host }}:{{ mcp_sse_port }}/sse</code>
                         </td>
                         <td style="padding:4px 8px; color:var(--text-dim); font-size:0.78rem;">
                             Internal — feeds MCPO proxy

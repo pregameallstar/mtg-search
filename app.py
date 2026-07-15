@@ -1598,7 +1598,8 @@ def config_page():
                            embed_status=embed_status,
                            mcp_sse_port=MCP_SSE_PORT,
                            mcpo_port=MCPO_PORT,
-                           mcp_host=MCP_HOST)
+                           mcp_host=MCP_HOST,
+                           mcp_display_host=MCP_DISPLAY_HOST)
 
 
 @app.route("/config/embed-status")
@@ -1628,6 +1629,9 @@ def embed_build():
 MCP_SSE_PORT = int(os.environ.get("MCP_SSE_PORT", "8765"))
 MCPO_PORT = int(os.environ.get("MCPO_PORT", "8000"))
 MCP_HOST = os.environ.get("MCP_HOST", "0.0.0.0")
+# ponytail: 0.0.0.0 is a bind address — users connect to 127.0.0.1 (local)
+# or the machine's actual IP (remote). Display the loopback when unconfigured.
+MCP_DISPLAY_HOST = "127.0.0.1" if MCP_HOST == "0.0.0.0" else MCP_HOST
 
 
 def _port_alive(port):
@@ -1646,7 +1650,7 @@ def mcp_status():
     mcpo_alive = _port_alive(MCPO_PORT)
     return jsonify({
         "running": sse_alive and mcpo_alive,
-        "host": MCP_HOST,
+        "host": MCP_DISPLAY_HOST,
         "sse": {
             "alive": sse_alive,
             "port": MCP_SSE_PORT,
@@ -1654,7 +1658,7 @@ def mcp_status():
         "mcpo": {
             "alive": mcpo_alive,
             "port": MCPO_PORT,
-            "url": f"http://{MCP_HOST}:{MCPO_PORT}/openapi.json",
+            "url": f"http://{MCP_DISPLAY_HOST}:{MCPO_PORT}/openapi.json",
         },
     })
 
