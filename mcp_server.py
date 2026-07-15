@@ -37,7 +37,64 @@ def _db_path():
 
 mcp = FastMCP(
     "mtg-search",
-    instructions="Magic: The Gathering card search engine — semantic similarity + keyword lookup",
+    instructions="""Magic: The Gathering card search engine with three tools.
+
+CORE WORKFLOW — two-pass retrieval:
+1. Translate the user's request from community slang into literal mechanical
+   descriptions of what a card DOES. Call semantic_search with that description.
+2. Read the oracle_text in every returned result. Re-rank them against the
+   user's original intent. The embedding model is approximate; you are the
+   second pass. Discard results whose text does not match the ask.
+3. Use get_card(name) on top candidates to fetch rulings, legalities, and
+   full stats before making a final recommendation.
+
+TOOL SELECTION:
+- semantic_search — the primary tool. Use for concept and mechanic queries
+  ("cards that sacrifice creatures for value", "draw cards when creatures
+  die", "copy target instant or sorcery"). The embedding model maps
+  mechanical descriptions into the same vector space as oracle text.
+  Always translate community slang to mechanics first:
+    "Aristocrats" → "sacrifice a creature to drain opponents"
+    "Voltron"     → "equip and aura synergy, combat damage trigger"
+    "Landfall"    → "whenever a land enters the battlefield"
+    "Wheels"      → "each player discards their hand and draws seven cards"
+    "Stax"        → "opponents' spells cost more, permanents enter tapped"
+    "Group Hug"   → "each player draws additional cards"
+    "Group Slug"  → "whenever an opponent does something, they lose life"
+    "Superfriends"→ "planeswalker synergy and proliferate"
+    "Spellslinger"→ "whenever you cast an instant or sorcery"
+    "Reanimator"  → "return target creature card from graveyard to battlefield"
+    "Blink"       → "exile target creature then return it to the battlefield"
+    "Go-wide"     → "create multiple creature tokens"
+    "Go-tall"     → "put +1/+1 counters on target creature, double power"
+    "Mill"        → "target player puts cards from library into graveyard"
+- keyword_search — FALLBACK. Use only when semantic_search returns nothing
+  useful. Performs literal LIKE matching against name, type, and oracle text.
+  Good for exact text patterns ("destroy target creature") or finding specific
+  card names. Not for mechanical concepts.
+- get_card — fetch full details (rulings, legalities, P/T, loyalty, set info)
+  by exact English name. Use after identifying candidates with the search tools.
+
+FILTERS — apply during semantic_search; do not post-filter yourself:
+- color_identity: SUBSET match. "UG" returns U, G, UG, and colorless cards.
+  It does NOT return UBR or WUBRG. Use short form: "W", "UG", "UBR", "WUBRG".
+  Leave empty for any color identity.
+- mana_value_min / mana_value_max: mana value range (inclusive). Defaults
+  are 0–99 (no filter). Set tighter ranges when the user specifies a curve.
+
+IMPORTANT BEHAVIORS:
+- semantic_search returns oracle_text for every card. ALWAYS read it — do not
+  rely on card names alone. The embedding model catches mechanical cousins,
+  which means a searched-for name might not appear in the text.
+- If the first query returns nothing useful, broaden the mechanical description
+  (fewer specifics, wider concept) or try keyword_search as a fallback.
+- The database covers ~35,000 unique English cards across all of Magic's
+  history. Be thorough before concluding a card does not exist.
+- When suggesting cards for a Commander deck, always verify color_identity
+  compatibility. Cards in the 99 must have a color identity that is a subset
+  of the commander's color identity.
+- set limit higher (30–50) when you intend to re-rank a large candidate pool
+  yourself. Use the default (15) for quick lookups.""",
 )
 
 
