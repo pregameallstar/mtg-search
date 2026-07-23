@@ -4,6 +4,7 @@ import json
 import os
 import re
 import sys
+from urllib.parse import urljoin
 
 
 def _parse_json(text):
@@ -123,3 +124,39 @@ def _anthropic(api_key, model, system_prompt, user_prompt):
             text = block.text
             break
     return _parse_json(text)
+
+
+def fetch_models(base_url, api_key):
+    """Return [{"id": ..., "name": ...}] from the endpoint.
+
+    Tries both OpenAI /v1/models and Ollama /api/tags formats.
+    """
+    import urllib.request
+
+    urls = [
+        urljoin(base_url.rstrip("/") + "/", "models"),
+        urljoin(base_url.rstrip("/") + "/", "api/tags"),
+    ]
+    last_err = None
+    for url in urls:
+        try:
+            req = urllib.request.Request(url)
+            if api_key:
+                req.add_header("Authorization", f"Bearer {api_key}")
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read())
+                # OpenAI format: {"object": "list", "data": [{"id": "gpt-4o", ...}]}
+                if "data" in data and isinstance(data["data"], list):
+                    return sorted(
+                        [{"id": m["id"], "name": m["id"]} for m in data["data"] if m.get("id")],
+                        key=lambda x: x["id"],
+                    )
+                # Ollama format: {"models": [{"name": "llama3.1:8b", ...}]}
+                if "models" in data and isinstance(data["models"], list):
+                    return sorted(
+                        [{"id": m["name"], "name": m["name"]} for m in data["models"] if m.get("name")],
+                        key=lambda x: x["id"],
+                    )
+        except Exception as e:
+            last_err = e
+    raise last_err or RuntimeError("No models found at base URL")

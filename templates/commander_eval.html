@@ -5,17 +5,38 @@
 
     {# Commander card header #}
     <div class="similar-base-header">
-        {% set img = card_image(card['scryfallId'], size='normal') %}
-        {% if img %}
-        <img src="{{ img }}" alt="{{ card['name'] }}">
-        {% endif %}
+        <div class="card-image-wrap" id="eval-card-image-wrap">
+            {% set img = card_image(card['scryfallId'], size='normal') %}
+            {% if img %}
+            <img src="{{ img }}" alt="{{ card['faceName'] or card['name'] }}" id="eval-card-img"
+                 data-front-img="{{ img }}">
+            {% endif %}
+            {% if other_faces %}
+            {% for face in other_faces if face['side'] == 'b' %}
+            {% set back_img = card_image(face['scryfallId'], face='back', size='normal') %}
+            {% if back_img %}
+            <button class="card-flip-btn" id="card-flip-btn" title="Flip to back face"
+                    data-front-img="{{ card_image(card['scryfallId'], size='normal') }}"
+                    data-back-img="{{ back_img }}">
+                ⟳
+            </button>
+            {% endif %}
+            {% endfor %}
+            {% endif %}
+        </div>
         <div class="similar-base-info">
             <h1>{{ card['faceName'] or card['name'] }}</h1>
             <span class="mana-cost-lg">{{ render_mana(card['manaCost']) | safe }}</span>
             <p class="card-type-line">{{ card['type'] }}</p>
 
             {% if card['text'] %}
-            <div class="oracle-text">{{ card['text'] | e | replace('\n', '<br>') | safe }}</div>
+            <div class="oracle-text" id="eval-oracle-text"
+                 data-front-text="{{ card['text'] | e }}"
+                 {% for face in other_faces if face['side'] == 'b' and face['text'] %}
+                 data-back-text="{{ face['text'] | e }}"
+                 data-back-name="{{ (face['faceName'] or face['name']) | e }}"
+                 {% endfor %}
+            >{{ card['text'] | e | replace('\n', '<br>') | safe }}</div>
             {% endif %}
 
             <div class="card-stats">
@@ -113,10 +134,10 @@
     {% if pipeline %}
     {% set embed_ok = pipeline.get('embed') is none or pipeline.get('embed', 0) > 0 %}
     {% set ws_total = pipeline.get('web_search', {}).values() | sum %}
-    {% if not embed_ok or ws_total == 0 %}
+    {% if not embed_ok or ws_total == 0 or not pipeline.get('web_search_up', False) %}
     <div class="eval-notice" style="background:#1a1a2e; border-color:#4a3d6e; margin-bottom:1rem;">
         {% if not embed_ok %}⚠ Card similarity index unavailable — analysis runs without card recommendations.{% endif %}
-        {% if ws_total == 0 %}⚠ Web search returned no results — analysis based on card text only.{% endif %}
+        {% if not pipeline.get('web_search_up', False) %}⚠ SearXNG web search is unavailable — analysis based on card text only.{% elif ws_total == 0 %}⚠ Web search returned no results — analysis based on card text only.{% endif %}
     </div>
     {% endif %}
     {% endif %}
@@ -279,6 +300,86 @@
         <div class="panel-loading">Loading…</div>
     </div>
 </div>
+
+<script>
+    // ——— Card flip toggle for DFC cards ———
+    (function() {
+        var btn = document.getElementById('card-flip-btn');
+        if (!btn) return;
+        var img = document.getElementById('eval-card-img');
+        var oracle = document.getElementById('eval-oracle-text');
+        var frontImg = btn.dataset.frontImg;
+        var backImg = btn.dataset.backImg;
+        var frontText = oracle ? oracle.dataset.frontText : '';
+        var backText = oracle ? oracle.dataset.backText : '';
+        var backName = oracle ? oracle.dataset.backName : '';
+        var h1 = document.querySelector('.similar-base-info h1');
+        var frontName = h1 ? h1.textContent : '';
+        var flipped = false;
+
+        function formatOracle(text) {
+            return text.replace(/\n/g, '<br>');
+        }
+
+        btn.addEventListener('click', function() {
+            flipped = !flipped;
+            if (flipped) {
+                img.src = backImg;
+                if (oracle) oracle.innerHTML = formatOracle(backText);
+                if (h1 && backName) h1.textContent = backName;
+                btn.title = 'Flip to front face';
+                btn.style.transform = 'rotate(180deg)';
+            } else {
+                img.src = frontImg;
+                if (oracle) oracle.innerHTML = formatOracle(frontText);
+                if (h1 && frontName) h1.textContent = frontName;
+                btn.title = 'Flip to back face';
+                btn.style.transform = '';
+            }
+        });
+    })();
+</script>
+
+{% if analysis %}
+<script>
+    // Post analysis to parent deck builder (when embedded)
+    (function() {
+        if (window.parent === window) return;
+        var clean = {
+            strengths: {{ analysis.get('strengths', []) | tojson }},
+            weaknesses: {{ analysis.get('weaknesses', []) | tojson }},
+            strategies: {{ analysis.get('strategies', []) | tojson }},
+            priorities: {{ analysis.get('priorities', []) | tojson }},
+            unique_builds: {{ analysis.get('unique_builds', []) | tojson }},
+            kill_on_sight: {{ analysis.get('kill_on_sight', {}) | tojson }},
+            brackets: {{ analysis.get('brackets', []) | tojson }},
+            _verification: {{ analysis.get('_verification', {}) | tojson }},
+            _pipeline: {
+                embed: {{ ((analysis.get('_pipeline') or {}).get('embed') or 0) | tojson }},
+                web_search: {{ ((analysis.get('_pipeline') or {}).get('web_search') or {}) | tojson }},
+                web_search_up: {{ ((analysis.get('_pipeline') or {}).get('web_search_up', False)) | tojson }}
+            },
+            _deepdives: {% if saved_deepdives %}{{ saved_deepdives | tojson }}{% else %}{}{% endif %},
+            _similar: {% if similar %}{{ similar | tojson }}{% else %}null{% endif %},
+            _card: {
+                setCode: {{ card['setCode'] | tojson }},
+                number: {{ card['number'] | tojson }},
+                name: {{ (card['faceName'] or card['name']) | tojson }}
+            }{% if other_faces %}{% for face in other_faces if face['side'] == 'b' %},
+            _backFace: {
+                name: {{ (face['faceName'] or face['name']) | tojson }},
+                type: {{ (face['type'] or '') | tojson }},
+                text: {{ (face['text'] or '') | tojson }},
+                manaCost: {{ (face['manaCost'] or '') | tojson }},
+                power: {{ (face['power'] or '') | tojson }},
+                toughness: {{ (face['toughness'] or '') | tojson }},
+                loyalty: {{ (face['loyalty'] or '') | tojson }}
+            }{% endfor %}{% endif %}
+        };
+        window.parent.postMessage({type: 'mtg-eval-data', data: clean}, '*');
+    })();
+</script>
+{% endif %}
 
 <script>
     // --- Analyze button: AJAX pipeline with loading indicator ---

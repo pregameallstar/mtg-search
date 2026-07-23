@@ -1,6 +1,10 @@
 services:
   app:
-    build: .
+    build:
+      context: .
+      args:
+        - UID=${HOST_UID:-1000}
+        - GID=${HOST_GID:-1000}
     container_name: mtg-search
     ports:
       - "${PORT:-5000}:5000"
@@ -13,6 +17,24 @@ services:
       - ./eval_reports:/app/eval_reports
       - ./.secret_key:/app/.secret_key
       - ./.last_ingest.json:/app/.last_ingest.json
+      # ponytail: dev overlays — edit code on host, reflected live in container
+      - ./app.py:/app/app.py
+      - ./mcp_server.py:/app/mcp_server.py
+      - ./shared.py:/app/shared.py
+      - ./llm.py:/app/llm.py
+      - ./embed.py:/app/embed.py
+      - ./dedup.py:/app/dedup.py
+      - ./prompts.py:/app/prompts.py
+      - ./websearch.py:/app/websearch.py
+      - ./mcp_control.py:/app/mcp_control.py
+      - ./images.py:/app/images.py
+      - ./similarity.py:/app/similarity.py
+      - ./eval_helpers.py:/app/eval_helpers.py
+      - ./ingest.py:/app/ingest.py
+      - ./requirements.txt:/app/requirements.txt
+      - ./static:/app/static
+      - ./templates:/app/templates
+      - ./decks:/app/decks
     environment:
       - SEARXNG_URL=http://searxng:8080
       - LLM_BACKEND=${LLM_BACKEND:-openai}
@@ -20,6 +42,7 @@ services:
       - LLM_MODEL=${LLM_MODEL:-}
       - LLM_API_KEY=${LLM_API_KEY:-}
       - MCP_SSE_PORT=${MCP_SSE_PORT:-8765}
+      - MCP_HOST=${MCP_HOST:-0.0.0.0}
       - MCPO_PORT=${MCPO_PORT:-8000}
     restart: unless-stopped
     depends_on:

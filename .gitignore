@@ -40,6 +40,9 @@ QA*.md
 # Saved eval reports
 eval_reports/*.json
 
+# Test reports (generated artifacts)
+test_scripts/test_report_*.json
+
 # Embedding index (generated, large)
 embeddings/
 
@@ -50,4 +53,3 @@ images/
 searxng/*
 !searxng/settings.yml
 !searxng/limiter.toml
-!searxng/docker-compose.yml

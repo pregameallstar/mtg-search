@@ -22,7 +22,11 @@
             <label>Text Search <input type="text" name="q" value="{{ query }}" placeholder="e.g. draw, discard…"></label>
         </div>
         <div class="field-row">
-            <label>Name <input type="text" name="name" value="{{ name }}" placeholder="Card name contains…"></label>
+            <div style="position:relative;">
+                <label>Name</label>
+                <input type="text" name="name" id="name-search-input" value="{{ name }}" placeholder="Card name contains…" autocomplete="off">
+                <ul id="name-autocomplete-list" class="autocomplete-list" hidden></ul>
+            </div>
             <label>Oracle Text <input type="text" name="oracle" value="{{ oracle }}" placeholder="e.g. draw, discard…"></label>
         </div>
         <div class="field-row">
@@ -126,48 +130,6 @@
         </div>
     </fieldset>
 
-    {# --- Options / Flags --- #}
-    <fieldset><legend>Options</legend>
-        <div class="chip-row">
-            <label class="chip"><input type="checkbox" name="is_reprint" value="1" {% if is_reprint %}checked{% endif %}> Is Reprint</label>
-            <label class="chip"><input type="checkbox" name="is_reserved" value="1" {% if is_reserved %}checked{% endif %}> Reserved List</label>
-            <label class="chip"><input type="checkbox" name="is_funny" value="1" {% if is_funny %}checked{% endif %}> Silver-bordered</label>
-            <label class="chip"><input type="checkbox" name="is_oversized" value="1" {% if is_oversized %}checked{% endif %}> Oversized</label>
-            <label class="chip"><input type="checkbox" name="is_fullart" value="1" {% if is_fullart %}checked{% endif %}> Full Art</label>
-            <label class="chip"><input type="checkbox" name="is_textless" value="1" {% if is_textless %}checked{% endif %}> Textless</label>
-            <label class="chip"><input type="checkbox" name="is_promo" value="1" {% if is_promo %}checked{% endif %}> Promo</label>
-            <label class="chip"><input type="checkbox" name="is_rebalanced" value="1" {% if is_rebalanced %}checked{% endif %}> Rebalanced</label>
-        </div>
-        <div class="field-row" style="margin-top:0.75rem">
-            <label>Border <select name="border">
-                <option value="">Any</option>
-                <option value="black" {% if border=='black' %}selected{% endif %}>Black</option>
-                <option value="white" {% if border=='white' %}selected{% endif %}>White</option>
-                <option value="silver" {% if border=='silver' %}selected{% endif %}>Silver</option>
-                <option value="gold" {% if border=='gold' %}selected{% endif %}>Gold</option>
-                <option value="yellow" {% if border=='yellow' %}selected{% endif %}>Yellow</option>
-                <option value="borderless" {% if border=='borderless' %}selected{% endif %}>Borderless</option>
-            </select></label>
-            <label>Layout <select name="layout">
-                <option value="">Any</option>
-                {% for l in ['normal','split','flip','transform','modal_dfc','meld','adventure','saga','battle','planar','scheme','vanguard','token','double_faced_token','emblem','augment','host','leveler','class','case','mutate','prototype'] %}
-                <option value="{{ l }}" {% if layout==l %}selected{% endif %}>{{ l | replace('_',' ') | title }}</option>
-                {% endfor %}
-            </select></label>
-            <label>Frame <select name="frame">
-                <option value="">Any</option>
-                {% for v in ['1993','1997','2003','2015','future'] %}
-                <option value="{{ v }}" {% if frame==v %}selected{% endif %}>{{ v }}</option>
-                {% endfor %}
-            </select></label>
-        </div>
-        <div class="field-row" style="margin-top:0.75rem">
-            <label>Display <select name="unique">
-                <option value="cards" {% if unique=='cards' %}selected{% endif %}>Unique Cards</option>
-                <option value="prints" {% if unique=='prints' %}selected{% endif %}>All Printings</option>
-            </select></label>
-        </div>
-    </fieldset>
 
     <div class="advanced-actions">
         <button type="submit">Search</button>
@@ -204,7 +166,15 @@
 </div>
 {% endif %}
 
-<p class="result-count">{{ total }} {{ 'card' if unique=='cards' else 'printing' }}{{ 's' if total != 1 else '' }} found</p>
+<p class="result-count">
+    {% if total > 0 %}
+        {{ total }} {{ 'card' if unique=='cards' else 'printing' }}{{ 's' if total != 1 else '' }} found
+    {% elif has_filters %}
+        No results found — try adjusting your filters
+    {% else %}
+        Enter a search query to find cards
+    {% endif %}
+</p>
 
 <div class="card-grid">
     {% for c in results %}
@@ -232,12 +202,94 @@
     {% else %}
     <span class="page next disabled">Next →</span>
     {% endif %}
+    <span class="per-page">
+        <label for="per-page-select">Per page:</label>
+        <select id="per-page-select" onchange="jumpPerPage(this.value)">
+            {% for n in [10, 25, 30, 50] %}
+            <option value="{{ n }}" {% if per_page == n %}selected{% endif %}>{{ n }}</option>
+            {% endfor %}
+        </select>
+    </span>
+</div>
+{% elif total > 0 %}
+<div class="pagination">
+    <span class="per-page">
+        <label for="per-page-select">Per page:</label>
+        <select id="per-page-select" onchange="jumpPerPage(this.value)">
+            {% for n in [10, 25, 30, 50] %}
+            <option value="{{ n }}" {% if per_page == n %}selected{% endif %}>{{ n }}</option>
+            {% endfor %}
+        </select>
+    </span>
 </div>
 {% endif %}
 
 </div>
 
 <script>
+// --- Autocomplete for Name field ---
+(function() {
+    var input = document.getElementById('name-search-input');
+    if (!input) return;
+    var list = document.getElementById('name-autocomplete-list');
+    var timer = null;
+    var selectedIndex = -1;
+
+    function clearList() {
+        list.innerHTML = '';
+        list.hidden = true;
+        selectedIndex = -1;
+    }
+
+    input.addEventListener('input', function() {
+        clearTimeout(timer);
+        var q = input.value.trim();
+        if (q.length < 2) { clearList(); return; }
+        timer = setTimeout(function() {
+            fetch('/card-autocomplete?q=' + encodeURIComponent(q))
+                .then(function(r) { return r.json(); })
+                .then(function(results) {
+                    list.innerHTML = '';
+                    if (!results || results.length === 0) { list.hidden = true; return; }
+                    results.forEach(function(card) {
+                        var li = document.createElement('li');
+                        li.textContent = card.name;
+                        li.addEventListener('mousedown', function(e) {
+                            e.preventDefault();
+                            input.value = card.name;
+                            clearList();
+                        });
+                        list.appendChild(li);
+                    });
+                    list.hidden = false;
+                    selectedIndex = -1;
+                });
+        }, 150);
+    });
+
+    input.addEventListener('keydown', function(e) {
+        var items = list.querySelectorAll('li');
+        if (!items.length || list.hidden) return;
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            selectedIndex = Math.min(selectedIndex + 1, items.length - 1);
+            items.forEach(function(li, i) { li.classList.toggle('active', i === selectedIndex); });
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            selectedIndex = Math.max(selectedIndex - 1, 0);
+            items.forEach(function(li, i) { li.classList.toggle('active', i === selectedIndex); });
+        } else if (e.key === 'Enter' && selectedIndex >= 0) {
+            e.preventDefault();
+            input.value = items[selectedIndex].textContent;
+            clearList();
+        }
+    });
+
+    input.addEventListener('blur', function() {
+        setTimeout(clearList, 150);
+    });
+})();
+
 function syncColorChips(el, field) {
     var chips = el.closest('.color-chips');
     var vals = [];
@@ -260,6 +312,12 @@ function jumpPage(page, max) {
     if (page > max) page = max;
     var url = new URL(window.location.href);
     url.searchParams.set('page', page);
+    window.location.href = url.toString();
+}
+function jumpPerPage(value) {
+    var url = new URL(window.location.href);
+    url.searchParams.set('per_page', value);
+    url.searchParams.delete('page');  // reset to first page when changing page size
     window.location.href = url.toString();
 }
 // Show loading state on form submit / page nav

@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/mana-font@1.21.0/css/mana.min.css">
 </head>
 <body>
+    {% if not request.args.get('embed') %}
     <nav>
         <a href="/" class="brand">MTG Search</a>
     </nav>
@@ -18,22 +19,24 @@
                 <li class="sidebar-section-label">Tools</li>
                 <li><a href="/similar">Similarity</a></li>
                 <li><a href="/commander-eval">Commander Eval</a></li>
+                <li><a href="/deck-builder">🃏 Deck Builder</a></li>
+                <li><a href="/saved-decks">📋 Saved Decks</a></li>
                 <li class="sidebar-section-label">Settings</li>
                 <li><a href="/config">⚙ Configuration</a></li>
             </ul>
         </aside>
         <main>
+    {% endif %}
             {% if db_unseeded %}
             <div class="db-unseeded" style="background:#4a2511;border:1px solid #d35400;border-radius:8px;padding:0.75rem 1rem;margin-bottom:1.5rem;color:#f5cba7;font-size:0.9rem;text-align:center;">
                 No card database found. <a href="/config" style="color:#e67e22;font-weight:700;">Seed the database</a> (upload an <code>AllPrintings.sqlite</code> from <a href="https://mtgjson.com" style="color:#f39c12;">mtgjson.com</a>).
             </div>
             {% endif %}
             {% block content %}{% endblock %}
+    {% if not request.args.get('embed') %}
         </main>
     </div>
-    <footer>
-        <p>Card data from <a href="https://mtgjson.com">MTGJSON</a>. Images from <a href="https://scryfall.com">Scryfall</a>.</p>
-    </footer>
+    {% endif %}
 
     {# Card detail side panel #}
     <div id="card-panel" class="card-panel-overlay" onclick="closePanel(event)">
@@ -105,10 +108,46 @@
         }
         var cell = e.target.closest('.card-cell');
         if (!cell) return;
+        // Don't open panel if dragging or clicking the add-to-deck button
+        if (e.target.closest('.btn-add-to-deck')) return;
         e.preventDefault();
         openPanel(cell.dataset.setCode, cell.dataset.number);
     });
 
+    // ponytail: make .card-cell elements globally draggable for deck builder
+    // This lets cards from any tool (Search, Similarity, Eval) be dragged
+    // into the Deck Builder. Uses a MutationObserver to handle dynamic grids.
+    (function makeCardsGloballyDraggable() {
+        function enableCell(cell) {
+            if (cell.dataset.deckDraggable) return;
+            cell.dataset.deckDraggable = '1';
+            cell.setAttribute('draggable', 'true');
+            cell.addEventListener('dragstart', function(e) {
+                var setCode = cell.dataset.setCode;
+                var number = cell.dataset.number;
+                var name = cell.querySelector('.cell-name') || cell.querySelector('.eval-rec-name');
+                var cardName = name ? name.textContent : '';
+
+                e.dataTransfer.setData('text/plain', cardName);
+                e.dataTransfer.setData('application/mtg-card', JSON.stringify({
+                    setCode: setCode,
+                    number: number,
+                }));
+                e.dataTransfer.setData('text/uri-list', window.location.origin + '/card/' + setCode + '/' + number);
+            });
+        }
+
+        function scanGrids() {
+            document.querySelectorAll('.card-cell').forEach(enableCell);
+        }
+
+        scanGrids();
+        var observer = new MutationObserver(function() { scanGrids(); });
+        observer.observe(document.body, { childList: true, subtree: true });
+    })();
+
     </script>
+
+    {% block extra_scripts %}{% endblock %}
 </body>
 </html>

@@ -18,42 +18,30 @@ import sys
 
 from mcp.server.fastmcp import FastMCP
 
+from shared import db_path, color_identity_subset
+
 DATABASE = os.environ.get("MTG_DATABASE", "AllPrintings.sqlite")
 
 
-def _db_path():
-    """Return the actual SQLite database path."""
-    if os.path.isfile(DATABASE):
-        return DATABASE
-    if os.path.isdir(DATABASE):
-        dbs = sorted(
-            [f for f in os.listdir(DATABASE) if f.endswith(".sqlite")],
-            key=lambda x: os.path.getmtime(os.path.join(DATABASE, x)),
-            reverse=True,
-        )
-        if dbs:
-            return os.path.join(DATABASE, dbs[0])
-    return DATABASE
+# ponytail: db_path(DATABASE) lives in shared.db_path — imported above
 
 mcp = FastMCP(
     "mtg-search",
     instructions="""Magic: The Gathering card search engine with three tools.
 
-CORE WORKFLOW — two-pass retrieval:
-1. Translate the user's request from community slang into literal mechanical
-   descriptions of what a card DOES. Call semantic_search with that description.
-2. Read the oracle_text in every returned result. Re-rank them against the
-   user's original intent. The embedding model is approximate; you are the
-   second pass. Discard results whose text does not match the ask.
-3. Use get_card(name) on top candidates to fetch rulings, legalities, and
-   full stats before making a final recommendation.
+CRITICAL — NO HALLUCINATION:
+- Every card name, mana value, color identity, type, and oracle text you
+  report MUST come from a tool result. Never fill in card details from
+  training data — the tools are the only source of truth.
+- If a tool returns nothing, say so. Never invent cards to satisfy a query.
+- When building a table or list, copy each field verbatim from the tool
+  response. Do not paraphrase, summarize, or "correct" oracle text.
+- If you didn't call a tool for a card, you cannot know anything about it.
 
-TOOL SELECTION:
-- semantic_search — the primary tool. Use for concept and mechanic queries
-  ("cards that sacrifice creatures for value", "draw cards when creatures
-  die", "copy target instant or sorcery"). The embedding model maps
-  mechanical descriptions into the same vector space as oracle text.
-  Always translate community slang to mechanics first:
+TOOL SELECTION — pick based on query SHAPE, not just content:
+
+Query is about WHAT a card DOES (mechanics, gameplay concepts):
+  → semantic_search. Describe the mechanic literally:
     "Aristocrats" → "sacrifice a creature to drain opponents"
     "Voltron"     → "equip and aura synergy, combat damage trigger"
     "Landfall"    → "whenever a land enters the battlefield"
@@ -68,17 +56,44 @@ TOOL SELECTION:
     "Go-wide"     → "create multiple creature tokens"
     "Go-tall"     → "put +1/+1 counters on target creature, double power"
     "Mill"        → "target player puts cards from library into graveyard"
-- keyword_search — FALLBACK. Use only when semantic_search returns nothing
-  useful. Performs literal LIKE matching against name, type, and oracle text.
-  Good for exact text patterns ("destroy target creature") or finding specific
-  card names. Not for mechanical concepts.
-- get_card — fetch full details (rulings, legalities, P/T, loyalty, set info)
-  by exact English name. Use after identifying candidates with the search tools.
+    "+1/+1 counters" → "put a +1/+1 counter on target creature"
 
-FILTERS — apply during semantic_search; do not post-filter yourself:
+Query is about card ATTRIBUTES (colors, type, MV, name patterns):
+  → keyword_search with the filters applied directly. Do NOT translate
+    attribute queries into mechanical descriptions:
+    ✓ "commander with exactly 3 colors" → keyword_search with color_identity
+    ✓ "find cards named 'Sword of'"     → keyword_search(query="Sword of")
+    ✓ "Legendary Creature, MV ≤ 4"      → semantic_search with card_type="Legendary Creature"
+                                           and mana_value_max filter
+    ✗ Do NOT feed attribute queries to semantic_search as mechanics
+
+Query mixes mechanics + attributes (most common):
+  → semantic_search with color_identity/card_type/mana_value filters set:
+    "+1/+1 counter commander, MV ≤ 3" →
+       semantic_search(query="+1/+1 counter synergy commander",
+                       card_type="Legendary Creature", mana_value_max=3)
+    "3-color +1/+1 counter commander, MV ≤ 4" →
+       semantic_search(query="+1/+1 counter synergy commander",
+                       color_identity="WUB"/"UBR"/etc., mana_value_max=4)
+    Tip: for "exactly N colors", the color_identity filter is a subset match
+    so you must try specific N-color combinations or search broad and verify.
+
+keyword_search — NOT just a fallback. It's the right tool when:
+  - The user provides a card name fragment ("Sword of", "Liliana")
+  - The query is structured attributes with no mechanical concept
+  - semantic_search returned nothing and you need to try literal matching
+  - You need exact text patterns in oracle text ("destroy target creature")
+
+get_card — fetch full details (rulings, legalities, P/T, loyalty, set info)
+  by exact English name. Use after identifying candidates.
+
+FILTERS — apply during semantic_search/keyword_search; do not post-filter:
 - color_identity: SUBSET match. "UG" returns U, G, UG, and colorless cards.
   It does NOT return UBR or WUBRG. Use short form: "W", "UG", "UBR", "WUBRG".
   Leave empty for any color identity.
+- card_type: substring match against the full type line (case-insensitive).
+  "Legendary Creature" matches "Legendary Creature — Human Warrior",
+  "Legendary Artifact Creature — Construct", etc. Leave empty for any type.
 - mana_value_min / mana_value_max: mana value range (inclusive). Defaults
   are 0–99 (no filter). Set tighter ranges when the user specifies a curve.
 
@@ -102,7 +117,7 @@ IMPORTANT BEHAVIORS:
 
 
 def _get_db():
-    db = sqlite3.connect(_db_path())
+    db = sqlite3.connect(db_path(DATABASE))
     db.row_factory = sqlite3.Row
     return db
 
@@ -135,14 +150,6 @@ def _parse_ci(raw: str) -> set[str]:
     return set(chars)
 
 
-def _ci_subset(card_ci: str, allowed: set[str]) -> bool:
-    """True if every color in card_ci is also in allowed."""
-    if not card_ci or not card_ci.strip():
-        return True  # colorless goes anywhere
-    card_colors = set(card_ci.replace(" ", ""))
-    return card_colors <= allowed
-
-
 # ── tools ────────────────────────────────────────────────────────────────
 
 
@@ -150,6 +157,7 @@ def _ci_subset(card_ci: str, allowed: set[str]) -> bool:
 def semantic_search(
     query: str,
     color_identity: str = "",
+    card_type: str = "",
     mana_value_max: float = 99,
     mana_value_min: float = 0,
     limit: int = 15,
@@ -170,13 +178,16 @@ def semantic_search(
 
     color_identity: e.g. "GW", "Blue/Red", "UBR". Card CI must be a
                     subset.  Empty = any color.
+    card_type: substring match against the type line, e.g.
+               "Legendary Creature", "Instant", "Artifact".
+               Empty = any type.
     mana_value_min/max: MV range filter (inclusive).
     limit: max results (default 15). Set higher for broader coverage
            when you'll re-rank yourself.
     """
     import embed
 
-    results = embed.find(_db_path(), query, top_k=200)
+    results = embed.find(db_path(DATABASE), query, top_k=800)
     if not results:
         return []
 
@@ -187,7 +198,9 @@ def semantic_search(
         mv = r.get("manaValue") or 0
         if mv < mana_value_min or mv > mana_value_max:
             continue
-        if allowed_ci and not _ci_subset(r.get("colorIdentity", ""), allowed_ci):
+        if allowed_ci and not color_identity_subset(r.get("colorIdentity", ""), allowed_ci):
+            continue
+        if card_type and card_type.lower() not in r.get("type", "").lower():
             continue
         filtered.append({
             "name": r["name"],
@@ -258,26 +271,27 @@ def keyword_search(
             where.append("(c.manaValue <= ? OR c.manaValue IS NULL)")
             params.append(mana_value_max)
 
-        # ponytail: dedup by name, pick latest printing
+        # ponytail: dedup by name, pick latest printing.
+        # ROW_NUMBER() with tiebreakers ensures deterministic results when
+        # multiple printings share the same releaseDate.
         rows = db.execute(
-            f"""SELECT c.name, c.manaCost, c.manaValue, c.type, c.text,
-                       c.colors, c.colorIdentity, c.keywords, c.rarity,
-                       c.power, c.toughness, c.setCode, c.number,
-                       ci.scryfallId, s.name as setName
-                FROM cards c
-                JOIN cardIdentifiers ci ON c.uuid = ci.uuid
-                JOIN sets s ON c.setCode = s.code
-                JOIN (
-                    SELECT c2.name, MAX(s2.releaseDate) as maxDate
-                    FROM cards c2
-                    JOIN sets s2 ON c2.setCode = s2.code
-                    WHERE c2.language = 'English'
-                      AND (c2.side IS NULL OR c2.side = 'a')
-                    GROUP BY c2.name
-                ) latest ON c.name = latest.name AND s.releaseDate = latest.maxDate
-                WHERE {' AND '.join(where)}
-                GROUP BY c.name
-                ORDER BY c.name
+            f"""SELECT * FROM (
+                    SELECT c.name, c.manaCost, c.manaValue, c.type, c.text,
+                           c.colors, c.colorIdentity, c.keywords, c.rarity,
+                           c.power, c.toughness, c.setCode, c.number,
+                           ci.scryfallId, s.name as setName,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY c.name
+                               ORDER BY s.releaseDate DESC, c.setCode, c.number
+                           ) as rn
+                    FROM cards c
+                    JOIN cardIdentifiers ci ON c.uuid = ci.uuid
+                    JOIN sets s ON c.setCode = s.code
+                    WHERE c.language = 'English'
+                      AND (c.side IS NULL OR c.side = 'a')
+                      AND {' AND '.join(where)}
+                ) WHERE rn = 1
+                ORDER BY name
                 LIMIT ?""",
             params + [limit],
         ).fetchall()

@@ -22,6 +22,10 @@ MODEL_NAME = "all-MiniLM-L6-v2"
 LOCK_FILE = os.path.join(INDEX_DIR, ".build.lock")
 INFO_FILE = os.path.join(INDEX_DIR, "build_info.json")
 
+# ponytail: a build should take minutes at most.  If the lock file is older than
+# this many seconds, the process was killed mid-build and the lock is orphaned.
+LOCK_STALE_SECONDS = 3600  # 1 hour
+
 _index_globals = {}  # ponytail: module-level model/numpy cache per process lifetime
 _build_lock = threading.Lock()  # ponytail: prevent concurrent builds
 
@@ -29,13 +33,20 @@ _build_lock = threading.Lock()  # ponytail: prevent concurrent builds
 def status():
     """Return dict: {built: bool, building: bool, cards: int, built_at: str, error: str}."""
     if os.path.exists(LOCK_FILE):
+        # ponytail: if the lock is stale (process crashed mid-build), treat it
+        # as orphaned and remove it so status() doesn't report building forever.
         try:
-            with open(LOCK_FILE) as f:
-                started = f.read().strip()
+            lock_mtime = os.path.getmtime(LOCK_FILE)
+            if time.time() - lock_mtime > LOCK_STALE_SECONDS:
+                os.unlink(LOCK_FILE)
+                # Fall through to check INFO_FILE / report not-built
+            else:
+                with open(LOCK_FILE) as f:
+                    started = f.read().strip()
+                return {"built": False, "building": True, "started_at": started,
+                        "cards": 0, "built_at": None, "error": None}
         except OSError:
-            started = "unknown"
-        return {"built": False, "building": True, "started_at": started,
-                "cards": 0, "built_at": None, "error": None}
+            pass  # lock file vanished or unreadable — rare, fall through
 
     if os.path.exists(INFO_FILE):
         try:
@@ -43,10 +54,41 @@ def status():
                 info = json.load(f)
         except (json.JSONDecodeError, OSError):
             info = {}
-        return {"built": True, "building": False, "cards": info.get("cards", 0),
-                "built_at": info.get("built_at"), "error": info.get("error")}
+        cards = info.get("cards", 0)
+        built_at = info.get("built_at")
+        error = info.get("error")
+
+        # ponytail: if build_info reports 0 cards (e.g. from a failed build),
+        # cross-check the actual index files.  A stale build_info shouldn't
+        # mislead status when a valid index exists on disk.
+        if cards == 0:
+            real_count = _index_card_count()
+            if real_count > 0:
+                cards = real_count
+                error = None  # clear stale error — the index is usable
+                # If we couldn't determine built_at from the real files, keep
+                # whatever build_info had (likely None).
+
+        return {"built": True, "building": False, "cards": cards,
+                "built_at": built_at, "error": error}
 
     return {"built": False, "building": False, "cards": 0, "built_at": None, "error": None}
+
+
+def _index_card_count():
+    """Return the number of entries in meta.json, or 0 if the index doesn't exist."""
+    m_path = os.path.join(INDEX_DIR, "meta.json")
+    if not os.path.exists(m_path):
+        return 0
+    # Don't load the whole 8 MB file just for a count — stream and count
+    # top-level array entries cheaply.
+    try:
+        with open(m_path) as f:
+            # meta.json is a JSON array of objects, one per card.  Count "name"
+            # keys as a proxy for array entries — avoids full deserialization.
+            return f.read().count('"name"')
+    except (OSError, UnicodeDecodeError):
+        return 0
 
 
 def build(db_path):
@@ -138,27 +180,30 @@ def find(db_path, oracle_text, top_k=200):
     model = _get_model()
 
     query_vec = model.encode([oracle_text], normalize_embeddings=True)[0]
-    # Normalize DB vectors — index may predate normalization in build()
-    norms = np.linalg.norm(vectors, axis=1, keepdims=True)
-    norms = np.where(norms == 0, 1.0, norms)  # ponytail: guard zero-norm edge case
-    vectors = vectors / norms
+    # ponytail: build() stores normalized vectors, so we can skip re-normalization here
     scores = np.dot(vectors, query_vec)
     top_indices = np.argsort(scores)[::-1][:top_k]
 
-    # Enrich with oracle text from DB
+    # Enrich with oracle text from DB — batch query instead of one per result.
     db = sqlite3.connect(db_path)
     db.row_factory = sqlite3.Row
+
+    # Fetch all oracle texts in one query
+    uuids = [meta[i]["uuid"] for i in top_indices]
+    text_map = {}
+    if uuids:
+        placeholders = ",".join("?" * len(uuids))
+        for row in db.execute(
+            f"SELECT uuid, COALESCE(text, '') AS text FROM cards WHERE uuid IN ({placeholders})",
+            uuids,
+        ):
+            text_map[row["uuid"]] = row["text"]
 
     results = []
     for idx in top_indices:
         card = dict(meta[idx])
         card["score"] = round(float(scores[idx]), 4)
-        # Fetch oracle text on demand — meta.json stays small
-        row = db.execute(
-            "SELECT COALESCE(text, '') AS text FROM cards WHERE uuid = ?",
-            (card["uuid"],),
-        ).fetchone()
-        card["text"] = row["text"] if row else ""
+        card["text"] = text_map.get(card["uuid"], "")
         results.append(card)
 
     db.close()

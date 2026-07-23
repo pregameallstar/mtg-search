@@ -6,7 +6,7 @@ Picks N random commanders, runs analyze + deepdive on each, and reports results.
 Usage:
     python test_scripts/run_eval_test.py [N] --api-key sk-...
 
-    N defaults to 1. The server must already be running: ./run.sh start
+    N defaults to 1. The server must already be running: docker compose up -d
 
     Pass --api-key to seed LLM config into the script's Flask session.
     The script will POST these to /config before running tests.
@@ -171,7 +171,7 @@ def main():
 
     if not check_server():
         print(f"ERROR: Server not reachable at {BASE_URL}")
-        print("Start it with: ./run.sh start")
+        print("Start it with: docker compose up -d")
         sys.exit(1)
 
     if not args.api_key:

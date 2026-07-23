@@ -28,38 +28,7 @@ A self-hosted Magic: The Gathering card search engine and Commander analysis too
 - An MTGJSON `AllPrintings.sqlite` file ([download from mtgjson.com](https://mtgjson.com/downloads/all-files/))
 - (Optional) Docker + Docker Compose for the containerized setup with SearXNG
 
-### Native Setup
-
-```bash
-git clone https://github.com/pregameallstar/mtg-search
-cd mtg-search
-
-python3 -m venv venv
-# bash/zsh:  source venv/bin/activate
-# fish:      source venv/bin/activate.fish
-source venv/bin/activate
-pip install -r requirements.txt
-
-# Place your database in the project root
-ln -s /path/to/AllPrintings.sqlite AllPrintings.sqlite
-
-# Start the app + MCP servers
-./run.sh start
-
-# Open http://127.0.0.1:5000
-```
-
-`run.sh` starts three services:
-
-| Service | Port | Purpose |
-|---------|------|---------|
-| Flask app | 5000 | Web UI — search, similarity, commander eval |
-| MCP SSE server | 8765 | Internal — semantic search for LLM agents |
-| MCPO proxy | 8000 | Bridges MCP SSE to OpenAPI for OpenWebUI |
-
-Stop with `./run.sh stop`. Status with `./run.sh status`.
-
-### Docker Setup
+### Docker Setup (recommended)
 
 ```bash
 git clone https://github.com/pregameallstar/mtg-search
@@ -77,8 +46,10 @@ docker compose up -d
 ```
 
 The docker-compose stack includes:
-- **app** — the Flask application (port 5000)
+- **app** — the Flask application (port 5000), MCP SSE server (8765), and MCPO proxy (8000)
 - **searxng** — SearXNG search engine for Commander Eval web research (port 8888, internal)
+
+Code changes to `.py`, `.html`, `.css`, or `.js` files are reflected live via bind mounts — no rebuild required. Only `requirements.txt` changes need `docker compose build app && docker compose up -d app`.
 
 Volume mounts:
 | Host path | Container path | Purpose |
@@ -295,7 +266,8 @@ embed.py            # Embedding index build + search (sentence-transformers)
 dedup.py            # Database deduplication (one row per unique card)
 llm.py              # LLM client — single generate() function, OpenAI + Anthropic
 mcp_server.py       # MCP server — semantic_search, keyword_search, get_card
-run.sh              # start/stop/restart/status script
+docker-compose.yml  # Docker Compose configuration
+docker-entrypoint.sh # container startup (Flask + MCP SSE + MCPO)
 requirements.txt    # Python dependencies
 Dockerfile          # Docker image
 docker-compose.yml  # App + SearXNG stack
@@ -317,7 +289,7 @@ searxng/
 2. **Configure environment**: Copy `.env.example` to `.env`, generate a `SEARXNG_SECRET`, and configure any LLM credentials you need.
 3. **Build embeddings**: Go to Configuration → Database → "Build Now" (or upload the database via the ingest UI, which triggers a rebuild automatically). This takes ~2 minutes for ~35,000 cards on a modern CPU.
 4. **Configure LLM**: Go to Configuration → LLM Connection. Enter your API key, test the connection, and select a model. Claude Opus 4.8 or Claude Sonnet 5 are recommended; any OpenAI-compatible model works.
-5. **Start the MCP servers**: `./run.sh start` starts all three services. Docker Compose starts only the Flask app + SearXNG (MCP servers are optional).
+5. **Start the stack**: `docker compose up -d` starts Flask, SearXNG, MCP SSE, and MCPO.
 
 ## License
 

@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Saved Decks — MTG Search{% endblock %}
+{% block content %}
+<div class="saved-decks-page">
+    <div class="saved-decks-header">
+        <h1 class="saved-decks-title">Saved Decks</h1>
+        <label class="btn-deck-action" title="Import deck JSON">
+             Import
+            <input type="file" id="saved-decks-import-file" accept=".json" hidden>
+        </label>
+    </div>
+    {% if decks %}
+    <div class="saved-decks-grid">
+        {% for deck in decks %}
+        <div class="saved-deck-card">
+            <a href="/deck-builder?deck={{ deck.name | urlencode }}" class="saved-deck-link">
+                {% if deck.commander and deck.commander.imageUrl %}
+                <img src="{{ deck.commander.imageUrl }}" alt="{{ deck.commander.name }}" class="saved-deck-img" loading="lazy">
+                {% else %}
+                <div class="saved-deck-img saved-deck-img-placeholder">
+                    <span class="ms ms-2x" style="font-size:2.5rem;color:var(--text-dim);">?</span>
+                </div>
+                {% endif %}
+                <div class="saved-deck-meta">
+                    <span class="saved-deck-name">{{ deck.name }}</span>
+                </div>
+            </a>
+            <div class="saved-deck-actions">
+                <button class="btn-deck-delete" data-name="{{ deck.name | e }}" title="Delete deck">Delete</button>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="saved-decks-empty">
+        <p>No saved decks yet.</p>
+        <a href="/deck-builder" class="btn-deck-action" style="margin-top:1rem;">Create your first deck</a>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+// Import deck JSON
+(function() {
+    var fileInput = document.getElementById('saved-decks-import-file');
+    if (fileInput) {
+        fileInput.addEventListener('change', function() {
+            var file = fileInput.files[0];
+            if (!file) return;
+            var reader = new FileReader();
+            reader.onload = function() {
+                try {
+                    var data = JSON.parse(reader.result);
+                    if (!data.name) {
+                        alert('Invalid deck file: missing name.');
+                        fileInput.value = '';
+                        return;
+                    }
+                    fetch('/api/deck/save', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: reader.result,
+                    }).then(function(r) { return r.json(); }).then(function(resp) {
+                        if (resp.success) {
+                            window.location.href = '/deck-builder?deck=' + encodeURIComponent(data.name);
+                        } else {
+                            alert(resp.error || 'Failed to import deck.');
+                        }
+                    }).catch(function() {
+                        alert('Failed to import deck.');
+                    });
+                } catch (e) {
+                    alert('Failed to import: invalid JSON file.');
+                }
+                fileInput.value = '';
+            };
+            reader.readAsText(file);
+        });
+    }
+})();
+
+document.addEventListener('click', function(e) {
+    var btn = e.target.closest('.btn-deck-delete');
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    var name = btn.dataset.name;
+    if (!confirm('Delete deck "' + name + '"?')) return;
+    fetch('/api/deck/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name }),
+    }).then(function(r) { return r.json(); }).then(function(data) {
+        if (data.success) {
+            btn.closest('.saved-deck-card').remove();
+            if (!document.querySelector('.saved-deck-card')) {
+                location.reload();
+            }
+        } else {
+            alert(data.error || 'Failed to delete.');
+        }
+    });
+});
+</script>
+{% endblock %}

@@ -1,0 +1,357 @@
+{% extends "base.html" %}
+{% block title %}Deck Builder — MTG Search{% endblock %}
+{% block content %}
+<div class="deck-builder-page">
+
+    <!-- Left Panel: Tool Switcher -->
+    <div class="deck-panel search-panel">
+        <div class="panel-header">
+            <h2>Deck Tools</h2>
+        </div>
+
+        {# Tool selector tabs #}
+        <div class="panel-toolbar" id="tool-tabs">
+            <button class="tool-tab-btn active" data-tool="search">Search</button>
+            <button class="tool-tab-btn" data-tool="similarity">Similarity</button>
+            <button class="tool-tab-btn" data-tool="eval">Commander Eval</button>
+        </div>
+
+        <div class="panel-body search-panel-body">
+
+            {# ── Search Tool ── #}
+            <div class="tool-content" data-tool="search">
+                <form id="deck-search-form" class="filter-form deck-filter-form">
+
+                    {# --- Search help --- #}
+                    <details class="search-help" style="margin-bottom:0.75rem;font-size:0.78rem;color:var(--text-dim)">
+                        <summary>Search tips</summary>
+                        <p style="margin-top:0.35rem"><strong>Text Search</strong> matches card name, type line, and rules text. Comma-separate for AND logic.</p>
+                        <p><strong>Oracle Text</strong> / <strong>Keywords</strong> also support comma-separated AND logic.</p>
+                    </details>
+
+                    {# --- Cards section --- #}
+                    <fieldset><legend>Cards</legend>
+                        <div class="field-row">
+                            <label>Text Search <input type="text" name="q" id="deck-search-q" placeholder="e.g. draw, discard…"></label>
+                        </div>
+                        <div class="field-row">
+                            <div style="position:relative;">
+                                <label>Name</label>
+                                <input type="text" name="name" id="deck-search-name" placeholder="Card name contains…" autocomplete="off">
+                                <ul id="deck-name-autocomplete" class="autocomplete-list" hidden></ul>
+                            </div>
+                            <label>Oracle Text <input type="text" name="oracle" id="deck-search-oracle" placeholder="e.g. draw, discard…"></label>
+                        </div>
+                        <div class="field-row">
+                            <label>Type Line <input type="text" name="type_line" id="deck-search-type" placeholder="e.g. Legendary Creature — Elf"></label>
+                            <label>Mana Cost <input type="text" name="mana_cost" id="deck-search-mana_cost" placeholder="e.g. {1}{R}{G}"></label>
+                            <label>Keywords <input type="text" name="keywords" id="deck-search-keywords" placeholder="e.g. Surveil, Menace"></label>
+                        </div>
+                    </fieldset>
+
+                    {# --- Colors section --- #}
+                    <fieldset><legend>Colors</legend>
+                        <div class="field-row">
+                            <label>Card Colors</label>
+                            <div class="color-chips multi" data-target="deck-color">
+                                {% for c, name in [('W','White'),('U','Blue'),('B','Black'),('R','Red'),('G','Green'),('C','Colorless')] %}
+                                <label class="chip color-{{ c.lower() }}">
+                                    <input type="checkbox" value="{{ c }}" class="deck-color-cb" autocomplete="off">
+                                    <span class="ms ms-{{ c.lower() }}"></span> {{ name }}
+                                </label>
+                                {% endfor %}
+                            </div>
+                            <input type="hidden" name="color" id="deck-color" value="">
+                            <select name="color_rule" class="rule-select" id="deck-color-rule">
+                                <option value="at_least">at least these colors</option>
+                                <option value="exact">exactly these colors</option>
+                                <option value="at_most">at most these colors</option>
+                            </select>
+                        </div>
+                        <div class="field-row">
+                            <label>Color Identity</label>
+                            <div class="color-chips multi" data-target="deck-ci">
+                                {% for c, name in [('W','White'),('U','Blue'),('B','Black'),('R','Red'),('G','Green'),('C','Colorless')] %}
+                                <label class="chip color-{{ c.lower() }}">
+                                    <input type="checkbox" value="{{ c }}" class="deck-ci-cb" autocomplete="off">
+                                    <span class="ms ms-{{ c.lower() }}"></span> {{ name }}
+                                </label>
+                                {% endfor %}
+                            </div>
+                            <input type="hidden" name="ci" id="deck-ci" value="">
+                            <select name="ci_rule" class="rule-select" id="deck-ci-rule">
+                                <option value="at_least">at least these</option>
+                                <option value="exact">exactly these</option>
+                                <option value="at_most">at most these</option>
+                            </select>
+                        </div>
+                    </fieldset>
+
+                    {# --- Stats section --- #}
+                    <fieldset><legend>Stats</legend>
+                        {% macro deck_stat_row(label, name) %}
+                        <div class="field-row stats-row">
+                            <label>{{ label }}</label>
+                            <select name="{{ name }}_op" id="deck-{{ name }}-op">
+                                {% for o,v in [('=','='),('<','<'),('>','>'),('<=','≤'),('>=','≥')] %}
+                                <option value="{{ o }}">{{ v }}</option>
+                                {% endfor %}
+                            </select>
+                            <input type="text" name="{{ name }}" id="deck-{{ name }}" placeholder="any" style="width:5em">
+                        </div>
+                        {% endmacro %}
+                        {{ deck_stat_row('Mana Value', 'mv') }}
+                        {{ deck_stat_row('Power', 'pow') }}
+                        {{ deck_stat_row('Toughness', 'tou') }}
+                        {{ deck_stat_row('Loyalty', 'loy') }}
+                    </fieldset>
+
+                    {# --- Rarity & Set --- #}
+                    <fieldset><legend>Rarity &amp; Set</legend>
+                        <div class="field-row">
+                            <label>Rarity</label>
+                            <div class="chip-row" id="deck-rarity-chips">
+                                {% for r in ['common','uncommon','rare','mythic','special','bonus'] %}
+                                <label class="chip">
+                                    <input type="checkbox" name="rarity" value="{{ r }}">
+                                    {{ r | capitalize }}
+                                </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        <div class="field-row">
+                            <label>Set <input type="text" name="set" id="deck-set" placeholder="Set code e.g. STA, MOM"></label>
+                        </div>
+                    </fieldset>
+
+                    {# --- Legality --- #}
+                    <fieldset><legend>Legality</legend>
+                        <div class="field-row">
+                            <select name="format" id="deck-format">
+                                <option value="">Any format</option>
+                                {% for f in ['standard','modern','legacy','vintage','pioneer','pauper','commander','brawl','competitivebrawl','historic','oathbreaker','penny','duel','alchemy','gladiator','oldschool','premodern','predh','paupercommander','timeless','standardbrawl'] %}
+                                <option value="{{ f }}" {% if f=='commander' %}selected{% endif %}>{{ f | capitalize }}</option>
+                                {% endfor %}
+                            </select>
+                            <select name="legality" id="deck-legality">
+                                <option value="legal" selected>Legal</option>
+                                <option value="banned">Banned</option>
+                                <option value="restricted">Restricted</option>
+                            </select>
+                        </div>
+                    </fieldset>
+
+                    <div class="advanced-actions">
+                        <button type="submit">Search</button>
+                        <button type="button" id="deck-search-reset" class="btn-secondary">Reset All</button>
+                    </div>
+                </form>
+
+                <div class="deck-per-page">
+                    <label>Cards per page
+                        <select id="deck-search-per-page">
+                            <option value="10">10</option>
+                            <option value="25" selected>25</option>
+                            <option value="50">50</option>
+                        </select>
+                    </label>
+                </div>
+                <div id="deck-search-results" class="card-grid deck-search-grid"></div>
+                <div id="deck-search-count" class="result-count"></div>
+                <div id="deck-search-pagination" class="pagination"></div>
+
+            </div>
+
+            {# ── Similarity Tool ── #}
+            <div class="tool-content" data-tool="similarity" hidden>
+                <p style="font-size:0.85rem; color:var(--text-dim); margin-bottom:0.75rem;">
+                    Find cards mechanically similar to a given card.
+                </p>
+                <form class="deck-search-form" autocomplete="off" onsubmit="return false;">
+                    <div style="position:relative;">
+                        <input type="text" id="deck-similar-input"
+                               placeholder="Enter card name…"
+                               style="width:100%; box-sizing:border-box; padding:0.4rem 0.6rem; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:0.85rem;">
+                        <ul id="deck-similar-autocomplete" class="autocomplete-list" hidden></ul>
+                    </div>
+                </form>
+                <div id="deck-similar-drop" class="drop-zone deck-drop-zone">
+                    <span class="drop-label">Drop a card image here</span>
+                    <span class="drop-hint">Drag from Scryfall or your files</span>
+                    <div id="deck-similar-loading" class="drop-loading" hidden>Looking up card…</div>
+                </div>
+                <div id="deck-similar-error" class="similar-error" hidden></div>
+                <div class="deck-per-page">
+                    <label>Cards per page
+                        <select id="deck-similar-per-page">
+                            <option value="10">10</option>
+                            <option value="25" selected>25</option>
+                            <option value="50">50</option>
+                        </select>
+                    </label>
+                </div>
+                <div id="deck-similar-results" class="card-grid deck-search-grid"></div>
+                <div id="deck-similar-count" class="result-count"></div>
+                <div id="deck-similar-pagination" class="pagination"></div>
+            </div>
+
+            {# ── Commander Eval Tool ── #}
+            <div class="tool-content" data-tool="eval" hidden>
+                <p style="font-size:0.85rem; color:var(--text-dim); margin-bottom:0.75rem;">
+                    Analyze a legendary creature as your Commander.
+                </p>
+                <form class="deck-search-form" autocomplete="off" onsubmit="return false;">
+                    <div style="position:relative;">
+                        <input type="text" id="deck-eval-input"
+                               placeholder="Enter commander name…"
+                               style="width:100%; box-sizing:border-box; padding:0.4rem 0.6rem; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:0.85rem;">
+                        <ul id="deck-eval-autocomplete" class="autocomplete-list" hidden></ul>
+                    </div>
+                </form>
+                <div id="deck-eval-drop" class="drop-zone deck-drop-zone">
+                    <span class="drop-label">Drop a card image here</span>
+                    <span class="drop-hint">Drag from Scryfall or your files</span>
+                    <div id="deck-eval-loading" class="drop-loading" hidden>Looking up card…</div>
+                </div>
+                <div id="deck-eval-error" class="similar-error" hidden></div>
+                <div id="deck-eval-container" class="deck-eval-container" hidden>
+                    <iframe id="deck-eval-iframe" class="deck-eval-iframe" src="" title="Commander Eval"></iframe>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right Panel: Deck Builder -->
+    <div class="deck-panel deck-builder-panel">
+        <div class="panel-header deck-header">
+            <input type="text" id="deck-name" class="deck-name-input" placeholder="My Commander Deck" value="">
+            <span id="deck-save-status" class="deck-save-status"></span>
+            <div class="deck-quick-add">
+                <div class="deck-quick-add-wrap">
+                    <input type="text" id="deck-quick-add-input" class="deck-quick-add-input" placeholder="Add card by name…" autocomplete="off">
+                    <ul id="deck-quick-add-autocomplete" class="autocomplete-list" hidden></ul>
+                </div>
+                <button id="deck-quick-add-btn" class="btn-deck-action deck-quick-add-btn">Add</button>
+            </div>
+            <div class="deck-header-actions">
+                <button id="deck-export-btn" class="btn-deck-action" title="Export as JSON">📤 Export</button>
+                <button id="deck-text-import-btn" class="btn-deck-action" title="Import from text list">📋 Text Import</button>
+                <button id="deck-clear-btn" class="btn-deck-action btn-danger" title="Clear deck">🗑 Clear</button>
+            </div>
+        </div>
+        <div class="panel-body deck-panel-body">
+
+            {# Commander Slot #}
+            <div id="commander-slot" class="commander-slot" data-section="commander">
+                <div class="commander-slot-empty">
+                    <span class="commander-slot-label">COMMANDER</span>
+                    <span class="commander-slot-hint">Drop a legendary creature here, or add from search</span>
+                </div>
+            </div>
+
+            {# Card Sections #}
+            <div class="deck-sections-toolbar">
+                <label class="deck-sort-label">Sort:
+                    <select id="deck-sort-select" class="deck-sort-select">
+                        <option value="name">Name</option>
+                        <option value="mv">Mana Value</option>
+                    </select>
+                </label>
+            </div>
+
+            {# Tag Stats #}
+            <div id="tag-stats" class="tag-stats" hidden></div>
+
+            {# Group By Toggle #}
+            <div class="deck-group-toolbar" id="deck-group-toolbar" hidden>
+                <label class="deck-group-label">Group:
+                    <select id="deck-group-select" class="deck-group-select">
+                        <option value="type">Type</option>
+                        <option value="tag">Tag</option>
+                    </select>
+                </label>
+            </div>
+
+            <div id="deck-sections" class="deck-sections">
+                {# Sections rendered by JS #}
+            </div>
+
+            {# Charts: Mana Curve + Color Identity #}
+            <div id="deck-charts" class="deck-charts" hidden>
+                <div class="deck-chart" id="deck-chart-mana">
+                    <div class="deck-chart-title">Mana Curve</div>
+                    <div class="deck-chart-body" id="deck-chart-mana-body">
+                        {# SVG rendered by JS #}
+                    </div>
+                </div>
+                <div class="deck-chart" id="deck-chart-pips">
+                    <div class="deck-chart-title">Pip Counter</div>
+                    <div class="deck-chart-body" id="deck-chart-pips-body">
+                        {# SVG rendered by JS #}
+                    </div>
+                </div>
+            </div>
+
+            {# Empty state when no cards #}
+            <div id="deck-empty-state" class="deck-empty-state">
+                <p>No cards yet. Search for cards or drag-and-drop to start building.</p>
+            </div>
+        </div>
+
+        {# Stats Bar #}
+        <div class="deck-stats-bar" id="deck-stats-bar">
+            <div class="deck-stats-count">
+                <span id="deck-total-count">0</span><span id="deck-overcount-warn" class="overcount-warn" title="Deck exceeds 100 cards" hidden>⚠</span> / 100 cards
+                <span id="deck-commander-label" class="stats-commander-label"></span>
+            </div>
+            <div class="deck-mana-curve" id="deck-mana-curve" title="Mana Curve">
+                {# SVG rendered by JS #}
+            </div>
+            <div class="deck-color-breakdown" id="deck-color-breakdown" title="Color Breakdown">
+                {# Bars rendered by JS #}
+            </div>
+            <div class="deck-color-identity-status" id="deck-ci-status">
+                {# Compliance check rendered by JS #}
+            </div>
+        </div>
+    </div>
+
+</div>
+
+{# Text Import Modal #}
+<div class="text-import-overlay" id="text-import-overlay" hidden>
+    <div class="text-import-modal">
+        <div class="text-import-header">
+            <h3>Import Cards from Text</h3>
+            <button class="text-import-close" id="text-import-close">✕</button>
+        </div>
+        <div class="text-import-body">
+            <p class="text-import-help">
+                Paste a card list, one per line. Format: <code># Card Name</code><br>
+                Example:
+            </p>
+            <pre class="text-import-example">1 Chainer, Nightmare Adept
+1 Bloody Betrayal
+3 Mountain
+4 Swamp</pre>
+            <textarea id="text-import-textarea"
+                      class="text-import-textarea"
+                      placeholder="1 Sol Ring&#10;1 Arcane Signet&#10;3 Mountain&#10;4 Swamp"
+                      rows="12"></textarea>
+            <label class="text-import-replace-label">
+                <input type="checkbox" id="text-import-replace-cb">
+                Replace current deck contents
+            </label>
+            <div class="text-import-actions">
+                <div class="text-import-status" id="text-import-status"></div>
+                <button id="text-import-go-btn" class="btn-deck-action">Import</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{{ url_for('static', filename='deck-builder.js') }}"></script>
+{% endblock %}
