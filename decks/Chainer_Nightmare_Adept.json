@@ -386,6 +386,54 @@
       "text": "{T}, Sacrifice a creature you control with mana value X other than Sidisi: Return target creature card with mana value X plus 1 from your graveyard to the battlefield. Activate only as a sorcery.",
       "supertypes": "Legendary",
       "tags": []
+    },
+    {
+      "uuid": "104960a7-50a5-5cca-aa96-3061fa53607b",
+      "setCode": "SCD",
+      "number": "289",
+      "name": "Akoum Refuge",
+      "types": "Land",
+      "manaCost": "",
+      "manaValue": 0,
+      "colors": "",
+      "colorIdentity": "B, R",
+      "imageUrl": "/img/normal/front/f/d/fd9b7070-7702-4e10-ad66-b2782590810e.jpg",
+      "quantity": 1,
+      "text": "This land enters tapped.\nWhen this land enters, you gain 1 life.\n{T}: Add {B} or {R}.",
+      "supertypes": "",
+      "tags": []
+    },
+    {
+      "uuid": "b56829ec-8c9b-5051-8e10-4e0b0b169245",
+      "setCode": "DSC",
+      "number": "263",
+      "name": "Blackcleave Cliffs",
+      "types": "Land",
+      "manaCost": "",
+      "manaValue": 0,
+      "colors": "",
+      "colorIdentity": "B, R",
+      "imageUrl": "/img/normal/front/f/7/f75715ce-744f-409c-aeb1-e66eb9186a74.jpg",
+      "quantity": 1,
+      "text": "This land enters tapped unless you control two or fewer other lands.\n{T}: Add {B} or {R}.",
+      "supertypes": "",
+      "tags": []
+    },
+    {
+      "uuid": "3106d59e-a4f4-5cd4-8720-9c2fbe8ee7e5",
+      "setCode": "DSK",
+      "number": "256",
+      "name": "Blazemire Verge",
+      "types": "Land",
+      "manaCost": "",
+      "manaValue": 0,
+      "colors": "",
+      "colorIdentity": "B, R",
+      "imageUrl": "/img/normal/front/d/1/d151c8e2-d715-470d-868a-f45191db9fa0.jpg",
+      "quantity": 1,
+      "text": "{T}: Add {B}.\n{T}: Add {R}. Activate only if you control a Swamp or a Mountain.",
+      "supertypes": "",
+      "tags": []
     }
   ]
 }

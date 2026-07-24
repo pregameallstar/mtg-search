@@ -21,6 +21,7 @@
         this.commander = null;    // { uuid, setCode, number, name, ... }
         this.cards = [];          // [{ uuid, setCode, number, name, quantity, ... }]
         this.evalData = null;     // Commander eval analysis (from embedded eval iframe)
+        this.sections = {};       // { "Sideboard": [card, ...], "Maybeboard": [card, ...], custom: [...] }
     }
 
     Deck.prototype.addCard = function (cardData) {
@@ -74,6 +75,89 @@
 
         // Legendary creatures can also be in the 99 — skip commander logic
         return this._addToMain(cardData);
+    };
+
+    /* ── Custom Sections ── */
+    Deck.prototype.addToSection = function (sectionName, cardData) {
+        if (!cardData || !cardData.uuid) return { error: 'Invalid card data.' };
+        if (!this.sections) this.sections = {};
+        var section = this.sections[sectionName];
+        if (!section) return { error: 'Section "' + sectionName + '" does not exist. Create it first.' };
+        var existing = section.find(function (c) { return c.uuid === cardData.uuid; });
+        if (existing) {
+            existing.quantity++;
+        } else {
+            cardData.quantity = 1;
+            cardData.tags = [];
+            section.push(cardData);
+        }
+        return { ok: true };
+    };
+
+    Deck.prototype.removeFromSection = function (sectionName, uuid) {
+        var section = this.sections[sectionName];
+        if (!section) return false;
+        var idx = section.findIndex(function (c) { return c.uuid === uuid; });
+        if (idx === -1) return false;
+        section.splice(idx, 1);
+        return true;
+    };
+
+    Deck.prototype.setSectionQuantity = function (sectionName, uuid, qty) {
+        if (qty < 1) return false;
+        var section = this.sections[sectionName];
+        if (!section) return false;
+        var card = section.find(function (c) { return c.uuid === uuid; });
+        if (!card) return false;
+        card.quantity = qty;
+        return true;
+    };
+
+    Deck.prototype.getSectionCount = function (sectionName) {
+        var section = this.sections[sectionName];
+        if (!section) return 0;
+        return section.reduce(function (sum, c) { return sum + (c.quantity || 1); }, 0);
+    };
+
+    Deck.prototype.createSection = function (name) {
+        if (!name || !name.trim()) return { error: 'Section name is required.' };
+        var key = name.trim();
+        var reserved = ['main', 'commander'];
+        if (reserved.indexOf(key.toLowerCase()) !== -1) return { error: 'Reserved name.' };
+        if (!this.sections) this.sections = {};
+        if (this.sections.hasOwnProperty(key)) return { error: 'Section already exists.' };
+        this.sections[key] = [];
+        return { ok: true, name: key };
+    };
+
+    Deck.prototype.deleteSection = function (name) {
+        if (!this.sections || !this.sections.hasOwnProperty(name)) return { error: 'Section not found.' };
+        delete this.sections[name];
+        return { ok: true };
+    };
+
+    Deck.prototype.moveCardBetweenSections = function (cardData, fromSection, toSection) {
+        // fromSection or toSection can be '' for main deck, or a section name
+        // Preserve card quantity and tags across the move
+        var movedCard = Object.assign({}, cardData);
+
+        // Remove from source
+        if (fromSection) {
+            this.removeFromSection(fromSection, cardData.uuid);
+        } else {
+            this.removeCard(cardData.uuid);
+        }
+
+        // Add to target (preserving quantity/tags)
+        if (toSection) {
+            var section = this.sections[toSection];
+            if (!section) return { error: 'Section "' + toSection + '" does not exist.' };
+            section.push(movedCard);
+        } else {
+            // Add to main deck — skip commander logic, preserve quantity
+            this.cards.push(movedCard);
+        }
+        return { ok: true };
     };
 
     Deck.prototype.removeCard = function (uuid) {
@@ -135,6 +219,7 @@
         this.commander = null;
         this.cards = [];
         this.evalData = null;
+        this.sections = {};
     };
 
     Deck.prototype.getCommanderCI = function () {
@@ -142,28 +227,38 @@
     };
 
     Deck.prototype.toExport = function () {
+        var cardMapper = function (c) {
+            return {
+                uuid: c.uuid,
+                setCode: c.setCode,
+                number: c.number,
+                name: c.name,
+                types: c.types,
+                manaCost: c.manaCost,
+                manaValue: c.manaValue,
+                colors: c.colors,
+                colorIdentity: c.colorIdentity,
+                imageUrl: c.imageUrl,
+                quantity: c.quantity,
+                text: c.text,
+                supertypes: c.supertypes,
+                tags: c.tags || [],
+            };
+        };
+
+        var sectionsExport = {};
+        if (this.sections) {
+            Object.keys(this.sections).forEach(function (key) {
+                sectionsExport[key] = this.sections[key].map(cardMapper);
+            }.bind(this));
+        }
+
         return {
             name: this.name,
             commander: this.commander,
             evalData: this.evalData,
-            cards: this.cards.map(function (c) {
-                return {
-                    uuid: c.uuid,
-                    setCode: c.setCode,
-                    number: c.number,
-                    name: c.name,
-                    types: c.types,
-                    manaCost: c.manaCost,
-                    manaValue: c.manaValue,
-                    colors: c.colors,
-                    colorIdentity: c.colorIdentity,
-                    imageUrl: c.imageUrl,
-                    quantity: c.quantity,
-                    text: c.text,
-                    supertypes: c.supertypes,
-                    tags: c.tags || [],
-                };
-            }),
+            cards: this.cards.map(cardMapper),
+            sections: sectionsExport,
         };
     };
 
@@ -175,6 +270,16 @@
             var card = Object.assign({}, c, { quantity: c.quantity || 1 });
             if (!card.tags) card.tags = [];
             return card;
+        });
+        this.sections = {};
+        var sectionsData = data.sections || {};
+        var self = this;
+        Object.keys(sectionsData).forEach(function (key) {
+            self.sections[key] = (sectionsData[key] || []).map(function (c) {
+                var card = Object.assign({}, c, { quantity: c.quantity || 1 });
+                if (!card.tags) card.tags = [];
+                return card;
+            });
         });
     };
 
@@ -514,9 +619,12 @@
         renderCommander();
         renderTagStats();
         renderSections();
+        renderCustomSections();
         renderStats();
         renderDeckCharts();
         updateDeckNameInput();
+        makeDeckCardRowsDraggable();
+        initSectionDropZones();
     }
 
     function renderCommander() {
@@ -606,7 +714,7 @@
                 var dot = tag ? '<span class="tag-section-dot" style="background:' + tag.color + '"></span>' : '';
 
                 html += '<div class="deck-section" data-section="' + escapeAttr(tagName.toLowerCase()) + '">';
-                html += '<div class="deck-section-header" onclick="toggleSection(this)">' +
+                html += '<div class="deck-section-header">' +
                     '<span class="deck-section-title">' + dot + escapeHtml(tagName) + '</span>' +
                     '<span class="deck-section-count">' + totalCount + '</span>' +
                     '<span class="deck-section-arrow">▼</span>' +
@@ -635,7 +743,7 @@
 
                 var totalCount = cards.reduce(function (s, c) { return s + c.quantity; }, 0);
                 html += '<div class="deck-section" data-section="' + escapeAttr(typeName.toLowerCase()) + '">';
-                html += '<div class="deck-section-header" onclick="toggleSection(this)">' +
+                html += '<div class="deck-section-header">' +
                     '<span class="deck-section-title">' + escapeHtml(typeName) + '</span>' +
                     '<span class="deck-section-count">' + totalCount + '</span>' +
                     '<span class="deck-section-arrow">▼</span>' +
@@ -686,6 +794,228 @@
                 openTagPopover(this.dataset.uuid, e);
             });
         });
+    }
+
+    /* ── Custom Section Rendering ── */
+    function renderCustomSections() {
+        var container = $('#custom-sections');
+        if (!container) return;
+        if (!deck.sections) deck.sections = {};
+
+        var sectionNames = Object.keys(deck.sections);
+        if (sectionNames.length === 0) {
+            container.innerHTML = '';
+            return;
+        }
+
+        var html = '';
+        sectionNames.forEach(function (sectionName) {
+            var cards = deck.sections[sectionName] || [];
+            var totalCount = cards.reduce(function (s, c) { return s + (c.quantity || 1); }, 0);
+
+            html += '<div class="deck-section custom-deck-section" data-section-name="' + escapeAttr(sectionName) + '">';
+            html += '<div class="deck-section-header custom-section-header">';
+            html += '<span class="deck-section-title">' + escapeHtml(sectionName) + '</span>';
+            html += '<span class="deck-section-count">' + totalCount + '</span>';
+            html += '<button class="section-delete-btn" data-section="' + escapeAttr(sectionName) + '" title="Delete section">✕</button>';
+            html += '<span class="deck-section-arrow">▼</span>';
+            html += '</div>';
+
+            html += '<div class="deck-section-body custom-section-body" data-section-name="' + escapeAttr(sectionName) + '">';
+            if (cards.length === 0) {
+                html += '<div class="section-empty-hint">Drop cards here to add to ' + escapeHtml(sectionName) + '</div>';
+            } else {
+                cards.forEach(function (card) {
+                    html += renderSectionCardRow(card, sectionName);
+                });
+            }
+            html += '</div></div>';
+        });
+
+        container.innerHTML = html;
+
+        attachSectionCardRowListeners();
+        attachSectionDeleteListeners();
+    }
+
+    function renderSectionCardRow(card, sectionName) {
+        // Like renderCardRow but with section-aware data attributes
+        var isOffColor = isOffColorCard(card);
+        var offColorClass = isOffColor ? ' card-off-color' : '';
+
+        var tagBadges = '';
+        var cardTags = card.tags || [];
+        if (cardTags.length > 0) {
+            tagBadges = '<span class="card-tags">';
+            cardTags.forEach(function (t) {
+                var tag = findTagByName(t);
+                var color = tag ? tag.color : '#666';
+                tagBadges += '<span class="card-tag-dot" style="background:' + color + '" title="' + escapeAttr(t) + '"></span>';
+            });
+            tagBadges += '</span>';
+        }
+
+        return '<div class="deck-card-row' + offColorClass + '" data-uuid="' + escapeAttr(card.uuid) + '" data-set-code="' + escapeAttr(card.setCode) + '" data-number="' + escapeAttr(card.number) + '" data-section-name="' + escapeAttr(sectionName) + '">' +
+            '<button class="qty-btn qty-plus" data-uuid="' + escapeAttr(card.uuid) + '" data-section="' + escapeAttr(sectionName) + '" data-delta="1" title="Increase quantity">+</button>' +
+            '<button class="qty-btn qty-minus" data-uuid="' + escapeAttr(card.uuid) + '" data-section="' + escapeAttr(sectionName) + '" data-delta="-1" title="Decrease quantity">−</button>' +
+            '<span class="card-quantity">' + card.quantity + '×</span>' +
+            '<span class="card-mv" title="Mana Value">' + (card.manaValue !== undefined ? card.manaValue : '—') + '</span>' +
+            '<span class="card-name-text" title="' + escapeAttr(card.name) + '">' + escapeHtml(card.name) + '</span>' +
+            '<span class="card-mana-cost">' + renderManaSymbols(card.manaCost || '') + '</span>' +
+            tagBadges +
+            '<button class="card-tag-btn" data-uuid="' + escapeAttr(card.uuid) + '" data-section="' + escapeAttr(sectionName) + '" title="Edit tags">🏷</button>' +
+            '<button class="card-remove-btn" data-uuid="' + escapeAttr(card.uuid) + '" data-section="' + escapeAttr(sectionName) + '" title="Remove">✕</button>' +
+        '</div>';
+    }
+
+    function attachSectionCardRowListeners() {
+        $$('#custom-sections .qty-btn').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var uuid = this.dataset.uuid;
+                var sectionName = this.dataset.section;
+                var delta = parseInt(this.dataset.delta, 10);
+                var section = deck.sections[sectionName];
+                if (!section) return;
+                var card = section.find(function (c) { return c.uuid === uuid; });
+                if (!card) return;
+                var newQty = card.quantity + delta;
+                if (deck.setSectionQuantity(sectionName, uuid, newQty)) {
+                    closeTagPopover();
+                    renderAll();
+                    saveCurrentDeck();
+                }
+            });
+        });
+
+        $$('#custom-sections .card-remove-btn').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var uuid = this.dataset.uuid;
+                var sectionName = this.dataset.section;
+                closeTagPopover();
+                deck.removeFromSection(sectionName, uuid);
+                renderAll();
+                saveCurrentDeck();
+            });
+        });
+
+        $$('#custom-sections .card-tag-btn').forEach(function (btn) {
+            btn.addEventListener('click', function (e) {
+                e.stopPropagation();
+                var uuid = this.dataset.uuid;
+                var sectionName = this.dataset.section;
+                // Cards in sections share the same tag system — look them up by uuid across both
+                var card = deck.cards.find(function (c) { return c.uuid === uuid; });
+                if (!card && deck.sections[sectionName]) {
+                    card = deck.sections[sectionName].find(function (c) { return c.uuid === uuid; });
+                }
+                if (card) {
+                    // Temporarily expose so openTagPopover can find it
+                    openTagPopoverForSection(uuid, sectionName, e);
+                }
+            });
+        });
+    }
+
+    function attachSectionDeleteListeners() {
+        $$('#custom-sections .section-delete-btn').forEach(function (btn) {
+            btn.addEventListener('click', function (e) {
+                e.stopPropagation();
+                var sectionName = this.dataset.section;
+                if (!confirm('Delete section "' + sectionName + '" and all its cards?')) return;
+                deck.deleteSection(sectionName);
+                renderAll();
+                saveCurrentDeck();
+                showToast('Section "' + sectionName + '" deleted.');
+            });
+        });
+    }
+
+    function openTagPopoverForSection(uuid, sectionName, event) {
+        var card = deck.sections[sectionName] ? deck.sections[sectionName].find(function (c) { return c.uuid === uuid; }) : null;
+        if (!card) return;
+        closeTagPopover();
+
+        activePopoverCard = uuid;
+
+        var popover = document.createElement('div');
+        popover.className = 'tag-popover';
+        popover.id = 'tag-popover';
+
+        var html = '<div class="tag-popover-header">' + escapeHtml(card.name) + '</div>';
+        html += '<div class="tag-popover-list">';
+
+        tagCatalog.forEach(function (tag) {
+            var checked = (card.tags || []).indexOf(tag.name) !== -1 ? ' checked' : '';
+            html += '<label class="tag-option">' +
+                '<input type="checkbox" class="tag-cb" data-tag="' + escapeAttr(tag.name) + '"' + checked + '>' +
+                '<span class="tag-option-dot" style="background:' + tag.color + '"></span>' +
+                '<span class="tag-option-name">' + escapeHtml(tag.name) + '</span>' +
+            '</label>';
+        });
+
+        html += '</div>';
+        html += '<div class="tag-popover-add">' +
+            '<input type="text" class="tag-popover-input" placeholder="New tag…" maxlength="24">' +
+            '<button class="tag-popover-add-btn">+</button>' +
+        '</div>';
+
+        popover.innerHTML = html;
+        document.body.appendChild(popover);
+
+        var btn = event.target.closest('.card-tag-btn');
+        if (btn) {
+            var rect = btn.getBoundingClientRect();
+            popover.style.position = 'fixed';
+            popover.style.top = (rect.bottom + 4) + 'px';
+            popover.style.left = Math.min(rect.left, window.innerWidth - 250) + 'px';
+        }
+
+        popover.querySelectorAll('.tag-cb').forEach(function (cb) {
+            cb.addEventListener('change', function () {
+                var tagName = this.dataset.tag;
+                if (this.checked) {
+                    if (card.tags.indexOf(tagName) === -1) card.tags.push(tagName);
+                } else {
+                    var idx = card.tags.indexOf(tagName);
+                    if (idx !== -1) card.tags.splice(idx, 1);
+                }
+                renderTagFilterBar();
+                renderSections();
+                renderCustomSections();
+                renderTagStats();
+                saveCurrentDeck();
+            });
+        });
+
+        var addInput = popover.querySelector('.tag-popover-input');
+        var addBtn = popover.querySelector('.tag-popover-add-btn');
+
+        function submitNewTag() {
+            var name = addInput.value.trim();
+            if (!name) return;
+            if (findTagByName(name)) {
+                addInput.value = '';
+                return;
+            }
+            addCustomTag(name);
+            var idx = card.tags.indexOf(name);
+            if (idx === -1) card.tags.push(name);
+            openTagPopoverForSection(uuid, sectionName, event);
+            renderTagFilterBar();
+            renderSections();
+            renderCustomSections();
+            renderTagStats();
+            saveCurrentDeck();
+        }
+
+        addBtn.addEventListener('click', submitNewTag);
+        addInput.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') { e.preventDefault(); submitNewTag(); }
+        });
+
+        setTimeout(function () {
+            document.addEventListener('click', closeTagPopoverOnOutside);
+        }, 0);
     }
 
     function renderCardRow(card) {
@@ -976,12 +1306,12 @@
         var container = $('#deck-chart-pips-body');
         if (!container) return;
 
-        var colorHex = { W: '#f9faf4', U: '#0e68ab', B: '#b38e5d', R: '#d3202a', G: '#00733e', C: '#a0a0a0', Generic: '#6e7681' };
-        var colorNames = { W: 'White', U: 'Blue', B: 'Black', R: 'Red', G: 'Green', C: 'Colorless', Generic: 'Generic' };
-        var order = ['W','U','B','R','G','C','Generic'];
+        var colorHex = { W: '#f9faf4', U: '#0e68ab', B: '#b38e5d', R: '#d3202a', G: '#00733e', C: '#a0a0a0' };
+        var colorNames = { W: 'White', U: 'Blue', B: 'Black', R: 'Red', G: 'Green', C: 'Colorless' };
+        var order = ['W','U','B','R','G','C'];
 
-        // Count actual mana pips from manaCost strings, weighted by quantity
-        var pipCounts = { W: 0, U: 0, B: 0, R: 0, G: 0, C: 0, Generic: 0 };
+        // Count colored and colorless mana pips from manaCost strings, weighted by quantity
+        var pipCounts = { W: 0, U: 0, B: 0, R: 0, G: 0, C: 0 };
         var totalPips = 0;
 
         deck.cards.forEach(function (card) {
@@ -1001,23 +1331,14 @@
 
                 // Hybrid like {W/U}, {2/W} — count each colored half
                 // Phyrexian like {W/P}, {B/P} — count the color half
+                // Skip generic halves ({2}, {X}, numeric) — only count colored/colorless pips
                 if (inner.indexOf('/') !== -1) {
                     inner.split('/').forEach(function (p) {
                         if (pipCounts.hasOwnProperty(p)) {
                             pipCounts[p] += qty;
                             totalPips += qty;
-                        } else if (/^\d+$/.test(p)) {
-                            pipCounts['Generic'] += qty;
-                            totalPips += qty;
                         }
                     });
-                    return;
-                }
-
-                // Numeric generic: {1}, {2}, {3}, ... and {X}
-                if (/^\d+$/.test(inner) || inner === 'X') {
-                    pipCounts['Generic'] += qty;
-                    totalPips += qty;
                 }
             });
         });
@@ -1572,30 +1893,239 @@
         });
     }
 
-    /* ─── Drop Zone ─── */
+    /* ── Deck Card Row Drag (move between sections) ── */
+    function makeDeckCardRowsDraggable() {
+        // Make deck card rows (main + sections) draggable for inter-section moves
+        $$('.deck-card-row').forEach(function (row) {
+            row.setAttribute('draggable', 'true');
+
+            row.addEventListener('dragstart', function (e) {
+                var setCode = row.dataset.setCode;
+                var number = row.dataset.number;
+                var uuid = row.dataset.uuid;
+                var sectionName = row.dataset.sectionName || '';
+                var cardText = row.querySelector('.card-name-text');
+                var cardName = cardText ? cardText.textContent : '';
+
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('application/mtg-card-move', JSON.stringify({
+                    setCode: setCode,
+                    number: number,
+                    uuid: uuid,
+                    sourceSection: sectionName,
+                    cardName: cardName,
+                }));
+
+                // Also set the general mtg-card for fallback resolution
+                e.dataTransfer.setData('application/mtg-card', JSON.stringify({
+                    setCode: setCode,
+                    number: number,
+                }));
+
+                // Set text for external compat
+                e.dataTransfer.setData('text/plain', cardName);
+
+                // Visual feedback
+                row.classList.add('dragging');
+            });
+
+            row.addEventListener('dragend', function () {
+                row.classList.remove('dragging');
+                // Remove drop-active from all zones
+                $$('.drop-active').forEach(function (el) { el.classList.remove('drop-active'); });
+            });
+        });
+    }
+
+    /* ── Card Move Resolver ── */
+    function handleCardDrop(dataTransfer, targetSection, onComplete) {
+        // targetSection: '' = main deck, string = section name, 'commander' = commander slot
+        var isCommander = targetSection === 'commander';
+
+        // First check if this is a move (from one deck zone to another)
+        var moveData = dataTransfer.getData('application/mtg-card-move');
+        if (moveData) {
+            try {
+                var parsed = JSON.parse(moveData);
+                var fromSection = parsed.sourceSection;  // '' = main deck
+
+                // Same source and target — no-op
+                if (fromSection === targetSection) {
+                    onComplete({ skipped: true });
+                    return;
+                }
+
+                // Find the card object in the source
+                var card = null;
+                if (fromSection) {
+                    var section = deck.sections[fromSection];
+                    if (section) card = section.find(function (c) { return c.uuid === parsed.uuid; });
+                } else {
+                    card = deck.cards.find(function (c) { return c.uuid === parsed.uuid; });
+                }
+
+                if (!card) {
+                    // Card not found in source — fall back to lookup
+                    lookupCardBySetNumber(parsed.setCode, parsed.number, function (resolved, err) {
+                        if (err) { onComplete({ error: err }); return; }
+                        if (isCommander) {
+                            finishCommanderMove(resolved, fromSection, onComplete);
+                        } else {
+                            finishMove(resolved, fromSection, targetSection, onComplete);
+                        }
+                    });
+                    return;
+                }
+
+                if (isCommander) {
+                    finishCommanderMove(card, fromSection, onComplete);
+                } else {
+                    finishMove(card, fromSection, targetSection, onComplete);
+                }
+                return;
+            } catch (e) { /* fall through to copy mode */ }
+        }
+
+        // Copy mode — resolve card from search results (no sourceSection)
+        var mtgData = dataTransfer.getData('application/mtg-card');
+        if (mtgData) {
+            try {
+                var p = JSON.parse(mtgData);
+                lookupCardBySetNumber(p.setCode, p.number, function (card, err) {
+                    if (err) { onComplete({ error: err }); return; }
+                    finishCopy(card, targetSection, onComplete);
+                });
+                return;
+            } catch (e) { /* fall through */ }
+        }
+
+        // Scryfall UUID fallback (external image / file drops)
+        var scryfallId = _extractScryfallIdFromTransfer(dataTransfer);
+        if (scryfallId) {
+            lookupCardByScryfallId(scryfallId, function (card, err) {
+                if (err) { onComplete({ error: err }); return; }
+                finishCopy(card, targetSection, onComplete);
+            });
+            return;
+        }
+
+        onComplete({ error: 'Could not identify a card from that drop.' });
+    }
+
+    function finishMove(card, fromSection, toSection, onComplete) {
+        var result = deck.moveCardBetweenSections(card, fromSection, toSection);
+        if (result.error) {
+            onComplete({ error: result.error });
+            return;
+        }
+        renderAll();
+        saveCurrentDeck();
+        onComplete({ ok: true, cardName: card.name, moved: true, from: fromSection, to: toSection });
+    }
+
+    function finishCommanderMove(card, fromSection, onComplete) {
+        // Validate legendary creature
+        if (!card.isLegendary || !card.isCreature) {
+            onComplete({ error: 'Commander must be a legendary creature.' });
+            return;
+        }
+        // Remove from source
+        if (fromSection) {
+            deck.removeFromSection(fromSection, card.uuid);
+        } else {
+            deck.removeCard(card.uuid);
+        }
+        // If there's an existing commander, move it to main/where this card came from
+        if (deck.commander) {
+            var oldCommander = Object.assign({}, deck.commander, { quantity: 1, tags: [] });
+            if (fromSection) {
+                deck.sections[fromSection].push(oldCommander);
+            } else {
+                deck.cards.push(oldCommander);
+            }
+        }
+        deck.commander = Object.assign({}, card, { quantity: 1 });
+        renderAll();
+        saveCurrentDeck();
+        onComplete({ ok: true, cardName: card.name, moved: true, from: fromSection, to: 'commander' });
+    }
+
+    function finishCopy(card, targetSection, onComplete) {
+        if (targetSection === 'commander') {
+            if (!card.isLegendary || !card.isCreature) {
+                onComplete({ error: 'Commander must be a legendary creature.' });
+                return;
+            }
+            deck.commander = card;
+            renderAll();
+            saveCurrentDeck();
+            onComplete({ ok: true, cardName: card.name, isCommander: true });
+            return;
+        }
+
+        if (targetSection) {
+            var result = deck.addToSection(targetSection, card);
+            if (result.error) {
+                onComplete({ error: result.error });
+                return;
+            }
+            renderAll();
+            saveCurrentDeck();
+            onComplete({ ok: true, cardName: card.name });
+            return;
+        }
+
+        // Copy to main deck
+        var mainResult = deck.addCardTo99(card);
+        if (mainResult.error) {
+            onComplete({ error: mainResult.error });
+            return;
+        }
+        renderAll();
+        saveCurrentDeck();
+        onComplete({ ok: true, cardName: card.name });
+    }
+
+    /* ── Drop Zone ── */
     function initDropZones() {
-        // Deck panel drop zone
+        // Deck panel drop zone (main deck)
         var deckPanel = $('.deck-builder-panel .panel-body');
         var commanderSlot = $('#commander-slot');
 
         if (deckPanel) {
-            setupDropZone(deckPanel, function (card) {
-                addCardToDeck(card, true);  // always to 99, not commander
+            setupDropZone(deckPanel, function (onComplete) {
+                return function (dataTransfer) {
+                    handleCardDrop(dataTransfer, '', onComplete);
+                };
             });
         }
 
         if (commanderSlot) {
-            setupDropZone(commanderSlot, function (card) {
-                if (!card.isLegendary || !card.isCreature) {
-                    showToast('Commander must be a legendary creature.');
-                    return;
-                }
-                addCardToDeck(card);
+            setupDropZone(commanderSlot, function (onComplete) {
+                return function (dataTransfer) {
+                    handleCardDrop(dataTransfer, 'commander', onComplete);
+                };
             });
         }
+
+        initSectionDropZones();
     }
 
-    function setupDropZone(element, onCardFound) {
+    function initSectionDropZones() {
+        // Custom section bodies are drop zones — re-initialized after each render
+        $$('#custom-sections .custom-section-body').forEach(function (body) {
+            var sectionName = body.dataset.sectionName;
+            if (!sectionName) return;
+
+            setupDropZone(body, function (onComplete) {
+                return function (dataTransfer) {
+                    handleCardDrop(dataTransfer, sectionName, onComplete);
+                };
+            });
+        });
+    }
+
+    function setupDropZone(element, makeHandler) {
         var dragCounter = 0;
 
         element.addEventListener('dragenter', function (e) {
@@ -1621,31 +2151,27 @@
             dragCounter = 0;
             element.classList.remove('drop-active');
 
-            // 1. Try application/mtg-card first (internal drag from search results)
-            //    Resolve directly — avoids a second server round-trip for the ID lookup.
-            var mtgData = e.dataTransfer.getData('application/mtg-card');
-            if (mtgData) {
-                try {
-                    var parsed = JSON.parse(mtgData);
-                    lookupCardBySetNumber(parsed.setCode, parsed.number, function (card, err) {
-                        if (err) { showToast(err); return; }
-                        onCardFound(card);
-                    });
+            var handler = makeHandler(function onComplete(result) {
+                if (!result) return;
+                if (result.skipped) return;
+                if (result.error) {
+                    showToast(result.error);
                     return;
-                } catch (err) { /* fall through */ }
-            }
+                }
+                if (result.moved) {
+                    var fromLabel = result.from ? '"' + result.from + '"' : 'main deck';
+                    var toLabel = result.to ? '"' + result.to + '"' : 'main deck';
+                    showToast('Moved ' + result.cardName + ' from ' + fromLabel + ' to ' + toLabel);
+                } else if (result.cardName) {
+                    if (result.isCommander) {
+                        showToast('Commander set: ' + result.cardName);
+                    } else {
+                        showToast('Added: ' + result.cardName);
+                    }
+                }
+            });
 
-            // 2. Try Scryfall UUID extraction (from external image / file drops)
-            var scryfallId = _extractScryfallIdFromTransfer(e.dataTransfer);
-            if (scryfallId) {
-                lookupCardByScryfallId(scryfallId, function (card, err) {
-                    if (err) { showToast(err); return; }
-                    onCardFound(card);
-                });
-                return;
-            }
-
-            showToast('Could not identify a card from that drop.');
+            handler(e.dataTransfer);
         });
     }
 
@@ -1934,6 +2460,9 @@
         initToolDropZone('deck-eval-drop', 'deck-eval-loading', 'deck-eval-error', function (card) {
             loadEvalInline('/card/' + card.setCode + '/' + card.number + '/eval');
         });
+
+        // --- Templates tab ---
+        initTemplatesTab();
     }
 
     /* ─── Generic Autocomplete (shared by all autocomplete inputs) ─── */
@@ -2033,6 +2562,115 @@
 
         input.addEventListener('blur', function () {
             setTimeout(clearList, 150);
+        });
+    }
+
+    /* ─── Templates Tab ─── */
+    function initTemplatesTab() {
+        var select = $('#deck-template-select');
+        var importBtn = $('#deck-template-import-btn');
+        var preview = $('#deck-template-preview');
+        if (!select) return;
+
+        // Load templates into dropdown
+        function loadTemplateList() {
+            fetch('/api/template/list')
+                .then(function(r) {
+                    if (!r.ok) throw new Error('HTTP ' + r.status);
+                    return r.json();
+                })
+                .then(function(templates) {
+                    if (!Array.isArray(templates)) {
+                        console.warn('Template list API returned non-array:', templates);
+                        templates = [];
+                    }
+                    var html = '<option value="">Select a template…</option>';
+                    templates.forEach(function(t) {
+                        var cardCount = (t.cards || []).reduce(function(s, c) { return s + (c.quantity || 1); }, 0);
+                        html += '<option value="' + escapeAttr(t.name) + '">' + escapeHtml(t.name) + ' (' + cardCount + ' card' + (cardCount !== 1 ? 's' : '') + ')</option>';
+                    });
+                    select.innerHTML = html;
+                    importBtn.disabled = true;
+                    preview.textContent = templates.length === 0 ? 'No templates yet. Create one on the Templates page.' : '';
+                })
+                .catch(function(err) {
+                    console.error('Failed to load templates:', err);
+                    select.innerHTML = '<option value="">(Failed to load templates — check console)</option>';
+                });
+        }
+
+        loadTemplateList();
+
+        // Reload template list each time the Templates tab is clicked
+        var tplTab = document.querySelector('.tool-tab-btn[data-tool="templates"]');
+        if (tplTab) {
+            tplTab.addEventListener('click', function() {
+                loadTemplateList();
+            });
+        }
+
+        // Preview on selection
+        select.addEventListener('change', function() {
+            var name = select.value;
+            if (!name) {
+                importBtn.disabled = true;
+                preview.textContent = '';
+                return;
+            }
+            importBtn.disabled = false;
+
+            fetch('/api/template/list')
+                .then(function(r) { return r.json(); })
+                .then(function(templates) {
+                    var tmpl = (templates || []).find(function(t) { return t.name === name; });
+                    if (tmpl) {
+                        var total = (tmpl.cards || []).reduce(function(s, c) { return s + (c.quantity || 1); }, 0);
+                        var cardCount = (tmpl.cards || []).length;
+                        preview.textContent = total + ' total cards in ' + cardCount + ' unique card' + (cardCount !== 1 ? 's' : '') + '.';
+                    }
+                });
+        });
+
+        // Import
+        importBtn.addEventListener('click', function() {
+            var name = select.value;
+            if (!name) return;
+
+            importBtn.disabled = true;
+            importBtn.textContent = 'Importing…';
+
+            fetch('/api/template/list')
+                .then(function(r) { return r.json(); })
+                .then(function(templates) {
+                    var tmpl = (templates || []).find(function(t) { return t.name === name; });
+                    if (!tmpl || !tmpl.cards) {
+                        showToast('Template not found or empty.');
+                        return;
+                    }
+
+                    var imported = 0;
+                    var skipped = 0;
+                    tmpl.cards.forEach(function(card) {
+                        var result = deck.addWithQuantity(card, card.quantity || 1);
+                        if (result.ok) {
+                            imported++;
+                        } else {
+                            skipped++;
+                        }
+                    });
+                    renderAll();
+                    saveCurrentDeck();
+                    var msg = 'Imported ' + imported + ' card' + (imported !== 1 ? 's' : '') + ' from ' + tmpl.name + '.';
+                    if (skipped > 0) msg += ' (' + skipped + ' skipped — deck full or limit reached)';
+                    showToast(msg);
+                })
+                .catch(function() {
+                    showToast('Failed to import template.');
+                })
+                .finally(function() {
+                    importBtn.disabled = false;
+                    importBtn.textContent = 'Import to Deck';
+                });
         });
     }
 
@@ -2255,7 +2893,88 @@
         }
     }
 
-    /* ── Initialize ─── */
+    /* ── Section Management UI ── */
+    function initSectionManagement() {
+        var addBtn = $('#section-add-btn');
+        var addForm = $('#section-add-form');
+        var addInput = $('#section-add-input');
+        var confirmBtn = $('#section-add-confirm');
+        var cancelBtn = $('#section-add-cancel');
+
+        if (!addBtn || !addForm) return;
+
+        // Show the inline form
+        addBtn.addEventListener('click', function () {
+            addForm.hidden = false;
+            addBtn.hidden = true;
+            if (addInput) {
+                addInput.value = '';
+                addInput.focus();
+            }
+        });
+
+        // Cancel
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', function () {
+                addForm.hidden = true;
+                addBtn.hidden = false;
+            });
+        }
+
+        // Add input — submit on Enter
+        if (addInput) {
+            addInput.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    submitAddSection();
+                }
+                if (e.key === 'Escape') {
+                    addForm.hidden = true;
+                    addBtn.hidden = false;
+                }
+            });
+        }
+
+        if (confirmBtn) {
+            confirmBtn.addEventListener('click', function () {
+                submitAddSection();
+            });
+        }
+
+        function submitAddSection() {
+            var name = addInput ? addInput.value.trim() : '';
+            var result = deck.createSection(name);
+            if (result.error) {
+                showToast(result.error);
+                return;
+            }
+            addForm.hidden = true;
+            addBtn.hidden = false;
+            renderAll();
+            saveCurrentDeck();
+            showToast('Section "' + result.name + '" created.');
+        }
+
+        // Preset buttons (Sideboard, Maybeboard)
+        $$('.section-preset-btn').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var name = this.dataset.name;
+                if (!deck.sections) deck.sections = {};
+                if (deck.sections.hasOwnProperty(name)) {
+                    showToast('Section "' + name + '" already exists.');
+                    return;
+                }
+                var result = deck.createSection(name);
+                if (result.error) {
+                    showToast(result.error);
+                    return;
+                }
+                renderAll();
+                saveCurrentDeck();
+                showToast('Section "' + result.name + '" created.');
+            });
+        });
+    }
     function init() {
         initToolTabs();
         initSearch();
@@ -2264,6 +2983,7 @@
         initSortSelect();
         initGroupSelect();
         initQuickAdd();
+        initSectionManagement();
         enableGlobalDrag();
         enableCardPanelAddToDeck();
 
@@ -2275,10 +2995,41 @@
         });
 
         // Click on deck card rows opens the card detail side panel
+        // Click on deck section headers toggles collapse
         var deckSections = $('#deck-sections');
         if (deckSections) {
             deckSections.addEventListener('click', function (e) {
+                // Section header toggle
+                var header = e.target.closest('.deck-section-header');
+                if (header && !e.target.closest('button')) {
+                    toggleSection(header);
+                    return;
+                }
                 // Don't open panel when clicking buttons
+                if (e.target.closest('button')) return;
+                var row = e.target.closest('.deck-card-row');
+                if (!row) return;
+                var setCode = row.dataset.setCode;
+                var number = row.dataset.number;
+                if (setCode && number) {
+                    closeTagPopover();
+                    openPanel(setCode, number);
+                }
+            });
+        }
+
+        // Click on custom section card rows opens the card detail side panel
+        // Click on custom section headers toggles collapse
+        var customSections = $('#custom-sections');
+        if (customSections) {
+            customSections.addEventListener('click', function (e) {
+                // Section header toggle — exclude delete button clicks
+                var header = e.target.closest('.custom-section-header');
+                if (header && !e.target.closest('.section-delete-btn')) {
+                    toggleSection(header);
+                    return;
+                }
+
                 if (e.target.closest('button')) return;
                 var row = e.target.closest('.deck-card-row');
                 if (!row) return;

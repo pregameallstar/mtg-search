@@ -1,0 +1,756 @@
+{% extends "base.html" %}
+{% block title %}Card Templates — MTG Search{% endblock %}
+{% block content %}
+<div class="card-templates-page">
+
+    {# ── Left Panel: Card Search ── #}
+    <div class="deck-panel search-panel template-search-panel">
+        <div class="panel-header">
+            <h2>Card Search</h2>
+        </div>
+
+        <div class="panel-body search-panel-body">
+            <form id="tpl-search-form" class="filter-form deck-filter-form">
+
+                <details class="search-help" style="margin-bottom:0.75rem;font-size:0.78rem;color:var(--text-dim)">
+                    <summary>Search tips</summary>
+                    <p style="margin-top:0.35rem"><strong>Text Search</strong> matches card name, type line, and rules text. Comma-separate for AND logic.</p>
+                    <p><strong>Oracle Text</strong> / <strong>Keywords</strong> also support comma-separated AND logic.</p>
+                </details>
+
+                <fieldset><legend>Cards</legend>
+                    <div class="field-row">
+                        <label>Text Search <input type="text" name="q" id="tpl-search-q" placeholder="e.g. draw, discard…"></label>
+                    </div>
+                    <div class="field-row">
+                        <div style="position:relative;">
+                            <label>Name</label>
+                            <input type="text" name="name" id="tpl-search-name" placeholder="Card name contains…" autocomplete="off">
+                        </div>
+                        <label>Oracle Text <input type="text" name="oracle" id="tpl-search-oracle" placeholder="e.g. draw, discard…"></label>
+                    </div>
+                    <div class="field-row">
+                        <label>Type Line <input type="text" name="type_line" id="tpl-search-type" placeholder="e.g. Legendary Creature — Elf"></label>
+                        <label>Mana Cost <input type="text" name="mana_cost" id="tpl-search-mana_cost" placeholder="e.g. {1}{R}{G}"></label>
+                        <label>Keywords <input type="text" name="keywords" id="tpl-search-keywords" placeholder="e.g. Surveil, Menace"></label>
+                    </div>
+                </fieldset>
+
+                <fieldset><legend>Colors</legend>
+                    <div class="field-row">
+                        <label>Card Colors</label>
+                        <div class="color-chips multi" data-target="tpl-color">
+                            {% for c, name in [('W','White'),('U','Blue'),('B','Black'),('R','Red'),('G','Green'),('C','Colorless')] %}
+                            <label class="chip color-{{ c.lower() }}">
+                                <input type="checkbox" value="{{ c }}" class="tpl-color-cb" autocomplete="off">
+                                <span class="ms ms-{{ c.lower() }}"></span> {{ name }}
+                            </label>
+                            {% endfor %}
+                        </div>
+                        <input type="hidden" name="color" id="tpl-color" value="">
+                        <select name="color_rule" class="rule-select" id="tpl-color-rule">
+                            <option value="at_least">at least these colors</option>
+                            <option value="exact">exactly these colors</option>
+                            <option value="at_most">at most these colors</option>
+                        </select>
+                    </div>
+                    <div class="field-row">
+                        <label>Color Identity</label>
+                        <div class="color-chips multi" data-target="tpl-ci">
+                            {% for c, name in [('W','White'),('U','Blue'),('B','Black'),('R','Red'),('G','Green'),('C','Colorless')] %}
+                            <label class="chip color-{{ c.lower() }}">
+                                <input type="checkbox" value="{{ c }}" class="tpl-ci-cb" autocomplete="off">
+                                <span class="ms ms-{{ c.lower() }}"></span> {{ name }}
+                            </label>
+                            {% endfor %}
+                        </div>
+                        <input type="hidden" name="ci" id="tpl-ci" value="">
+                        <select name="ci_rule" class="rule-select" id="tpl-ci-rule">
+                            <option value="at_least">at least these</option>
+                            <option value="exact">exactly these</option>
+                            <option value="at_most">at most these</option>
+                        </select>
+                    </div>
+                </fieldset>
+
+                <fieldset><legend>Stats</legend>
+                    {% macro tpl_stat_row(label, name) %}
+                    <div class="field-row stats-row">
+                        <label>{{ label }}</label>
+                        <select name="{{ name }}_op" id="tpl-{{ name }}-op">
+                            {% for o,v in [('=','='),('<','<'),('>','>'),('<=','≤'),('>=','≥')] %}
+                            <option value="{{ o }}">{{ v }}</option>
+                            {% endfor %}
+                        </select>
+                        <input type="text" name="{{ name }}" id="tpl-{{ name }}" placeholder="any" style="width:5em">
+                    </div>
+                    {% endmacro %}
+                    {{ tpl_stat_row('Mana Value', 'mv') }}
+                    {{ tpl_stat_row('Power', 'pow') }}
+                    {{ tpl_stat_row('Toughness', 'tou') }}
+                    {{ tpl_stat_row('Loyalty', 'loy') }}
+                </fieldset>
+
+                <fieldset><legend>Rarity &amp; Set</legend>
+                    <div class="field-row">
+                        <label>Rarity</label>
+                        <div class="chip-row" id="tpl-rarity-chips">
+                            {% for r in ['common','uncommon','rare','mythic','special','bonus'] %}
+                            <label class="chip">
+                                <input type="checkbox" name="rarity" value="{{ r }}">
+                                {{ r | capitalize }}
+                            </label>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    <div class="field-row">
+                        <label>Set <input type="text" name="set" id="tpl-set" placeholder="Set code e.g. STA, MOM"></label>
+                    </div>
+                </fieldset>
+
+                <fieldset><legend>Legality</legend>
+                    <div class="field-row">
+                        <select name="format" id="tpl-format">
+                            <option value="">Any format</option>
+                            {% for f in ['standard','modern','legacy','vintage','pioneer','pauper','commander','brawl','competitivebrawl','historic','oathbreaker','penny','duel','alchemy','gladiator','oldschool','premodern','predh','paupercommander','timeless','standardbrawl'] %}
+                            <option value="{{ f }}" {% if f=='commander' %}selected{% endif %}>{{ f | capitalize }}</option>
+                            {% endfor %}
+                        </select>
+                        <select name="legality" id="tpl-legality">
+                            <option value="legal" selected>Legal</option>
+                            <option value="banned">Banned</option>
+                            <option value="restricted">Restricted</option>
+                        </select>
+                    </div>
+                </fieldset>
+
+                <div class="advanced-actions">
+                    <button type="submit">Search</button>
+                    <button type="button" id="tpl-search-reset" class="btn-secondary">Reset All</button>
+                </div>
+            </form>
+
+            <div class="deck-per-page">
+                <label>Cards per page
+                    <select id="tpl-search-per-page">
+                        <option value="10">10</option>
+                        <option value="25" selected>25</option>
+                        <option value="50">50</option>
+                    </select>
+                </label>
+            </div>
+            <div id="tpl-search-results" class="card-grid deck-search-grid template-search-grid"></div>
+            <div id="tpl-search-count" class="result-count"></div>
+            <div id="tpl-search-pagination" class="pagination"></div>
+        </div>
+    </div>
+
+    {# ── Right Panel: Templates ── #}
+    <div class="template-right-panel">
+        <div class="template-right-header">
+            <h2>Card Templates</h2>
+            <button class="btn-template-action" id="btn-new-template">New Template</button>
+        </div>
+
+        <div class="template-right-body" id="template-right-body">
+            {# Default: template grid #}
+            <div id="templates-grid">
+                {% if templates %}
+                <div class="card-templates-grid">
+                    {% for t in templates %}
+                    <div class="card-template-card" data-name="{{ t.name | e }}">
+                        <div class="card-template-card-body">
+                            <p class="card-template-name">{{ t.name }}</p>
+                            <p class="card-template-count">{{ t.cards | length }} card{% if t.cards | length != 1 %}s{% endif %}</p>
+                        </div>
+                        <div class="card-template-actions">
+                            <button class="btn-template-action btn-edit-template" data-name="{{ t.name | e }}">Edit</button>
+                            <button class="btn-template-delete btn-delete-template" data-name="{{ t.name | e }}">Delete</button>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="card-templates-empty">
+                    <p>No saved templates yet.</p>
+                    <button class="btn-template-action" style="margin-top:1rem;" onclick="document.getElementById('btn-new-template').click()">Create your first template</button>
+                </div>
+                {% endif %}
+            </div>
+
+            {# Editor (hidden initially) #}
+            <div id="template-editor" hidden>
+                <h3 id="editor-heading">New Template</h3>
+
+                <div class="template-editor-field">
+                    <label>Template Name</label>
+                    <input type="text" id="template-name-input" placeholder="e.g. Mono Black Ramp">
+                </div>
+
+                <label style="font-size:0.8rem; color:var(--text-dim); display:flex; justify-content:space-between; align-items:center;">
+                    Cards
+                    <span style="font-size:0.75rem;" id="template-card-total"></span>
+                </label>
+                <div id="template-card-rows" class="template-card-rows drop-zone">
+                </div>
+                <p id="template-empty-hint" class="template-editor-hint">
+                    Search for cards on the left and click to add, or drag them here.
+                </p>
+
+                <div class="template-editor-actions">
+                    <button class="btn-template-action" id="btn-save-template">Save</button>
+                    <button class="btn-template-action btn-template-secondary" id="btn-cancel-edit">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    'use strict';
+
+    var editingName = null;
+    var templateCards = [];
+    var autocompleteTimer = null;
+    var searchParams = null;
+    var searchPage = 1;
+    var searchTotalPages = 0;
+
+    function $(sel) { return document.querySelector(sel); }
+    function $$(sel) { return document.querySelectorAll(sel); }
+
+    /* ─── Utility ─── */
+    function escHtml(s) {
+        var div = document.createElement('div');
+        div.appendChild(document.createTextNode(s));
+        return div.innerHTML;
+    }
+
+    function escAttr(s) {
+        return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    function safeName(name) {
+        return name.replace(/[^a-zA-Z0-9_ -]/g, '').replace(/ /g, '_');
+    }
+
+    function showToast(msg) {
+        var t = document.getElementById('tpl-toast');
+        if (!t) {
+            t = document.createElement('div');
+            t.id = 'tpl-toast';
+            t.style.cssText = 'position:fixed;bottom:1rem;right:1rem;background:#333;color:#fff;padding:0.5rem 1rem;border-radius:8px;font-size:0.85rem;z-index:9999;transition:opacity 0.3s;';
+            document.body.appendChild(t);
+        }
+        t.textContent = msg;
+        t.style.opacity = '1';
+        clearTimeout(t._timeout);
+        t._timeout = setTimeout(function() { t.style.opacity = '0'; }, 2500);
+    }
+
+    /* ─── Search ─── */
+    function syncChips(className, targetId) {
+        var vals = [];
+        $$('.' + className + ':checked').forEach(function(cb) { vals.push(cb.value); });
+        var el = $(targetId);
+        if (el) el.value = vals.join('');
+    }
+
+    function initSearch() {
+        var form = $('#tpl-search-form');
+        if (!form) return;
+
+        form.addEventListener('submit', function(e) {
+            e.preventDefault();
+            searchParams = null;
+            runSearch();
+        });
+
+        $$('.tpl-color-cb').forEach(function(cb) {
+            cb.addEventListener('change', function() { syncChips('tpl-color-cb', '#tpl-color'); });
+        });
+        $$('.tpl-ci-cb').forEach(function(cb) {
+            cb.addEventListener('change', function() { syncChips('tpl-ci-cb', '#tpl-ci'); });
+        });
+
+        var resetBtn = $('#tpl-search-reset');
+        if (resetBtn) {
+            resetBtn.addEventListener('click', function() {
+                form.reset();
+                $('#tpl-color').value = '';
+                $('#tpl-ci').value = '';
+                $$('.tpl-color-cb, .tpl-ci-cb').forEach(function(cb) {
+                    var chip = cb.closest('.chip');
+                    if (chip) chip.classList.remove('active');
+                });
+            });
+        }
+
+        document.querySelectorAll('.color-chips.multi .chip').forEach(function(chip) {
+            chip.addEventListener('click', function(e) {
+                var cb = chip.querySelector('input[type=checkbox]');
+                if (cb && e.target !== cb) {
+                    setTimeout(function() { chip.classList.toggle('active', cb.checked); }, 0);
+                }
+            });
+        });
+
+        var perPage = $('#tpl-search-per-page');
+        if (perPage) {
+            perPage.addEventListener('change', function() {
+                if (searchParams) {
+                    searchParams.set('per_page', perPage.value);
+                    runSearch(1);
+                }
+            });
+        }
+
+        // Autocomplete for name field
+        initNameAutocomplete();
+    }
+
+    function initNameAutocomplete() {
+        var input = $('#tpl-search-name');
+        var list = document.createElement('ul');
+        list.id = 'tpl-name-autocomplete';
+        list.className = 'autocomplete-list';
+        list.hidden = true;
+        input.parentNode.appendChild(list);
+
+        input.addEventListener('input', function() {
+            clearTimeout(autocompleteTimer);
+            var q = input.value.trim();
+            if (q.length < 2) { list.hidden = true; return; }
+            autocompleteTimer = setTimeout(function() {
+                fetch('/card-autocomplete?q=' + encodeURIComponent(q))
+                    .then(function(r) { return r.json(); })
+                    .then(function(results) {
+                        if (!results || results.length === 0) { list.hidden = true; return; }
+                        list.innerHTML = results.map(function(card) {
+                            return '<li class="autocomplete-item" role="option" data-name="' + escAttr(card.name) + '" data-set="' + escAttr(card.setCode) + '" data-num="' + escAttr(card.number) + '">' +
+                                '<span class="ac-name">' + escHtml(card.name) + '</span>' +
+                                '<span class="ac-detail">' + escHtml(card.type || '') + '</span>' +
+                            '</li>';
+                        }).join('');
+                        list.hidden = false;
+                    }).catch(function() { list.hidden = true; });
+            }, 200);
+        });
+
+        list.addEventListener('click', function(e) {
+            var item = e.target.closest('.autocomplete-item');
+            if (!item) return;
+            input.value = item.dataset.name;
+            list.hidden = true;
+        });
+
+        document.addEventListener('click', function(e) {
+            if (!input.contains(e.target) && !list.contains(e.target)) list.hidden = true;
+        });
+    }
+
+    function runSearch(page) {
+        page = page || 1;
+        var params = searchParams ? new URLSearchParams(searchParams.toString()) : new URLSearchParams();
+
+        if (!searchParams || page !== searchPage) {
+            if (!searchParams) {
+                var q = $('#tpl-search-q').value.trim();
+                if (q) params.set('q', q);
+                var name = $('#tpl-search-name').value.trim();
+                if (name) params.set('name', name);
+                var oracle = $('#tpl-search-oracle').value.trim();
+                if (oracle) params.set('oracle', oracle);
+                var typeLine = $('#tpl-search-type').value.trim();
+                if (typeLine) params.set('type_line', typeLine);
+                var manaCost = $('#tpl-search-mana_cost').value.trim();
+                if (manaCost) params.set('mana_cost', manaCost);
+                var keywords = $('#tpl-search-keywords').value.trim();
+                if (keywords) params.set('keywords', keywords);
+                var color = $('#tpl-color').value;
+                if (color) { params.set('color', color); params.set('color_rule', $('#tpl-color-rule').value); }
+                var ci = $('#tpl-ci').value;
+                if (ci) { params.set('ci', ci); params.set('ci_rule', $('#tpl-ci-rule').value); }
+                var mv = $('#tpl-mv').value.trim();
+                if (mv) { params.set('mv', mv); params.set('mv_op', $('#tpl-mv-op').value); }
+                var powVal = $('#tpl-pow').value.trim();
+                if (powVal) { params.set('pow', powVal); params.set('pow_op', $('#tpl-pow-op').value); }
+                var touVal = $('#tpl-tou').value.trim();
+                if (touVal) { params.set('tou', touVal); params.set('tou_op', $('#tpl-tou-op').value); }
+                var loyVal = $('#tpl-loy').value.trim();
+                if (loyVal) { params.set('loy', loyVal); params.set('loy_op', $('#tpl-loy-op').value); }
+                $$('#tpl-rarity-chips input:checked').forEach(function(cb) { params.append('rarity', cb.value); });
+                var setCode = $('#tpl-set').value.trim();
+                if (setCode) params.set('set', setCode);
+                var format = $('#tpl-format').value;
+                if (format) params.set('format', format);
+                var legality = $('#tpl-legality').value;
+                if (legality) params.set('legality', legality);
+                params.set('unique', 'cards');
+                var perPageEl = $('#tpl-search-per-page');
+                if (perPageEl) params.set('per_page', perPageEl.value);
+            }
+            searchParams = params;
+        }
+
+        params.set('page', page);
+
+        var grid = $('#tpl-search-results');
+        var count = $('#tpl-search-count');
+        var pagination = $('#tpl-search-pagination');
+        if (grid) grid.innerHTML = '<div class="panel-loading">Searching…</div>';
+        if (pagination) pagination.innerHTML = '';
+
+        fetch('/search?' + params.toString())
+            .then(function(r) { return r.text(); })
+            .then(function(html) {
+                var parser = new DOMParser();
+                var doc = parser.parseFromString(html, 'text/html');
+                var results = doc.querySelector('.card-grid');
+                var resultCount = doc.querySelector('.result-count');
+                var pageIndicator = doc.querySelector('.pagination .page-indicator');
+
+                if (grid) {
+                    if (results) {
+                        grid.innerHTML = results.innerHTML;
+                        // Make search results clickable to add to template
+                        attachSearchCardHandlers(grid);
+                    } else {
+                        grid.innerHTML = '<div>No cards found.</div>';
+                    }
+                }
+                if (count) count.textContent = resultCount ? resultCount.textContent : '';
+
+                if (pageIndicator) {
+                    var m = pageIndicator.textContent.match(/of\s+(\d+)/);
+                    searchTotalPages = m ? parseInt(m[1], 10) : 0;
+                } else {
+                    searchTotalPages = 0;
+                }
+                searchPage = page;
+                renderSearchPagination();
+            })
+            .catch(function() {
+                if (grid) grid.innerHTML = '<div>Search failed. Try again.</div>';
+            });
+    }
+
+    function renderSearchPagination() {
+        var container = $('#tpl-search-pagination');
+        if (!container) return;
+        if (searchTotalPages <= 1) { container.innerHTML = ''; return; }
+        var html = '';
+        if (searchPage > 1) {
+            html += '<button class="page prev" onclick="window._tplGoPage(' + (searchPage - 1) + ')">← Previous</button>';
+        } else {
+            html += '<span class="page prev disabled">← Previous</span>';
+        }
+        html += '<span class="page-indicator">Page ' + searchPage + ' of ' + searchTotalPages + '</span>';
+        if (searchPage < searchTotalPages) {
+            html += '<button class="page next" onclick="window._tplGoPage(' + (searchPage + 1) + ')">Next →</button>';
+        } else {
+            html += '<span class="page next disabled">Next →</span>';
+        }
+        container.innerHTML = html;
+    }
+
+    window._tplGoPage = function(page) {
+        runSearch(page);
+        var grid = $('#tpl-search-results');
+        if (grid) grid.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    };
+
+    function attachSearchCardHandlers(grid) {
+        grid.querySelectorAll('.card-cell').forEach(function(cell) {
+            // Intercept click to add card instead of opening panel
+            cell.addEventListener('click', function(e) {
+                e.stopPropagation();
+                e.preventDefault();
+                var setCode = cell.dataset.setCode;
+                var number = cell.dataset.number;
+                if (!setCode || !number) return;
+                lookupAndAdd(setCode, number);
+            });
+        });
+    }
+
+    function lookupAndAdd(setCode, number) {
+        fetch('/api/deck/card-lookup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ setCode: setCode, number: number }),
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(card) {
+            if (card.error) { showToast(card.error); return; }
+            addCardToTemplate(card);
+        })
+        .catch(function() { showToast('Failed to look up card.'); });
+    }
+
+    function addCardToTemplate(card) {
+        var existing = templateCards.find(function(c) { return c.uuid === card.uuid; });
+        if (existing) {
+            existing.quantity++;
+        } else {
+            var newCard = {
+                uuid: card.uuid, setCode: card.setCode, number: card.number,
+                name: card.name, type: card.type || '', types: card.types || '',
+                subtypes: card.subtypes || '', supertypes: card.supertypes || '',
+                manaCost: card.manaCost || '', manaValue: card.manaValue || 0,
+                colors: card.colors || '', colorIdentity: card.colorIdentity || '',
+                text: card.text || '', power: card.power || '', toughness: card.toughness || '',
+                loyalty: card.loyalty || '', rarity: card.rarity || '',
+                imageUrl: card.imageUrl || '', quantity: 1
+            };
+            templateCards.push(newCard);
+        }
+        renderCardRows();
+        showToast('Added: ' + card.name);
+    }
+
+    /* ─── Drop zone for dragging cards into template ─── */
+    function initDropZone() {
+        var rows = $('#template-card-rows');
+        if (!rows) return;
+        var dragCounter = 0;
+
+        rows.addEventListener('dragenter', function(e) {
+            e.preventDefault();
+            dragCounter++;
+            rows.classList.add('drop-active');
+        });
+        rows.addEventListener('dragover', function(e) { e.preventDefault(); });
+        rows.addEventListener('dragleave', function() {
+            dragCounter--;
+            if (dragCounter === 0) rows.classList.remove('drop-active');
+        });
+        rows.addEventListener('drop', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            dragCounter = 0;
+            rows.classList.remove('drop-active');
+
+            var mtg = e.dataTransfer.getData('application/mtg-card');
+            if (mtg) {
+                try {
+                    var parsed = JSON.parse(mtg);
+                    if (parsed.setCode && parsed.number) {
+                        lookupAndAdd(parsed.setCode, parsed.number);
+                        return;
+                    }
+                } catch (_) {}
+            }
+            // Try Scryfall image drop
+            var html = e.dataTransfer.getData('text/html') || '';
+            var mScry = html.match(/scryfall\.com\/card\/([^\/]+)\/([^\/"']+)/i);
+            if (mScry) {
+                lookupAndAdd(mScry[1], mScry[2]);
+                return;
+            }
+            showToast('Could not identify card from drop.');
+        });
+    }
+
+    /* ─── Template Editor ─── */
+    var editor = $('#template-editor');
+    var grid = $('#templates-grid');
+    var heading = $('#editor-heading');
+    var nameInput = $('#template-name-input');
+    var cardRows = $('#template-card-rows');
+    var emptyHint = $('#template-empty-hint');
+    var cardTotal = $('#template-card-total');
+    var btnSave = $('#btn-save-template');
+    var btnCancel = $('#btn-cancel-edit');
+    var btnNew = $('#btn-new-template');
+
+    function showEditor(name) {
+        editingName = name || null;
+        templateCards = [];
+        heading.textContent = name ? 'Edit: ' + name : 'New Template';
+        nameInput.value = name || '';
+        grid.hidden = true;
+        editor.hidden = false;
+        btnNew.hidden = true;
+        renderCardRows();
+
+        if (name) {
+            fetch('/api/template/list').then(function(r) { return r.json(); }).then(function(templates) {
+                var tmpl = (templates || []).find(function(t) { return t.name === name; });
+                if (tmpl) {
+                    templateCards = (tmpl.cards || []).map(function(c) {
+                        return {
+                            uuid: c.uuid, setCode: c.setCode, number: c.number,
+                            name: c.name, type: c.type || '', types: c.types || '',
+                            subtypes: c.subtypes || '', supertypes: c.supertypes || '',
+                            manaCost: c.manaCost || '', manaValue: c.manaValue || 0,
+                            colors: c.colors || '', colorIdentity: c.colorIdentity || '',
+                            text: c.text || '', power: c.power || '', toughness: c.toughness || '',
+                            loyalty: c.loyalty || '', rarity: c.rarity || '',
+                            imageUrl: c.imageUrl || '', quantity: c.quantity || 1
+                        };
+                    });
+                    renderCardRows();
+                }
+            });
+        }
+    }
+
+    function hideEditor() {
+        editor.hidden = true;
+        grid.hidden = false;
+        btnNew.hidden = false;
+        editingName = null;
+        templateCards = [];
+    }
+
+    function renderCardRows() {
+        var total = templateCards.reduce(function(s, c) { return s + (c.quantity || 1); }, 0);
+        if (cardTotal) cardTotal.textContent = total ? total + ' total' : '';
+
+        if (templateCards.length === 0) {
+            cardRows.innerHTML = '';
+            emptyHint.style.display = '';
+            return;
+        }
+        emptyHint.style.display = 'none';
+        var html = '';
+        templateCards.forEach(function(c, i) {
+            var img = c.imageUrl || '';
+            html += '<div class="template-card-tile">' +
+                '<div class="template-card-img-wrap">' +
+                    (img
+                        ? '<img src="' + escAttr(img) + '" alt="' + escAttr(c.name) + '" loading="lazy">'
+                        : '<div class="template-card-placeholder"><span>' + escHtml(c.name) + '</span></div>') +
+                    '<button class="template-card-tile-remove" onclick="window._tplRemove(' + i + ')" title="Remove">✕</button>' +
+                    '<div class="template-card-qty-overlay">' +
+                        '<button onclick="window._tplQty(' + i + ', -1)">−</button>' +
+                        '<span>' + c.quantity + '</span>' +
+                        '<button onclick="window._tplQty(' + i + ', 1)">+</button>' +
+                    '</div>' +
+                '</div>' +
+                '<div class="template-card-tile-name" title="' + escAttr(c.name) + '">' + escHtml(c.name) + '</div>' +
+            '</div>';
+        });
+        cardRows.innerHTML = html;
+    }
+
+    window._tplQty = function(i, delta) {
+        templateCards[i].quantity = Math.max(1, (templateCards[i].quantity || 1) + delta);
+        renderCardRows();
+    };
+
+    window._tplRemove = function(i) {
+        templateCards.splice(i, 1);
+        renderCardRows();
+    };
+
+    /* ─── Save ─── */
+    btnSave.addEventListener('click', function() {
+        var name = nameInput.value.trim();
+        if (!name) { showToast('Please enter a template name.'); return; }
+        if (templateCards.length === 0) { showToast('Please add at least one card.'); return; }
+
+        var doSave = function() {
+            fetch('/api/template/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: name, cards: templateCards }),
+            }).then(function(r) { return r.json(); }).then(function(data) {
+                if (data.success) {
+                    hideEditor();
+                    refreshGrid();
+                    showToast('Saved: ' + name);
+                } else {
+                    showToast(data.error || 'Failed to save template.');
+                }
+            }).catch(function() { showToast('Failed to save template.'); });
+        };
+
+        if (editingName && safeName(editingName) !== safeName(name)) {
+            fetch('/api/template/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: editingName }),
+            }).then(function() { doSave(); }).catch(function() { doSave(); });
+        } else {
+            doSave();
+        }
+    });
+
+    btnCancel.addEventListener('click', function() {
+        hideEditor();
+        refreshGrid();
+    });
+
+    btnNew.addEventListener('click', function() { showEditor(null); });
+
+    /* ─── Grid management ─── */
+    function refreshGrid(callback) {
+        fetch('/api/template/list').then(function(r) { return r.json(); }).then(function(templates) {
+            grid.innerHTML = '';
+            if (!templates || templates.length === 0) {
+                grid.innerHTML = '<div class="card-templates-empty"><p>No saved templates yet.</p>' +
+                    '<button class="btn-template-action" style="margin-top:1rem;" onclick="document.getElementById(\'btn-new-template\').click()">Create your first template</button></div>';
+            } else {
+                var html = '<div class="card-templates-grid">';
+                templates.forEach(function(t) {
+                    var count = (t.cards || []).length;
+                    html += '<div class="card-template-card" data-name="' + escAttr(t.name) + '">' +
+                        '<div class="card-template-card-body">' +
+                            '<p class="card-template-name">' + escHtml(t.name) + '</p>' +
+                            '<p class="card-template-count">' + count + ' card' + (count !== 1 ? 's' : '') + '</p>' +
+                        '</div>' +
+                        '<div class="card-template-actions">' +
+                            '<button class="btn-template-action btn-edit-template" data-name="' + escAttr(t.name) + '">Edit</button>' +
+                            '<button class="btn-template-delete btn-delete-template" data-name="' + escAttr(t.name) + '">Delete</button>' +
+                        '</div>' +
+                    '</div>';
+                });
+                html += '</div>';
+                grid.innerHTML = html;
+            }
+            if (callback) callback();
+        });
+    }
+
+    /* ─── Grid event delegation ─── */
+    document.addEventListener('click', function(e) {
+        var editBtn = e.target.closest('.btn-edit-template');
+        var deleteBtn = e.target.closest('.btn-delete-template');
+
+        if (editBtn) { showEditor(editBtn.dataset.name); }
+
+        if (deleteBtn) {
+            var dname = deleteBtn.dataset.name;
+            if (!confirm('Delete template "' + dname + '"?')) return;
+            fetch('/api/template/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: dname }),
+            }).then(function(r) { return r.json(); }).then(function(data) {
+                if (data.success) {
+                    var card = deleteBtn.closest('.card-template-card');
+                    if (card) card.remove();
+                    if (!document.querySelector('.card-template-card')) refreshGrid();
+                } else {
+                    showToast(data.error || 'Failed to delete.');
+                }
+            }).catch(function() { showToast('Failed to delete.'); });
+        }
+
+        // Click card body to edit
+        var cardBody = e.target.closest('.card-template-card-body');
+        if (cardBody && !editBtn && !deleteBtn) {
+            var cardEl = cardBody.closest('.card-template-card');
+            if (cardEl) showEditor(cardEl.dataset.name);
+        }
+    });
+
+    /* ─── Init ─── */
+    initSearch();
+    initDropZone();
+})();
+</script>
+{% endblock %}

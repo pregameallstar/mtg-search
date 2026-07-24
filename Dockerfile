@@ -18,7 +18,7 @@ COPY docker-entrypoint.sh ./
 
 # Runtime directories — created empty so VOLUME mounts work cleanly.
 # Images dirs nested inside too (app caches from Scryfall on first hit).
-RUN mkdir -p embeddings images/normal images/large eval_reports && \
+RUN mkdir -p embeddings images/normal images/large eval_reports card_templates && \
     chmod +x docker-entrypoint.sh
 
 # Create non-root user matching the host user so bind-mount writes are properly owned.

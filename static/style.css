@@ -2216,6 +2216,104 @@ main:has(.deck-builder-page) {
     padding: 0.35rem 0.25rem;
 }
 
+/* --- Custom sections (Sideboard, Maybeboard, user-created) --- */
+.custom-sections {
+    margin-top: 0.5rem;
+    border-top: 1px dashed var(--border);
+    padding-top: 0.75rem;
+}
+
+.custom-deck-section {
+    /* extends .deck-section */
+}
+
+.custom-section-header {
+    /* extends .deck-section-header */
+}
+
+.section-delete-btn {
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 0.75rem;
+    padding: 0;
+    border-radius: 4px;
+    flex-shrink: 0;
+    transition: all 0.15s;
+}
+
+.section-delete-btn:hover {
+    color: #f85149;
+    background: rgba(248, 81, 73, 0.12);
+}
+
+.custom-section-body {
+    /* extends .deck-section-body */
+    padding: 0.35rem 0.25rem;
+    min-height: 2rem;
+    border-radius: 6px;
+    transition: background 0.15s, border-color 0.15s;
+    border: 2px solid transparent;
+}
+
+.custom-section-body.drop-active {
+    background: rgba(88, 166, 255, 0.06);
+    border: 2px dashed var(--accent);
+    border-radius: 6px;
+}
+
+.section-empty-hint {
+    padding: 0.75rem;
+    text-align: center;
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    font-style: italic;
+}
+
+/* --- Section management (Add Section row) --- */
+.section-add-row {
+    margin-top: 0.75rem;
+    padding: 0.35rem 0;
+}
+
+.section-add-form {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+    margin-top: 0.5rem;
+}
+
+.section-add-form input {
+    flex: 1;
+    padding: 0.35rem 0.5rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 0.85rem;
+}
+
+.section-add-form input:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+/* --- Deck card row drag states --- */
+.deck-card-row[draggable="true"] {
+    cursor: grab;
+}
+
+.deck-card-row.dragging {
+    opacity: 0.4;
+    cursor: grabbing;
+}
+
 /* --- Card row in deck list --- */
 .deck-card-row {
     display: flex;
@@ -2456,6 +2554,400 @@ main:has(.deck-builder-page) {
 
 @media (max-width: 480px) {
     .saved-decks-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+
+/* --- Card Templates page — split-panel layout --- */
+main:has(.card-templates-page) {
+    max-width: none;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+}
+
+.card-templates-page {
+    display: grid;
+    grid-template-columns: 2fr 3fr;
+    gap: 0;
+    height: calc(100vh - 48px);
+    min-height: 0;
+}
+
+.template-right-panel {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.template-right-body {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+    padding: 1.25rem;
+}
+
+.template-right-header {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-card);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+}
+
+.template-right-header h2 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0;
+}
+
+.template-right-header .right-align {
+    display: flex;
+    gap: 0.5rem;
+}
+
+/* --- Template card grid --- */
+.card-templates-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1rem;
+}
+
+.card-template-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    transition: border-color 0.2s, transform 0.15s;
+}
+
+.card-template-card:hover {
+    border-color: var(--accent);
+    transform: translateY(-2px);
+}
+
+.card-template-card-body {
+    padding: 1rem;
+    cursor: pointer;
+}
+
+.card-template-name {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text);
+    margin: 0 0 0.25rem;
+}
+
+.card-template-count {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+}
+
+.card-template-actions {
+    padding: 0 1rem 0.75rem;
+    display: flex;
+    gap: 0.5rem;
+}
+
+.card-templates-empty {
+    text-align: center;
+    padding: 3rem 1rem;
+    color: var(--text-dim);
+}
+
+/* --- Template Editor (in right panel) --- */
+.template-editor-panel {
+    padding: 1.25rem;
+}
+
+.template-editor-panel h3 {
+    margin: 0 0 1rem;
+    font-size: 1.1rem;
+}
+
+.template-editor-field {
+    margin-bottom: 1rem;
+}
+
+.template-editor-field label {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    margin-bottom: 0.25rem;
+}
+
+.template-editor-field input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.45rem 0.6rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 0.9rem;
+}
+
+.template-card-rows {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 0.75rem;
+    margin: 1rem 0;
+    min-height: 60px;
+}
+
+/* Card tile (grid of card art) */
+.template-card-tile {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    transition: border-color 0.15s;
+}
+
+.template-card-tile:hover {
+    border-color: var(--accent);
+}
+
+.template-card-img-wrap {
+    position: relative;
+    aspect-ratio: 271 / 378;
+    overflow: hidden;
+    background: var(--bg);
+}
+
+.template-card-img-wrap img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.template-card-placeholder {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    padding: 0.5rem;
+}
+
+/* Remove button overlaid on card art */
+.template-card-tile-remove {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 24px;
+    height: 24px;
+    background: rgba(0,0,0,0.7);
+    border: none;
+    border-radius: 50%;
+    color: #f85149;
+    font-size: 0.8rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.15s;
+    z-index: 2;
+}
+
+.template-card-tile:hover .template-card-tile-remove {
+    opacity: 1;
+}
+
+.template-card-tile-remove:hover {
+    background: rgba(248, 81, 73, 0.8);
+    color: #fff;
+}
+
+/* Quantity overlay at bottom of tile */
+.template-card-qty-overlay {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    padding: 0.3rem 0.5rem;
+    background: rgba(0,0,0,0.75);
+    opacity: 0;
+    transition: opacity 0.15s;
+    z-index: 2;
+}
+
+.template-card-tile:hover .template-card-qty-overlay {
+    opacity: 1;
+}
+
+.template-card-qty-overlay button {
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    font-size: 0.85rem;
+    line-height: 1;
+    background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.3);
+    border-radius: 4px;
+    color: #fff;
+    cursor: pointer;
+}
+
+.template-card-qty-overlay button:hover {
+    background: rgba(255,255,255,0.3);
+}
+
+.template-card-qty-overlay span {
+    min-width: 1.8em;
+    text-align: center;
+    font-weight: 700;
+    font-size: 0.9rem;
+    color: #fff;
+}
+
+/* Card name below tile */
+.template-card-tile-name {
+    padding: 0.35rem 0.4rem;
+    font-size: 0.72rem;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.2;
+}
+
+.template-editor-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 1rem;
+}
+
+.template-editor-hint {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    text-align: center;
+    padding: 1.5rem 0;
+}
+
+/* Drop target highlight for template card rows */
+.template-card-rows.drop-active {
+    outline: 2px dashed var(--accent);
+    outline-offset: 4px;
+}
+
+/* + button overlay on template search results */
+.template-search-grid .card-cell {
+    position: relative;
+    cursor: pointer;
+}
+
+.template-search-grid .card-cell::after {
+    content: '+';
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 28px;
+    height: 28px;
+    background: var(--accent);
+    color: #fff;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.1rem;
+    font-weight: 700;
+    transition: transform 0.15s ease-out;
+    pointer-events: none;
+    z-index: 2;
+}
+
+.template-search-grid .card-cell:hover::after {
+    transform: scale(1.1);
+}
+
+/* Buttons */
+.btn-template-action {
+    padding: 0.45rem 1rem;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: none;
+}
+
+.btn-template-action:hover {
+    opacity: 0.9;
+}
+
+.btn-template-secondary {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+}
+
+.btn-template-delete {
+    background: none;
+    border: 1px solid var(--border);
+    color: #f85149;
+    padding: 0.45rem 1rem;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.btn-template-delete:hover {
+    background: rgba(248, 81, 73, 0.1);
+}
+
+/* Search panel overrides for template page */
+.template-search-panel .deck-filter-form {
+    font-size: 0.78rem;
+}
+
+.template-search-panel .deck-filter-form fieldset {
+    padding: 0.5rem 0.6rem;
+    margin-bottom: 0.5rem;
+}
+
+.template-search-panel .deck-filter-form legend {
+    font-size: 0.72rem;
+}
+
+.template-search-panel .deck-filter-form label {
+    font-size: 0.72rem;
+}
+
+.template-search-panel .deck-filter-form input,
+.template-search-panel .deck-filter-form select {
+    font-size: 0.78rem;
+}
+
+/* Toast notification (reuse from deck builder) */
+
+@media (max-width: 900px) {
+    .card-templates-page {
+        grid-template-columns: 1fr;
+    }
+    .card-templates-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (max-width: 480px) {
+    .card-templates-grid {
         grid-template-columns: 1fr;
     }
 }

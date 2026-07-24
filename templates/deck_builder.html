@@ -14,6 +14,7 @@
             <button class="tool-tab-btn active" data-tool="search">Search</button>
             <button class="tool-tab-btn" data-tool="similarity">Similarity</button>
             <button class="tool-tab-btn" data-tool="eval">Commander Eval</button>
+            <button class="tool-tab-btn" data-tool="templates">Templates</button>
         </div>
 
         <div class="panel-body search-panel-body">
@@ -218,6 +219,20 @@
                     <iframe id="deck-eval-iframe" class="deck-eval-iframe" src="" title="Commander Eval"></iframe>
                 </div>
             </div>
+
+            {# ── Templates Tool ── #}
+            <div class="tool-content" data-tool="templates" hidden>
+                <p style="font-size:0.85rem; color:var(--text-dim); margin-bottom:0.75rem;">
+                    Import a saved card template into your current deck.
+                </p>
+                <select id="deck-template-select" style="width:100%; box-sizing:border-box; padding:0.4rem 0.6rem; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:0.85rem;">
+                    <option value="">Select a template…</option>
+                </select>
+                <button id="deck-template-import-btn" class="btn-deck-action" style="margin-top:0.75rem;" disabled>
+                    Import to Deck
+                </button>
+                <div id="deck-template-preview" style="margin-top:0.75rem; font-size:0.8rem; color:var(--text-dim);"></div>
+            </div>
         </div>
     </div>
 
@@ -274,6 +289,25 @@
 
             <div id="deck-sections" class="deck-sections">
                 {# Sections rendered by JS #}
+            </div>
+
+            {# Custom Sections (Sideboard, Maybeboard, user-created) #}
+            <div id="custom-sections" class="custom-sections">
+                {# Rendered by JS #}
+            </div>
+
+            {# Add Section Row #}
+            <div class="section-add-row">
+                <button id="section-add-btn" class="btn-deck-action">+ Add Section</button>
+                <div id="section-add-form" class="section-add-form" hidden>
+                    <input type="text" id="section-add-input" placeholder="Section name…" maxlength="30">
+                    <button id="section-add-confirm" class="btn-deck-action">Add</button>
+                    <button id="section-add-cancel" class="btn-deck-action btn-secondary">Cancel</button>
+                </div>
+                <div class="section-presets">
+                    <button class="btn-deck-action btn-secondary section-preset-btn" data-name="Sideboard">+ Sideboard</button>
+                    <button class="btn-deck-action btn-secondary section-preset-btn" data-name="Maybeboard">+ Maybeboard</button>
+                </div>
             </div>
 
             {# Charts: Mana Curve + Color Identity #}
