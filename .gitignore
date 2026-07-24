@@ -1,3 +1,9 @@
+#Dev directories
+decks/
+test_scripts/
+eval_reports/
+tests/
+
 # SQLite database (large file, symlinked)
 AllPrintings.sqlite
 
