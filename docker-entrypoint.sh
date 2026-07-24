@@ -13,7 +13,7 @@ cleanup() {
 trap cleanup TERM INT
 
 echo "Starting MCP SSE server on :${MCP_SSE_PORT:-8765}…"
-python mcp_server.py --transport sse --port "${MCP_SSE_PORT:-8765}" --host "${MCP_HOST:-0.0.0.0}" &
+python -m mtg.mcp_server --transport sse --port "${MCP_SSE_PORT:-8765}" --host "${MCP_HOST:-0.0.0.0}" &
 mcp_pid=$!
 
 echo "Starting MCPO proxy on :${MCPO_PORT:-8000}…"

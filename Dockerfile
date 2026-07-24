@@ -11,7 +11,8 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY *.py ./
+COPY mtg/ mtg/
+COPY app.py ./
 COPY static/ static/
 COPY templates/ templates/
 COPY docker-entrypoint.sh ./

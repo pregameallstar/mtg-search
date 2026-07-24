@@ -18,7 +18,7 @@ import sys
 
 from mcp.server.fastmcp import FastMCP
 
-from shared import db_path, color_identity_subset
+from mtg.shared import db_path, color_identity_subset
 
 DATABASE = os.environ.get("MTG_DATABASE", "AllPrintings.sqlite")
 

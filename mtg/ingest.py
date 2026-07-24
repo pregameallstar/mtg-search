@@ -18,9 +18,8 @@ import threading
 from datetime import datetime, timezone
 from urllib.parse import quote
 
-import dedup
-import embed
-from shared import db_path, resolve_bind_path
+from mtg import dedup, embed
+from mtg.shared import db_path, resolve_bind_path
 
 
 class IngestError(Exception):
