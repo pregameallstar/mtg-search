@@ -1,6 +1,6 @@
 # MTG Search
 
-A self-hosted Magic: The Gathering card search engine and Commander analysis tool. Single-file Flask app backed by SQLite — no ORM, no JavaScript build step, no cloud dependencies.
+A self-hosted Magic: The Gathering card search engine and Commander analysis tool. Flask app with blueprints backed by SQLite — no ORM, no JavaScript build step, no cloud dependencies.
 
 ## Features
 
@@ -60,6 +60,12 @@ Volume mounts:
 | `./eval_reports/` | `/app/eval_reports/` | Saved Commander Eval reports |
 | `./.secret_key` | `/app/.secret_key` | Flask session secret (writeable) |
 | `./.last_ingest.json` | `/app/.last_ingest.json` | Database ingest metadata (writeable) |
+| `./decks/` | `/app/decks/` | Saved deck files |
+| `./card_templates/` | `/app/card_templates/` | Saved card templates |
+| `./mtg/` | `/app/mtg/` | Application package (live-edit during dev) |
+| `./app.py` | `/app/app.py` | App entry point |
+| `./templates/` | `/app/templates/` | Jinja2 templates |
+| `./static/` | `/app/static/` | Static assets |
 
 Environment variables for the app container:
 
@@ -247,33 +253,44 @@ The MCP server works with or without the embedding index. `semantic_search` retu
 ## Project Structure
 
 ```
-app.py              # Flask application (single file, ~2900 loc)
-templates/          # Jinja2 templates
-  base.html         #   layout, nav, card-detail side panel, image lightbox
-  index.html        #   home page with search form
-  search.html       #   search results (card grid + pagination)
-  card.html         #   full card detail page
-  card_panel.html   #   card detail (side-panel fragment, loaded via AJAX)
-  similar.html      #   similarity results + factor tuning panel
-  similar_landing.html  # similarity landing (name search + drag-and-drop)
-  similar_export.html   # self-contained HTML export
-  commander_eval.html   # commander analysis display
-  commander_eval_landing.html  # commander eval landing
-  config.html       #   configuration page
-static/
-  style.css         #   stylesheet (~900 lines, dark theme)
-embed.py            # Embedding index build + search (sentence-transformers)
-dedup.py            # Database deduplication (one row per unique card)
-llm.py              # LLM client — single generate() function, OpenAI + Anthropic
-mcp_server.py       # MCP server — semantic_search, keyword_search, get_card
-docker-compose.yml  # Docker Compose configuration
+app.py              # Flask app entry point — config, hooks, blueprint registration (~100 lines)
+docker-compose.yml  # Container orchestration (app + SearXNG)
 docker-entrypoint.sh # container startup (Flask + MCP SSE + MCPO)
-requirements.txt    # Python dependencies
 Dockerfile          # Docker image
-docker-compose.yml  # App + SearXNG stack
+requirements.txt    # Python dependencies
+
+mtg/                # Application package
+├── blueprints/     # Flask blueprints — one per feature area
+│   ├── search.py          #  /, /search, /card/<set>/<n>, /img/..., /card-autocomplete
+│   ├── similar.py         #  /similar, /cards/<set>/similar, /card/<set>/<n>/similar
+│   ├── config.py          #  /config/* (LLM, embed, MCP, ingest)
+│   ├── eval.py            #  /card/<set>/<n>/eval/* (8 routes: analyze, deepdive, etc.)
+│   ├── eval_landing.py    #  /commander-eval, /commander-eval/reports/delete
+│   ├── decks.py           #  /deck-builder, /saved-decks, /api/deck/*
+│   ├── templates_bp.py    #  /card-templates, /api/template/*
+│   └── tags.py            #  /api/tags/*
+├── shared.py        #  db_path, get_db, constants, Jinja helpers
+├── eval_cache.py    #  server-side in-memory cache for eval analysis
+├── similarity.py    #  TF-IDF + factor-gate scoring engine
+├── embed.py         #  embedding index build + search (sentence-transformers)
+├── dedup.py         #  database deduplication (one row per unique card)
+├── llm.py           #  LLM client — single generate() function (OpenAI + Anthropic)
+├── websearch.py     #  SearXNG web search client
+├── prompts.py       #  LLM system prompts (eval, deepdive, verify)
+├── eval_helpers.py  #  eval similarity backends, deepdive persistence
+├── images.py        #  Scryfall image fetching + mana symbol rendering
+├── ingest.py        #  database file upload + ingest pipeline
+├── mcp_server.py    #  MCP server — semantic_search, keyword_search, get_card
+└── mcp_control.py   #  MCP process management (status, restart)
+
+templates/          # Jinja2 templates
+static/
+├── style.css       # stylesheet (~1,100 lines, dark theme)
+└── deck-builder.js # deck builder interactive app
+
 searxng/
-  settings.yml      # SearXNG configuration
-  limiter.toml      # SearXNG rate limiter (disabled)
+├── settings.yml    # SearXNG configuration
+└── limiter.toml    # SearXNG rate limiter (disabled)
 ```
 
 ## Data Sources

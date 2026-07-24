@@ -19,18 +19,7 @@ services:
       - ./.last_ingest.json:/app/.last_ingest.json
       # ponytail: dev overlays — edit code on host, reflected live in container
       - ./app.py:/app/app.py
-      - ./mcp_server.py:/app/mcp_server.py
-      - ./shared.py:/app/shared.py
-      - ./llm.py:/app/llm.py
-      - ./embed.py:/app/embed.py
-      - ./dedup.py:/app/dedup.py
-      - ./prompts.py:/app/prompts.py
-      - ./websearch.py:/app/websearch.py
-      - ./mcp_control.py:/app/mcp_control.py
-      - ./images.py:/app/images.py
-      - ./similarity.py:/app/similarity.py
-      - ./eval_helpers.py:/app/eval_helpers.py
-      - ./ingest.py:/app/ingest.py
+      - ./mtg:/app/mtg
       - ./requirements.txt:/app/requirements.txt
       - ./static:/app/static
       - ./templates:/app/templates
