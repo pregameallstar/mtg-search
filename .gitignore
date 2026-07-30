@@ -1,8 +1,6 @@
 #Dev directories
 decks/
-test_scripts/
 eval_reports/
-tests/
 
 # SQLite database (large file, symlinked)
 AllPrintings.sqlite
@@ -47,7 +45,8 @@ QA*.md
 eval_reports/*.json
 
 # Test reports (generated artifacts)
-test_scripts/test_report_*.json
+test_reports/
+test_scripts/
 
 # Embedding index (generated, large)
 embeddings/

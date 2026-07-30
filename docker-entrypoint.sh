@@ -35,7 +35,7 @@ while true; do
     fi
     if ! kill -0 $mcp_pid 2>/dev/null; then
         echo "MCP SSE died — restarting…"
-        python mcp_server.py --transport sse --port "${MCP_SSE_PORT:-8765}" --host "${MCP_HOST:-0.0.0.0}" &
+        python -m mtg.mcp_server --transport sse --port "${MCP_SSE_PORT:-8765}" --host "${MCP_HOST:-0.0.0.0}" &
         mcp_pid=$!
     fi
     if ! kill -0 $mcpo_pid 2>/dev/null; then

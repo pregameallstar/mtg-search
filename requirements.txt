@@ -9,5 +9,5 @@ openai>=2.45.0
 anthropic>=0.116.0
 numpy==2.5.1
 sentence-transformers>=4.0.0
-mcp>=1.28.1
+mcp>=1.28.1,<2.0.0
 mcpo>=0.0.20
