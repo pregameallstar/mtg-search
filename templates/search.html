@@ -109,6 +109,17 @@
             </div>
         </div>
         <div class="field-row">
+            <label>Game</label>
+            <div class="chip-row">
+                {% for g in [('paper','Paper'),('mtgo','MTGO'),('arena','Arena')] %}
+                <label class="chip {% if g[0] in games %}active{% endif %}">
+                    <input type="checkbox" name="game" value="{{ g[0] }}" {% if g[0] in games %}checked{% endif %}>
+                    {{ g[1] }}
+                </label>
+                {% endfor %}
+            </div>
+        </div>
+        <div class="field-row">
             <label>Set <input type="text" name="set" value="{{ set_code }}" placeholder="Set code e.g. STA, MOM"></label>
         </div>
     </fieldset>
@@ -151,6 +162,7 @@
 {% if tou_val %}{{ badges.append('Toughness ' + tou_op + ' ' + tou_val) or '' }}{% endif %}
 {% if loy_val %}{{ badges.append('Loyalty ' + loy_op + ' ' + loy_val) or '' }}{% endif %}
 {% for r in rarities %}{{ badges.append('Rarity: ' + r) or '' }}{% endfor %}
+{% if games %}{{ badges.append('Game: ' + games|join(', ')) or '' }}{% endif %}
 {% if fmt %}{{ badges.append('Format: ' + fmt) or '' }}{% endif %}
 {% if set_code %}{{ badges.append('Set: ' + set_code) or '' }}{% endif %}
 {% if is_reprint %}{{ badges.append('Reprint') or '' }}{% endif %}

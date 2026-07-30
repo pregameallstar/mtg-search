@@ -71,6 +71,8 @@ def search():
     loy_op = request.args.get("loy_op", "=")
     # Rarity (multi-select)
     rarities = request.args.getlist("rarity")                   # e.g. ["rare","mythic"]
+    # Game / Availability (multi-select)
+    games = request.args.getlist("game")                        # paper, mtgo, arena
     # Legality
     fmt = request.args.get("format", "").strip()
     legality = request.args.get("legality", "legal")            # legal / banned / restricted
@@ -103,7 +105,7 @@ def search():
             color=color, color_rule=color_rule, ci=ci, ci_rule=ci_rule,
             mv=mv, mv_op=mv_op, pow_val=pow_val, pow_op=pow_op,
             tou_val=tou_val, tou_op=tou_op, loy_val=loy_val, loy_op=loy_op,
-            rarities=rarities, fmt=fmt, legality=legality, set_code=set_code,
+            rarities=rarities, games=games, fmt=fmt, legality=legality, set_code=set_code,
             is_reprint=is_reprint, is_reserved=is_reserved, is_funny=is_funny,
             is_oversized=is_oversized, is_fullart=is_fullart, is_textless=is_textless,
             is_promo=is_promo, is_rebalanced=is_rebalanced,
@@ -278,6 +280,14 @@ def search():
         where.append("c.setCode = ?")
         params.append(set_code.upper())
 
+    # Game / Availability (multi-select, OR logic)
+    if games:
+        clauses = []
+        for g in games:
+            clauses.append("c.availability LIKE ?")
+            params.append(f"%{g}%")
+        where.append("(" + " OR ".join(clauses) + ")")
+
     # Format legality
     join_clause = ""
     if fmt:
@@ -365,7 +375,7 @@ def search():
     # No filters provided — show empty state, don't dump all cards
     has_filters = any([
         q, name, oracle, type_line, mana_cost, keywords, color, ci, mv, pow_val, tou_val,
-        loy_val, rarities, fmt, set_code, is_reprint, is_reserved, is_funny,
+        loy_val, rarities, games, fmt, set_code, is_reprint, is_reserved, is_funny,
         is_oversized, is_fullart, is_textless, is_promo, is_rebalanced,
         border, layout, frame,
     ])
@@ -380,7 +390,7 @@ def search():
         color=color, color_rule=color_rule, ci=ci, ci_rule=ci_rule,
         mv=mv, mv_op=mv_op, pow_val=pow_val, pow_op=pow_op,
         tou_val=tou_val, tou_op=tou_op, loy_val=loy_val, loy_op=loy_op,
-        rarities=rarities, fmt=fmt, legality=legality, set_code=set_code,
+        rarities=rarities, games=games, fmt=fmt, legality=legality, set_code=set_code,
         is_reprint=is_reprint, is_reserved=is_reserved, is_funny=is_funny,
         is_oversized=is_oversized, is_fullart=is_fullart, is_textless=is_textless,
         is_promo=is_promo, is_rebalanced=is_rebalanced,

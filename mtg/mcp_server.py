@@ -222,6 +222,7 @@ def keyword_search(
     query: str,
     color_identity: str = "",
     card_type: str = "",
+    game: str = "",
     mana_value_max: float = 99,
     mana_value_min: float = 0,
     limit: int = 30,
@@ -235,6 +236,7 @@ def keyword_search(
     color_identity: subset filter — card CI must be within these colors.
                     e.g. "UG" matches UG, U, G, colorless. Not UBR.
     card_type: filter by type line, e.g. "Legendary Creature", "Instant".
+    game: limit to cards available in this game (paper, mtgo, arena).
     mana_value_min/max: MV range filter (inclusive).
     limit: max results (default 30).
     """
@@ -255,6 +257,10 @@ def keyword_search(
             escaped = card_type.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             where.append("c.type LIKE ? ESCAPE '\\'")
             params.append(f"%{escaped}%")
+
+        if game:
+            where.append("c.availability LIKE ?")
+            params.append(f"%{game}%")
 
         if color_identity:
             allowed_ci = _parse_ci(color_identity)

@@ -111,6 +111,17 @@
 
         {# --- Options / Flags --- #}
         <fieldset><legend>Options</legend>
+            <div class="field-row">
+                <label>Game</label>
+                <div class="chip-row">
+                    {% for g in [('paper','Paper'),('mtgo','MTGO'),('arena','Arena')] %}
+                    <label class="chip">
+                        <input type="checkbox" name="game" value="{{ g[0] }}">
+                        {{ g[1] }}
+                    </label>
+                    {% endfor %}
+                </div>
+            </div>
             <div class="chip-row">
                 <label class="chip"><input type="checkbox" name="is_reprint" value="1"> Is Reprint</label>
                 <label class="chip"><input type="checkbox" name="is_reserved" value="1"> Reserved List</label>
