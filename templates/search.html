@@ -109,17 +109,6 @@
             </div>
         </div>
         <div class="field-row">
-            <label>Game</label>
-            <div class="chip-row">
-                {% for g in [('paper','Paper'),('mtgo','MTGO'),('arena','Arena')] %}
-                <label class="chip {% if g[0] in games %}active{% endif %}">
-                    <input type="checkbox" name="game" value="{{ g[0] }}" {% if g[0] in games %}checked{% endif %}>
-                    {{ g[1] }}
-                </label>
-                {% endfor %}
-            </div>
-        </div>
-        <div class="field-row">
             <label>Set <input type="text" name="set" value="{{ set_code }}" placeholder="Set code e.g. STA, MOM"></label>
         </div>
     </fieldset>
@@ -141,6 +130,56 @@
         </div>
     </fieldset>
 
+    {# --- Options / Flags --- #}
+    <fieldset><legend>Options</legend>
+        <div class="field-row">
+            <label>Game</label>
+            <div class="chip-row">
+                {% for g in [('paper','Paper'),('mtgo','MTGO'),('arena','Arena')] %}
+                <label class="chip {% if g[0] in games %}active{% endif %}">
+                    <input type="checkbox" name="game" value="{{ g[0] }}" {% if g[0] in games %}checked{% endif %}>
+                    {{ g[1] }}
+                </label>
+                {% endfor %}
+            </div>
+        </div>
+        <div class="chip-row">
+            <label class="chip {% if is_reprint %}active{% endif %}"><input type="checkbox" name="is_reprint" value="1" {% if is_reprint %}checked{% endif %}> Is Reprint</label>
+            <label class="chip {% if is_reserved %}active{% endif %}"><input type="checkbox" name="is_reserved" value="1" {% if is_reserved %}checked{% endif %}> Reserved List</label>
+            <label class="chip {% if is_funny %}active{% endif %}"><input type="checkbox" name="is_funny" value="1" {% if is_funny %}checked{% endif %}> Silver-bordered</label>
+            <label class="chip {% if is_oversized %}active{% endif %}"><input type="checkbox" name="is_oversized" value="1" {% if is_oversized %}checked{% endif %}> Oversized</label>
+            <label class="chip {% if is_fullart %}active{% endif %}"><input type="checkbox" name="is_fullart" value="1" {% if is_fullart %}checked{% endif %}> Full Art</label>
+            <label class="chip {% if is_textless %}active{% endif %}"><input type="checkbox" name="is_textless" value="1" {% if is_textless %}checked{% endif %}> Textless</label>
+            <label class="chip {% if is_promo %}active{% endif %}"><input type="checkbox" name="is_promo" value="1" {% if is_promo %}checked{% endif %}> Promo</label>
+            <label class="chip {% if is_rebalanced %}active{% endif %}"><input type="checkbox" name="is_rebalanced" value="1" {% if is_rebalanced %}checked{% endif %}> Rebalanced</label>
+        </div>
+        <div class="field-row" style="margin-top:0.75rem">
+            <label>Border <select name="border">
+                <option value="">Any</option>
+                {% for v in ['black','white','silver','gold','yellow','borderless'] %}
+                <option value="{{ v }}" {% if border==v %}selected{% endif %}>{{ v | capitalize }}</option>
+                {% endfor %}
+            </select></label>
+            <label>Layout <select name="layout">
+                <option value="">Any</option>
+                {% for l in ['normal','split','flip','transform','modal_dfc','meld','adventure','saga','battle','planar','scheme','vanguard','token','double_faced_token','emblem','augment','host','leveler','class','case','mutate','prototype'] %}
+                <option value="{{ l }}" {% if layout==l %}selected{% endif %}>{{ l | replace('_',' ') | title }}</option>
+                {% endfor %}
+            </select></label>
+            <label>Frame <select name="frame">
+                <option value="">Any</option>
+                {% for v in ['1993','1997','2003','2015','future'] %}
+                <option value="{{ v }}" {% if frame==v %}selected{% endif %}>{{ v }}</option>
+                {% endfor %}
+            </select></label>
+        </div>
+        <div class="field-row" style="margin-top:0.75rem">
+            <label>Display <select name="unique">
+                <option value="cards" {% if unique=='cards' %}selected{% endif %}>Unique Cards</option>
+                <option value="prints" {% if unique=='prints' %}selected{% endif %}>All Printings</option>
+            </select></label>
+        </div>
+    </fieldset>
 
     <div class="advanced-actions">
         <button type="submit">Search</button>
@@ -169,8 +208,13 @@
 {% if is_reserved %}{{ badges.append('Reserved List') or '' }}{% endif %}
 {% if is_funny %}{{ badges.append('Silver-bordered') or '' }}{% endif %}
 {% if is_rebalanced %}{{ badges.append('Rebalanced') or '' }}{% endif %}
+{% if is_oversized %}{{ badges.append('Oversized') or '' }}{% endif %}
+{% if is_fullart %}{{ badges.append('Full Art') or '' }}{% endif %}
+{% if is_textless %}{{ badges.append('Textless') or '' }}{% endif %}
+{% if is_promo %}{{ badges.append('Promo') or '' }}{% endif %}
 {% if border %}{{ badges.append('Border: ' + border) or '' }}{% endif %}
 {% if layout %}{{ badges.append('Layout: ' + layout) or '' }}{% endif %}
+{% if frame %}{{ badges.append('Frame: ' + frame) or '' }}{% endif %}
 {% if badges %}
 <div class="active-filters">
     {% for b in badges %}<span class="filter-badge">{{ b }}</span>{% endfor %}

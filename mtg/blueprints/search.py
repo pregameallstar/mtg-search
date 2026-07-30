@@ -7,7 +7,7 @@ import os
 import sys
 import re
 
-from flask import Blueprint, g, render_template, request, abort, send_file, jsonify, session
+from flask import Blueprint, g, render_template, request, abort, send_file, jsonify, session, redirect, url_for
 from urllib.parse import quote
 
 from mtg.shared import (
@@ -37,14 +37,7 @@ def _n(op, field, cast=False):
 
 @search_bp.route("/")
 def index():
-    # Quick counts for homepage
-    if not _db_ready():
-        return render_template("index.html", total_cards=0, db_unseeded=True)
-    db = get_db()
-    total = db.execute(
-        "SELECT COUNT(DISTINCT name) FROM cards WHERE language='English' AND (side IS NULL OR side='a')"
-    ).fetchone()[0]
-    return render_template("index.html", total_cards=total)
+    return redirect(url_for("search.search"))
 
 
 @search_bp.route("/search")
