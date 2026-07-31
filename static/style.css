@@ -840,6 +840,22 @@ main { flex: 1; max-width: 1400px; margin: 0 auto; padding: 2rem 1rem; width: 10
     outline: none;
 }
 
+/* Format legality selector */
+.format-select {
+    padding: 0.2rem 0.4rem;
+    background: var(--bg-card);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 0.8rem;
+    cursor: pointer;
+    min-width: 130px;
+}
+.format-select:focus {
+    border-color: var(--accent);
+    outline: none;
+}
+
 /* Score threshold value input */
 .score-value-input {
     padding: 0.3rem 0.4rem;
@@ -1077,6 +1093,34 @@ main { flex: 1; max-width: 1400px; margin: 0 auto; padding: 2rem 1rem; width: 10
 .btn-similar-base:hover {
     background: rgba(88, 166, 255, 0.15);
     color: var(--accent-hover);
+}
+
+/* Format legality overlay on card images */
+.card-img-wrapper {
+    position: relative;
+    width: 100%;
+    line-height: 0;
+}
+.legality-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(220, 40, 40, 0.15);
+    pointer-events: none;
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-end;
+    border-radius: 10px 10px 0 0;
+}
+.legality-badge {
+    background: rgba(200, 40, 40, 0.88);
+    color: #fff;
+    font-size: 0.6rem;
+    font-weight: 700;
+    padding: 0.15em 0.45em;
+    border-radius: 3px;
+    margin: 0.3rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
 }
 
 @media (max-width: 768px) {

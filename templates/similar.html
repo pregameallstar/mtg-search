@@ -132,6 +132,17 @@
                 </select>
             </div>
 
+            {# --- Format Legality --- #}
+            <div class="factor-rows">
+                <label class="factor-toggle" style="border-color:transparent;cursor:default;">Format</label>
+                <select name="format" class="format-select">
+                    <option value="">Any</option>
+                    {% for f in ['standard','modern','legacy','vintage','pioneer','pauper','commander','brawl','historic','oathbreaker','penny','duel','alchemy','gladiator','oldschool','premodern','predh','paupercommander','timeless','standardbrawl','competitivebrawl'] %}
+                    <option value="{{ f }}" {% if fmt == f %}selected{% endif %}>{{ f | capitalize }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
 
             {% if method != 'embed' %}
             {# --- Advanced Weights (collapsed by default) --- #}
@@ -177,7 +188,19 @@
         <div class="card-cell" data-set-code="{{ c['setCode'] }}" data-number="{{ c['number'] }}">
             {% set img = card_image(c['scryfallId']) %}
             {% if img %}
-            <img src="{{ img }}" alt="{{ c['name'] }}" loading="lazy" width="244" height="340">
+            <div class="card-img-wrapper">
+                <img src="{{ img }}" alt="{{ c['name'] }}" loading="lazy" width="244" height="340">
+                {% set leg_status = legalities.get(c['uuid']) if fmt else None %}
+                {% if fmt and leg_status is not none and leg_status != 'Legal' %}
+                <div class="legality-overlay">
+                    <span class="legality-badge">{{ leg_status if leg_status else 'Not Legal' }}</span>
+                </div>
+                {% elif fmt and leg_status is none %}
+                <div class="legality-overlay">
+                    <span class="legality-badge">Not Legal</span>
+                </div>
+                {% endif %}
+            </div>
             {% else %}
             <div class="card-placeholder">{{ c['name'] }}</div>
             {% endif %}
@@ -208,7 +231,19 @@
         <div class="card-cell" data-set-code="{{ c['setCode'] }}" data-number="{{ c['number'] }}">
             {% set img = card_image(c['scryfallId']) %}
             {% if img %}
-            <img src="{{ img }}" alt="{{ c['name'] }}" loading="lazy" width="244" height="340">
+            <div class="card-img-wrapper">
+                <img src="{{ img }}" alt="{{ c['name'] }}" loading="lazy" width="244" height="340">
+                {% set leg_status = legalities.get(c['uuid']) if fmt else None %}
+                {% if fmt and leg_status is not none and leg_status != 'Legal' %}
+                <div class="legality-overlay">
+                    <span class="legality-badge">{{ leg_status if leg_status else 'Not Legal' }}</span>
+                </div>
+                {% elif fmt and leg_status is none %}
+                <div class="legality-overlay">
+                    <span class="legality-badge">Not Legal</span>
+                </div>
+                {% endif %}
+            </div>
             {% else %}
             <div class="card-placeholder">{{ c['name'] }}</div>
             {% endif %}

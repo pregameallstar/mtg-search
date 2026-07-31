@@ -89,6 +89,17 @@
                     </select>
                 </div>
 
+                {# --- Format Legality --- #}
+                <div class="factor-rows">
+                    <label class="factor-toggle" style="border-color:transparent;cursor:default;">Format</label>
+                    <select name="format" class="format-select">
+                        <option value="">Any</option>
+                        {% for f in ['standard','modern','legacy','vintage','pioneer','pauper','commander','brawl','historic','oathbreaker','penny','duel','alchemy','gladiator','oldschool','premodern','predh','paupercommander','timeless','standardbrawl','competitivebrawl'] %}
+                        <option value="{{ f }}" {% if request.args.get('format','') == f %}selected{% endif %}>{{ f | capitalize }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
 
                 {# --- Advanced Weights (collapsed by default) --- #}
                 <details class="advanced-weights" {% if request.args.get('use_weights') == '1' %}open{% endif %}>

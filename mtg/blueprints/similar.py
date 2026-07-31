@@ -58,7 +58,8 @@ def similar_landing(set_code=None):
                       "w_types", "w_keywords", "w_subtypes", "w_supertypes",
                       "w_mv", "w_color", "use_weights",
                       "method",
-                      "mtg_filter", "top_n", "tuned", "per_page"):
+                      "mtg_filter", "top_n", "tuned", "per_page",
+                      "format"):
                 v = request.args.get(k)
                 if v:
                     keep[k] = v
@@ -137,6 +138,14 @@ def similar_cards(set_code, number):
 
     mtg_filter = request.args.get("mtg_filter") == "1"
 
+    fmt = request.args.get("format", "").strip().lower()
+    valid_formats = {"standard", "commander", "modern", "legacy", "pioneer", "vintage",
+                     "pauper", "brawl", "historic", "oathbreaker", "penny", "duel",
+                     "alchemy", "gladiator", "oldschool", "premodern", "predh",
+                     "paupercommander", "timeless", "standardbrawl", "competitivebrawl"}
+    if fmt not in valid_formats:
+        fmt = ""
+
     top_n = request.args.get("top_n", "5")
     if top_n not in ("5", "10", "15", "20"):
         top_n = "5"
@@ -161,7 +170,8 @@ def similar_cards(set_code, number):
                       "s_mv", "s_color", "s_oracle",
                       "w_types", "w_keywords", "w_subtypes", "w_supertypes",
                       "w_mv", "w_color", "use_weights",
-                      "mtg_filter", "top_n", "page", "tuned", "per_page"):
+                      "mtg_filter", "top_n", "page", "tuned", "per_page",
+                      "format"):
                 v = request.args.get(k)
                 if v:
                     keep[k] = v
@@ -233,7 +243,7 @@ def similar_cards(set_code, number):
                         continue
                 # Look up setCode/number for URL
                 row = db.execute(
-                    "SELECT c.setCode, c.number, c.manaCost, c.manaValue, c.type, c.types, c.supertypes, "
+                    "SELECT c.uuid, c.setCode, c.number, c.manaCost, c.manaValue, c.type, c.types, c.supertypes, "
                     "c.subtypes, c.keywords, c.colors, c.colorIdentity, c.rarity, c.text, "
                     "ci.scryfallId, s.name as setName, s.releaseDate "
                     "FROM cards c "
@@ -256,7 +266,7 @@ def similar_cards(set_code, number):
 
     if score_method == "legacy":
         candidates = db.execute("""
-            SELECT c.name, c.manaCost, c.manaValue, c.type, c.types, c.supertypes,
+            SELECT c.uuid, c.name, c.manaCost, c.manaValue, c.type, c.types, c.supertypes,
                    c.subtypes, c.keywords, c.text, c.colors, c.colorIdentity,
                    c.setCode, c.number, c.rarity,
                    ci.scryfallId, s.name as setName, s.releaseDate
@@ -287,6 +297,18 @@ def similar_cards(set_code, number):
 
         # Convert to 0-100 scale
         scored = [(round(s * 100, 1), c) for s, c in scored]
+
+    # --- Fetch legality status for the selected format ---
+    legalities = {}
+    if fmt and scored:
+        uuids = [dict(c)["uuid"] for _, c in scored]
+        if uuids:
+            placeholders = ",".join("?" * len(uuids))
+            for row in db.execute(
+                f"SELECT uuid, {fmt} as status FROM cardLegalities WHERE uuid IN ({placeholders})",
+                uuids
+            ):
+                legalities[row["uuid"]] = row["status"] or ""
 
     # --- Split top N from remaining ---
     best_score = scored[0][0] if scored else 0
@@ -325,7 +347,8 @@ def similar_cards(set_code, number):
               "s_mv", "s_color", "s_oracle",
               "w_types", "w_keywords", "w_subtypes", "w_supertypes",
               "w_mv", "w_color", "use_weights",
-              "mtg_filter", "top_n", "tuned", "per_page"):
+              "mtg_filter", "top_n", "tuned", "per_page",
+              "format"):
         v = request.args.get(k)
         if v:
             tuning_params += f"&{quote(k)}={quote(v)}"
@@ -345,6 +368,8 @@ def similar_cards(set_code, number):
         by_name=by_name,
         by_name_error=bool(by_name),
         mtg_filter=mtg_filter,
+        fmt=fmt,
+        legalities=legalities,
         tuning_params=tuning_params,
         top_n=top_n,
         method=method,
