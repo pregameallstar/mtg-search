@@ -1,14 +1,22 @@
 # MTG Search
 
-A self-hosted Magic: The Gathering card search engine and Commander analysis tool. Flask app with blueprints backed by SQLite — no ORM, no JavaScript build step, no cloud dependencies.
+A self-hosted Magic: The Gathering card search engine, deck builder, and Commander analysis tool. Flask app with blueprints backed by SQLite — no ORM, no JavaScript build step, no cloud dependencies.
 
 ## Features
 
-- **Card search** — full Scryfall-style query engine: name, oracle text, type line, mana cost, colors, color identity, power/toughness/loyalty, rarity, set, format legality, and 10+ boolean flags. 30 filters in total.
+- **Card search** — full Scryfall-style query engine: name, oracle text, type line, mana cost, colors, color identity, power/toughness/loyalty, rarity, set, format legality, game availability, and 10+ boolean flags. 30+ filters in total.
 - **Card detail** — full card view with high-res image, oracle text, Oracle rulings, format legalities, all printings across sets, and other faces for DFCs.
+- **Deck Builder** — split-panel builder with four integrated tools:
+  - **Search** — the full card search engine embedded in a compact panel. Name autocomplete, drag-and-drop card results into the deck, and card image preview on hover.
+  - **Similarity** — find mechanically similar cards from the same panel. Same tuning controls as the standalone Similarity tool.
+  - **Commander Eval** — run full LLM-powered commander analysis from within the builder. Restore saved analyses with saved decks.
+  - **Templates** — reusable card packages for deck-building patterns.
+  - Commander slot, custom sections (Sideboard, Maybeboard), drag-and-drop reordering, card counts, local save/load, JSON import/export.
+  - **Guideline Templates** — define expected card counts per category (Ramp, Removal, Card Draw, etc.) with progress bars that track your deck against targets. Auto-classification assigns cards to categories; category-name tags override automatic classification.
+  - **Tag system** — tag cards with predefined tags (Ramp, Removal, Card Draw, Tutor, Board Wipe, Protection, Recursion, Win Condition) or custom tags. Tags are shared across all decks.
 - **Similarity engine** — find cards that play mechanically similarly to a given card. Two search backends:
   - **Semantic** (default) — AI embedding vectors (`all-MiniLM-L6-v2`) map oracle text into vector space. Catches reworded abilities, mechanical cousins, and conceptually similar designs that keyword matching misses. Built once per database ingest, queries run in ~100ms.
-  - **Legacy** — classic TF-IDF word overlap with tunable factor gates (types, keywords, subtypes, mana value, color identity). Each factor has a strictness knob. MTG-domain stop-word filter strips ubiquitous terms.
+  - **Legacy** — classic TF-IDF word overlap with tunable factor gates (types, keywords, subtypes, mana value, color identity). Each factor has a strictness knob. MTG-domain stop-word filter strips ubiquitous terms. Format legality filter for format-restricted searches.
 - **Commander Eval** — LLM-powered commander analysis pipeline:
   - Web research via SearXNG (deck guides, strategy discussions, community reviews)
   - Mechanically similar card retrieval from embedding index
@@ -16,6 +24,9 @@ A self-hosted Magic: The Gathering card search engine and Commander analysis too
   - Second-pass verification against official Oracle text and rulings
   - Deep-dives on individual strategies and unique builds
   - Save reports to disk, export as self-contained HTML
+- **Card Templates** — reusable card packages saved to `card_templates/`. Two types:
+  - **Card templates** — pre-built card lists you can load into the Deck Builder
+  - **Guideline templates** — category targets (Ramp, Removal, Card Draw, etc.) with expected counts, used to score decks against deck-building standards
 - **MCP server** — expose `semantic_search`, `keyword_search`, and `get_card` tools to LLM agents (Claude Code, OpenWebUI, etc.) via SSE + MCPO proxy.
 - **Database ingest** — drag-and-drop upload of MTGJSON `AllPrintings.sqlite` (or `.tar.gz`/`.zip` archives). Deduplication, validation, and embedding rebuild run automatically.
 - **Lazy image cache** — first card view fetches from Scryfall and caches locally. Subsequent views serve from disk.
@@ -24,7 +35,7 @@ A self-hosted Magic: The Gathering card search engine and Commander analysis too
 
 ### Prerequisites
 
-- Python 3.9+
+- Python 3.12+ (Docker recommended)
 - An MTGJSON `AllPrintings.sqlite` file ([download from mtgjson.com](https://mtgjson.com/downloads/all-files/))
 - (Optional) Docker + Docker Compose for the containerized setup with SearXNG
 
@@ -33,6 +44,9 @@ A self-hosted Magic: The Gathering card search engine and Commander analysis too
 ```bash
 git clone https://github.com/pregameallstar/mtg-search
 cd mtg-search
+
+# Copy the database into the project root
+cp ~/Downloads/AllPrintings.sqlite .
 
 # Create .env from template and generate a SearXNG secret
 cp .env.example .env
@@ -47,25 +61,25 @@ docker compose up -d
 
 The docker-compose stack includes:
 - **app** — the Flask application (port 5000), MCP SSE server (8765), and MCPO proxy (8000)
-- **searxng** — SearXNG search engine for Commander Eval web research (port 8888, internal)
+- **searxng** — SearXNG search engine for Commander Eval web research (port 8888, accessible on localhost only)
 
 Code changes to `.py`, `.html`, `.css`, or `.js` files are reflected live via bind mounts — no rebuild required. Only `requirements.txt` changes need `docker compose build app && docker compose up -d app`.
 
 Volume mounts:
 | Host path | Container path | Purpose |
 |-----------|---------------|---------|
-| `./AllPrintings.sqlite` | `/app/AllPrintings.sqlite:ro` | Card database (read-only) |
+| `./AllPrintings.sqlite` | `/app/AllPrintings.sqlite` | Card database |
 | `./embeddings/` | `/app/embeddings/` | Embedding index (persisted) |
 | `./images/` | `/app/images/` | Lazy image cache (persisted) |
 | `./eval_reports/` | `/app/eval_reports/` | Saved Commander Eval reports |
 | `./.secret_key` | `/app/.secret_key` | Flask session secret (writeable) |
 | `./.last_ingest.json` | `/app/.last_ingest.json` | Database ingest metadata (writeable) |
 | `./decks/` | `/app/decks/` | Saved deck files |
-| `./card_templates/` | `/app/card_templates/` | Saved card templates |
 | `./mtg/` | `/app/mtg/` | Application package (live-edit during dev) |
+| `./requirements.txt` | `/app/requirements.txt` | Python dependencies |
 | `./app.py` | `/app/app.py` | App entry point |
 | `./templates/` | `/app/templates/` | Jinja2 templates |
-| `./static/` | `/app/static/` | Static assets |
+| `./static/` | `/app/static/` | Static assets (CSS + JS) |
 
 Environment variables for the app container:
 
@@ -82,6 +96,9 @@ Environment variables for the app container:
 | `MCP_SSE_PORT` | `8765` | MCP SSE server port |
 | `MCPO_PORT` | `8000` | MCPO proxy port |
 | `MCP_HOST` | `0.0.0.0` | MCP server bind address |
+| `SECRET_KEY` | (auto-generated) | Flask secret key (written to `.secret_key`) |
+| `HOST_UID` | `1000` | Host user UID for file ownership |
+| `HOST_GID` | `1000` | Host group GID for file ownership |
 
 ## Tools
 
@@ -107,11 +124,13 @@ Environment variables for the app container:
 
 **Legality:** `format` + `legality` (`legal` / `banned` / `restricted`)
 
+**Game / Availability:** `game` — multi-select for `paper`, `mtgo`, `arena`
+
 **Boolean flags:** `is_reprint`, `is_reserved`, `is_funny`, `is_oversized`, `is_fullart`, `is_textless`, `is_promo`, `is_rebalanced`
 
 **Display:** `border` (black/white/silver/gold/yellow/borderless), `layout` (normal/split/transform/saga/etc.), `frame` (1993/1997/2003/2015/future), `unique` (deduplicate by name or show all printings)
 
-Results are paginated (30 per page). Click any card to open its detail panel.
+Results are paginated (10, 25, or 50 per page). Click any card to open its detail panel. The root URL `/` redirects to `/search`.
 
 ### Card Detail
 
@@ -128,6 +147,36 @@ Results are paginated (30 per page). Click any card to open its detail panel.
 
 Card images are fetched from Scryfall on first view and cached locally in `images/`. Subsequent views serve from disk.
 
+### Deck Builder
+
+`GET /deck-builder` — Split-panel deck building interface with four integrated tools:
+
+**Search tool** — Embedded card search with the same filters as the standalone search page. Results show card images on hover. Drag-and-drop cards into the deck list. Name autocomplete for quick commander selection.
+
+**Similarity tool** — Run the similarity engine from within the builder. Same semantic/legacy modes and tuning controls as the standalone tool. Drag results directly into the deck.
+
+**Commander Eval tool** — Run the full LLM-powered commander analysis pipeline inline. Analysis loads in an iframe; save reports that persist when loading the deck later.
+
+**Templates tool** — Browse and load card templates. Manage guideline templates with category progress bars showing how your deck measures against deck-building targets (Ramp, Removal, Card Draw, etc.).
+
+**Deck management:**
+- Commander slot — set your commander with card image
+- Custom sections — Sideboard, Maybeboard, and custom named sections by drag-and-drop
+- Card counts — track quantity per card
+- Local save/load — decks saved as JSON to `decks/`
+- JSON import/export — import from or export to `.json` files
+- Card image hover preview — hover any card name in the deck list to see a 400px image
+- Tags — assign predefined or custom tags to cards (shared across all decks)
+
+**Guideline Templates** — Define category targets as reusable templates:
+- Categories: Lands, Ramp, Removal, Card Draw, Tutor, Board Wipe, Protection, Recursion, Win Condition, and custom categories
+- Auto-classification assigns cards to categories based on card text, types, and keywords
+- Category-name tags override automatic classification
+- Progress bars show real-time counts vs. targets
+- Default Guideline created automatically on first use
+
+`GET /saved-decks` — Grid view of all saved decks with commander images. Import deck JSON files. Click to open in the Deck Builder. Delete from the grid.
+
 ### Similarity
 
 `GET /similar` — Find mechanically similar cards to a given card. Two search modes:
@@ -135,8 +184,9 @@ Card images are fetched from Scryfall on first view and cached locally in `image
 **Semantic mode** (default, requires embedding index):
 - Maps oracle text into a 384-dimensional vector space using `all-MiniLM-L6-v2`
 - Finds cards with similar functional meaning — catches "destroy target creature" ≈ "exile target creature", reworded mechanics, and conceptual cousins
-- Color identity is applied as a hard post-filter (cards must be in-color)
+- Color identity is applied as a subset post-filter (colorless cards are legal everywhere)
 - Mana value window of ±3 from the base card
+- Optional hard post-filters for types and subtypes
 - Returns cosine similarity ranked 0–100
 
 **Legacy mode** (works without embeddings):
@@ -145,6 +195,7 @@ Card images are fetched from Scryfall on first view and cached locally in `image
 - Each gate uses the formula `1 / (1 + w × strictness × mismatch)` and gates are combined via geometric mean
 - **Strictness** controls how picky each factor is — Strict means close match required, Loose means rough similarity is fine
 - **MTG Filter** strips ubiquitous terms (creature, target, player, graveyard…) from oracle text matching
+- Optional format legality filter restricts results to cards legal in a chosen format
 - Results normalized to 0–100
 
 Both modes support drag-and-drop card images or name search to select a base card. The top N results are shown in a "best matches" section; remaining results are paginated. Results can be exported as a self-contained HTML file.
@@ -155,7 +206,7 @@ Both modes support drag-and-drop card images or name search to select a base car
 
 AI-powered commander analysis pipeline. Requires an LLM configured (see Configuration). The analysis pipeline runs six steps:
 
-1. **Load card data** — oracle text, rulings, EDHREC rank, leadership skills
+1. **Load card data** — oracle text, rulings, EDHREC rank, leadership skills, game changer status
 2. **Web research** — queries SearXNG for deck guides, strategy discussions, community reviews, unique archetypes, and mechanic rules
 3. **Retrieve similar cards** — semantic search finds mechanically similar cards that fit the commander's color identity, giving the LLM real card names to reference
 4. **LLM analysis** — generates a structured JSON report (strengths, weaknesses, strategies, priorities, unique builds, bracket ratings, kill-on-sight score)
@@ -171,11 +222,21 @@ AI-powered commander analysis pipeline. Requires an LLM configured (see Configur
 - **Bracket Ratings** — effectiveness and kill-on-sight score for each bracket (1–5)
 - **Kill-on-Sight** — default reputation at a typical LGS table (brackets 2–3)
 
-**Deep-dives:** Click any strategy or unique build to get a detailed analysis of that specific approach — key enablers, payoffs, win conditions, and 3 example cards from the similar cards list.
+**Deep-dives:** Click any strategy or unique build to get a detailed analysis of that specific approach — key enablers, payoffs, win conditions, and 3 example cards from the similar cards list. Deep-dives auto-save so they survive navigation away.
 
 **Save & Export:** Save reports to `eval_reports/` for later reference. Export as a self-contained HTML file.
 
-Analysis is cached server-side (capped at 100 entries). Use the "Clear" button on the page to return to the landing page and search for a new commander.
+Analysis is cached server-side (capped at 100 entries). Use the "Clear" button on the page to return to the landing page and search for a new commander. Drag-and-drop card images on the landing page to identify a card.
+
+### Card Templates
+
+`GET /card-templates` — Manage reusable card packages. Two template types:
+
+**Card templates** (`type: "cards"`) — Pre-built lists of cards with quantities. Load into the Deck Builder as a starting point or sideboard package.
+
+**Guideline templates** (`type: "guideline"`) — Define category targets that measure how a deck stacks up against deck-building standards. Each category (Lands, Ramp, Removal, Card Draw, etc.) has a target count. The Deck Builder's Templates tab shows progress bars comparing your actual counts against guideline targets.
+
+Default Guideline is auto-created on first use. Templates are saved as JSON in `card_templates/`.
 
 ### Configuration
 
@@ -255,38 +316,51 @@ The MCP server works with or without the embedding index. `semantic_search` retu
 ```
 app.py              # Flask app entry point — config, hooks, blueprint registration (~100 lines)
 docker-compose.yml  # Container orchestration (app + SearXNG)
-docker-entrypoint.sh # container startup (Flask + MCP SSE + MCPO)
-Dockerfile          # Docker image
+docker-entrypoint.sh # Container startup (Flask + MCP SSE + MCPO)
+Dockerfile          # Docker image (Python 3.12-slim)
 requirements.txt    # Python dependencies
 
 mtg/                # Application package
 ├── blueprints/     # Flask blueprints — one per feature area
-│   ├── search.py          #  /, /search, /card/<set>/<n>, /img/..., /card-autocomplete
+│   ├── search.py          #  /, /search, /card/<set>/<n>, /img/..., /card-autocomplete, /llm-models
 │   ├── similar.py         #  /similar, /cards/<set>/similar, /card/<set>/<n>/similar
 │   ├── config.py          #  /config/* (LLM, embed, MCP, ingest)
-│   ├── eval.py            #  /card/<set>/<n>/eval/* (8 routes: analyze, deepdive, etc.)
+│   ├── eval.py            #  /card/<set>/<n>/eval/* (8 routes: analyze, deepdive, similar, save, load, restore, progress)
 │   ├── eval_landing.py    #  /commander-eval, /commander-eval/reports/delete
 │   ├── decks.py           #  /deck-builder, /saved-decks, /api/deck/*
 │   ├── templates_bp.py    #  /card-templates, /api/template/*
 │   └── tags.py            #  /api/tags/*
 ├── shared.py        #  db_path, get_db, constants, Jinja helpers
-├── eval_cache.py    #  server-side in-memory cache for eval analysis
+├── eval_cache.py    #  Server-side in-memory cache for eval analysis
 ├── similarity.py    #  TF-IDF + factor-gate scoring engine
-├── embed.py         #  embedding index build + search (sentence-transformers)
-├── dedup.py         #  database deduplication (one row per unique card)
+├── embed.py         #  Embedding index build + search (sentence-transformers)
+├── dedup.py         #  Database deduplication (one row per unique card)
 ├── llm.py           #  LLM client — single generate() function (OpenAI + Anthropic)
 ├── websearch.py     #  SearXNG web search client
 ├── prompts.py       #  LLM system prompts (eval, deepdive, verify)
-├── eval_helpers.py  #  eval similarity backends, deepdive persistence
+├── eval_helpers.py  #  Eval similarity backends, deepdive persistence
 ├── images.py        #  Scryfall image fetching + mana symbol rendering
-├── ingest.py        #  database file upload + ingest pipeline
+├── ingest.py        #  Database file upload + ingest pipeline
 ├── mcp_server.py    #  MCP server — semantic_search, keyword_search, get_card
 └── mcp_control.py   #  MCP process management (status, restart)
 
 templates/          # Jinja2 templates
+├── base.html       # Base layout with navigation, theme, search bar
+├── search.html     # Card search page
+├── card.html       # Full card detail page
+├── similar_landing.html  # Similarity landing page
+├── similar.html    # Similarity results page
+├── commander_eval_landing.html  # Commander Eval landing
+├── commander_eval.html  # Commander Eval analysis view
+├── config.html     # Configuration page (LLM, DB, MCP, prompts)
+├── deck_builder.html     # Deck Builder page
+├── saved_decks.html      # Saved Decks grid
+├── card_templates.html   # Card Templates page
+└── similar_export.html   # Self-contained HTML export
+
 static/
-├── style.css       # stylesheet (~1,100 lines, dark theme)
-└── deck-builder.js # deck builder interactive app
+├── style.css       # Stylesheet (~1,400 lines, dark theme)
+└── deck-builder.js # Deck builder interactive app (~3,400 lines)
 
 searxng/
 ├── settings.yml    # SearXNG configuration
@@ -304,9 +378,9 @@ searxng/
 
 1. **Get a database**: Download `AllPrintings.sqlite` from [mtgjson.com](https://mtgjson.com/downloads/all-files/) and place it in the project root.
 2. **Configure environment**: Copy `.env.example` to `.env`, generate a `SEARXNG_SECRET`, and configure any LLM credentials you need.
-3. **Build embeddings**: Go to Configuration → Database → "Build Now" (or upload the database via the ingest UI, which triggers a rebuild automatically). This takes ~2 minutes for ~35,000 cards on a modern CPU.
-4. **Configure LLM**: Go to Configuration → LLM Connection. Enter your API key, test the connection, and select a model. Claude Opus 4.8 or Claude Sonnet 5 are recommended; any OpenAI-compatible model works.
-5. **Start the stack**: `docker compose up -d` starts Flask, SearXNG, MCP SSE, and MCPO.
+3. **Start the stack**: `docker compose up -d` starts Flask, SearXNG, MCP SSE, and MCPO.
+4. **Build embeddings**: Go to Configuration → Database → "Build Now" (or upload the database via the ingest UI, which triggers a rebuild automatically). This takes ~2 minutes for ~35,000 cards on a modern CPU.
+5. **Configure LLM**: Go to Configuration → LLM Connection. Enter your API key, test the connection, and select a model. Claude Opus or Claude Sonnet are recommended; any OpenAI-compatible model works.
 
 ## License
 
