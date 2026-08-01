@@ -1269,23 +1269,38 @@
             .then(function(r) { return r.json(); })
             .then(function(templates) {
                 cachedGuidelineTemplates = templates || [];
-                var html = '<option value="">None</option>';
-                cachedGuidelineTemplates.forEach(function(t) {
-                    html += '<option value="' + escapeAttr(t.name) + '">' + escapeHtml(t.name) + '</option>';
-                });
-                // Populate both selects — header bar and Templates tab
-                var headerSelect = $('#deck-guideline-select');
-                var tplSelect = $('#deck-template-guideline-select');
-                if (headerSelect) {
-                    headerSelect.innerHTML = html;
-                    if (deck.guideline) headerSelect.value = deck.guideline;
+                // If no guidelines exist yet, auto-create the default one
+                if (cachedGuidelineTemplates.length === 0) {
+                    var defaultCategories = { Lands: 38, Ramp: 10, Draw: 10, Removal: 12, Core: 30 };
+                    return fetch('/api/template/save', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ type: 'guideline', name: 'Default Guideline', categories: defaultCategories }),
+                    }).then(function(r) { return r.json(); }).then(function() {
+                        cachedGuidelineTemplates = [{ type: 'guideline', name: 'Default Guideline', categories: defaultCategories }];
+                        populateGuidelineSelects();
+                    });
                 }
-                if (tplSelect) {
-                    tplSelect.innerHTML = html;
-                    if (deck.guideline) tplSelect.value = deck.guideline;
-                }
+                populateGuidelineSelects();
             })
             .catch(function() { /* offline */ });
+    }
+
+    function populateGuidelineSelects() {
+        var html = '<option value="">None</option>';
+        cachedGuidelineTemplates.forEach(function(t) {
+            html += '<option value="' + escapeAttr(t.name) + '">' + escapeHtml(t.name) + '</option>';
+        });
+        var headerSelect = $('#deck-guideline-select');
+        var tplSelect = $('#deck-template-guideline-select');
+        if (headerSelect) {
+            headerSelect.innerHTML = html;
+            if (deck.guideline) headerSelect.value = deck.guideline;
+        }
+        if (tplSelect) {
+            tplSelect.innerHTML = html;
+            if (deck.guideline) tplSelect.value = deck.guideline;
+        }
     }
 
     function renderGuidelineProgress() {
