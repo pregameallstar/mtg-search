@@ -3321,8 +3321,8 @@
         }
 
         function positionPreview(e) {
-            var previewW = 200;
-            var previewH = 280;
+            var previewW = 400;
+            var previewH = 560;
             var left = e.clientX + 16;
             var top = e.clientY - previewH / 2;
 

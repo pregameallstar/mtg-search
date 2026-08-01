@@ -2451,7 +2451,7 @@ main:has(.deck-builder-page) {
 .card-hover-preview {
     position: fixed;
     z-index: 9999;
-    width: 200px;
+    width: 400px;
     border-radius: 10px;
     border: 2px solid var(--border);
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
