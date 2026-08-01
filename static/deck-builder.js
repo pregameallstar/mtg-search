@@ -910,7 +910,7 @@
             tagBadges += '</span>';
         }
 
-        return '<div class="deck-card-row' + offColorClass + '" data-uuid="' + escapeAttr(card.uuid) + '" data-set-code="' + escapeAttr(card.setCode) + '" data-number="' + escapeAttr(card.number) + '" data-section-name="' + escapeAttr(sectionName) + '">' +
+        return '<div class="deck-card-row' + offColorClass + '" data-uuid="' + escapeAttr(card.uuid) + '" data-set-code="' + escapeAttr(card.setCode) + '" data-number="' + escapeAttr(card.number) + '" data-image-url="' + escapeAttr(card.imageUrl || '') + '" data-section-name="' + escapeAttr(sectionName) + '">' +
             '<button class="qty-btn qty-plus" data-uuid="' + escapeAttr(card.uuid) + '" data-section="' + escapeAttr(sectionName) + '" data-delta="1" title="Increase quantity">+</button>' +
             '<button class="qty-btn qty-minus" data-uuid="' + escapeAttr(card.uuid) + '" data-section="' + escapeAttr(sectionName) + '" data-delta="-1" title="Decrease quantity">−</button>' +
             '<span class="card-quantity">' + card.quantity + '×</span>' +
@@ -1090,7 +1090,7 @@
             tagBadges += '</span>';
         }
 
-        return '<div class="deck-card-row' + offColorClass + '" data-uuid="' + escapeAttr(card.uuid) + '" data-set-code="' + escapeAttr(card.setCode) + '" data-number="' + escapeAttr(card.number) + '">' +
+        return '<div class="deck-card-row' + offColorClass + '" data-uuid="' + escapeAttr(card.uuid) + '" data-set-code="' + escapeAttr(card.setCode) + '" data-number="' + escapeAttr(card.number) + '" data-image-url="' + escapeAttr(card.imageUrl || '') + '">' +
             '<button class="qty-btn qty-plus" data-uuid="' + escapeAttr(card.uuid) + '" data-delta="1" title="Increase quantity">+</button>' +
             '<button class="qty-btn qty-minus" data-uuid="' + escapeAttr(card.uuid) + '" data-delta="-1" title="Decrease quantity">−</button>' +
             '<span class="card-quantity">' + card.quantity + '×</span>' +
@@ -3250,6 +3250,88 @@
         }
     }
 
+    /* ── Card Hover Preview ── */
+    var hoverPreviewEl = null;
+    var hoverTimeout = null;
+    var hoverActiveRow = null;
+
+    function initCardHoverPreview() {
+        // Create the preview element once, reuse it
+        hoverPreviewEl = document.createElement('img');
+        hoverPreviewEl.className = 'card-hover-preview';
+        hoverPreviewEl.style.display = 'none';
+        document.body.appendChild(hoverPreviewEl);
+
+        // Delegate mouseover on both main deck sections and custom sections
+        function onMouseOver(e) {
+            // Skip if still inside the same row (moving between row children)
+            var newRow = e.target.closest('.deck-card-row');
+            if (newRow === hoverActiveRow) return;
+
+            var row = newRow;
+            // Don't show preview over buttons — they have their own interactions
+            if (e.target.closest('button')) return;
+
+            if (!row) {
+                clearTimeout(hoverTimeout);
+                hoverActiveRow = null;
+                hoverPreviewEl.style.display = 'none';
+                return;
+            }
+
+            var imageUrl = row.dataset.imageUrl;
+            if (!imageUrl) return;
+
+            hoverActiveRow = row;
+            clearTimeout(hoverTimeout);
+            hoverTimeout = setTimeout(function () {
+                hoverPreviewEl.src = imageUrl;
+                hoverPreviewEl.style.display = '';
+                positionPreview(e);
+            }, 250);
+        }
+
+        function onMouseOut(e) {
+            // Only hide if we left the row entirely
+            var related = e.relatedTarget;
+            var leavingRow = e.target.closest('.deck-card-row');
+            var enteringRow = related ? related.closest('.deck-card-row') : null;
+            if (leavingRow === enteringRow) return; // staying in same row
+
+            clearTimeout(hoverTimeout);
+            hoverActiveRow = null;
+            hoverPreviewEl.style.display = 'none';
+        }
+
+        function onMouseMove(e) {
+            if (hoverPreviewEl.style.display !== 'none') {
+                positionPreview(e);
+            }
+        }
+
+        function positionPreview(e) {
+            var previewW = 200;
+            var previewH = 280;
+            var left = e.clientX + 16;
+            var top = e.clientY - previewH / 2;
+
+            // Keep within viewport
+            if (left + previewW > window.innerWidth) left = e.clientX - previewW - 16;
+            if (top < 8) top = 8;
+            if (top + previewH > window.innerHeight - 8) top = window.innerHeight - previewH - 8;
+
+            hoverPreviewEl.style.left = left + 'px';
+            hoverPreviewEl.style.top = top + 'px';
+        }
+
+        var deckEl = document.querySelector('.deck-builder-panel .panel-body');
+        if (deckEl) {
+            deckEl.addEventListener('mouseover', onMouseOver);
+            deckEl.addEventListener('mouseout', onMouseOut);
+            deckEl.addEventListener('mousemove', onMouseMove);
+        }
+    }
+
     function init() {
         initToolTabs();
         initSearch();
@@ -3317,6 +3399,9 @@
                 }
             });
         }
+
+        // Card hover preview — show card image on mouse hover
+        initCardHoverPreview();
 
         // Flush any pending debounced save when the user navigates away
         window.addEventListener('beforeunload', function () {
