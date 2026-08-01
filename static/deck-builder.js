@@ -1268,15 +1268,21 @@
             .then(function(r) { return r.json(); })
             .then(function(templates) {
                 cachedGuidelineTemplates = templates || [];
-                var select = $('#deck-guideline-select');
-                if (!select) return;
                 var html = '<option value="">None</option>';
                 cachedGuidelineTemplates.forEach(function(t) {
                     html += '<option value="' + escapeAttr(t.name) + '">' + escapeHtml(t.name) + '</option>';
                 });
-                select.innerHTML = html;
-                // Restore current guideline selection
-                if (deck.guideline) select.value = deck.guideline;
+                // Populate both selects — header bar and Templates tab
+                var headerSelect = $('#deck-guideline-select');
+                var tplSelect = $('#deck-template-guideline-select');
+                if (headerSelect) {
+                    headerSelect.innerHTML = html;
+                    if (deck.guideline) headerSelect.value = deck.guideline;
+                }
+                if (tplSelect) {
+                    tplSelect.innerHTML = html;
+                    if (deck.guideline) tplSelect.value = deck.guideline;
+                }
             })
             .catch(function() { /* offline */ });
     }
@@ -2788,6 +2794,42 @@
                     importBtn.textContent = 'Import to Deck';
                 });
         });
+
+        // ── Guideline select within Templates tab ──
+        var guidelineSelect = $('#deck-template-guideline-select');
+        var guidelinePreview = $('#deck-template-guideline-preview');
+
+        if (guidelineSelect) {
+            loadGuidelineList();
+
+            guidelineSelect.addEventListener('change', function() {
+                deck.guideline = this.value || null;
+                renderGuidelineProgress();
+                saveCurrentDeck();
+                // Sync header bar select
+                var headerSelect = $('#deck-guideline-select');
+                if (headerSelect) headerSelect.value = this.value;
+
+                // Show preview of guideline targets
+                if (!this.value || !guidelinePreview) {
+                    if (guidelinePreview) guidelinePreview.textContent = '';
+                    return;
+                }
+                var g = null;
+                for (var i = 0; i < cachedGuidelineTemplates.length; i++) {
+                    if (cachedGuidelineTemplates[i].name === this.value) {
+                        g = cachedGuidelineTemplates[i];
+                        break;
+                    }
+                }
+                if (g && g.categories) {
+                    var parts = ['Lands','Ramp','Draw','Removal','Strategy'].map(function(c) {
+                        return c + ': ' + (g.categories[c] || 0);
+                    });
+                    guidelinePreview.textContent = parts.join(' · ');
+                }
+            });
+        }
     }
 
     function initToolDropZone(dropId, loadingId, errorId, onFound) {
