@@ -223,7 +223,7 @@
 
                 <div class="guideline-editor-field">
                     <label>Guideline Name</label>
-                    <input type="text" id="guideline-name-input" placeholder="e.g. Default Commander">
+                    <input type="text" id="guideline-name-input" placeholder="e.g. Default Guideline">
                 </div>
 
                 <div class="guideline-category-fields">
@@ -1031,7 +1031,7 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         type: 'guideline',
-                        name: 'Default Commander',
+                        name: 'Default Guideline',
                         categories: { Lands: 38, Ramp: 10, Draw: 10, Removal: 12, Strategy: 30 }
                     }),
                 }).then(function() { refreshGuidelineGrid(); });
