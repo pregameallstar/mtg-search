@@ -1297,9 +1297,13 @@
                     }).then(function(r) { return r.json(); }).then(function() {
                         cachedGuidelineTemplates = [{ type: 'guideline', name: 'Default Guideline', categories: defaultCategories }];
                         populateGuidelineSelects();
+                        renderGuidelineProgress();
                     });
                 }
                 populateGuidelineSelects();
+                // Deck may have loaded before guidelines did; re-render
+                // progress bars now that the template data is available.
+                renderGuidelineProgress();
             })
             .catch(function() { /* offline */ });
     }
@@ -2502,6 +2506,13 @@
         $('#deck-name').value = deck.name;
         renderAll();
         restoreEvalData();
+        // Sync guideline selects now that deck.guideline is set.
+        // populateGuidelineSelects may have already been called by the async
+        // loadGuidelineList (racing before the deck load), so update the
+        // selects to reflect the loaded deck's guideline.
+        if (cachedGuidelineTemplates.length > 0) {
+            populateGuidelineSelects();
+        }
     }
 
     /* Push stored evalData to server cache so the iframe can re-render it */
