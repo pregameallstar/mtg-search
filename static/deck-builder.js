@@ -18,10 +18,25 @@
     /* ─── Card Classification ─── */
     function classifyCard(card) {
         /* Classify a card into one of: Lands, Ramp, Removal, Draw, Core.
-           Evaluated in priority order — first match wins. */
+           Evaluated in priority order — first match wins.
+
+           Tags override regex: if a card has a tag matching a category name
+           (case-insensitive, any of: Lands, Ramp, Removal, Draw, Core),
+           that tag's category wins the match, skipping regex classification. */
         var types = (card.types || '').toLowerCase();
         var text  = (card.text  || '').toLowerCase();
         var typeLine = (card.type || '').toLowerCase();
+        var tags = (card.tags || []);
+
+        // 0. Tag override — user-assigned tags take priority over regex
+        var CAT_KEYS = ['Lands', 'Ramp', 'Removal', 'Draw', 'Core'];
+        for (var ti = 0; ti < CAT_KEYS.length; ti++) {
+            for (var tj = 0; tj < tags.length; tj++) {
+                if (tags[tj].toLowerCase() === CAT_KEYS[ti].toLowerCase()) {
+                    return CAT_KEYS[ti];
+                }
+            }
+        }
 
         // 1. Lands — basic and non-basic lands
         if (types.indexOf('land') !== -1) return 'Lands';
@@ -32,6 +47,7 @@
         if (types.indexOf('creature') !== -1 && /\{t\}.*add/.test(text)) return 'Ramp'; // mana dork
         if (/(instant|sorcery)/.test(typeLine) && /add.*\{/.test(text)) return 'Ramp'; // ritual
         if (/put.*land.*onto the battlefield/.test(text)) return 'Ramp';
+        if (/create.*treasure/.test(text)) return 'Ramp'; // treasure generation
 
         // 3. Removal — targeted removal and board wipes
         if (/destroy target/.test(text)) return 'Removal';
@@ -39,6 +55,8 @@
         if (/deal.*damage to.*target/.test(text)) return 'Removal';
         if (/counter target spell/.test(text)) return 'Removal';
         if (/destroy all/.test(text)) return 'Removal';
+        if (/exile all/.test(text)) return 'Removal'; // exile-based board wipes
+        if (/target player sacrifices/.test(text)) return 'Removal'; // edict effects
 
         // 4. Draw — card advantage, exclude loot/rummage
         if (/draw/.test(text) && !/discard/.test(text)) return 'Draw';

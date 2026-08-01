@@ -238,6 +238,12 @@
                 <p style="font-size:0.85rem; color:var(--text-dim); margin-bottom:0.75rem;">
                     Assign a guideline to track deck building targets.
                 </p>
+                <details class="search-help" style="margin-bottom:0.5rem;font-size:0.78rem;color:var(--text-dim)">
+                    <summary>How guidelines work</summary>
+                    <p style="margin-top:0.35rem">Guidelines show how your deck's cards break down into <strong>Lands</strong>, <strong>Ramp</strong>, <strong>Removal</strong>, <strong>Draw</strong>, and <strong>Core</strong> categories.</p>
+                    <p>Cards are classified automatically by their type and Oracle text. The progress bars in the deck panel are clickable — click one to see which cards fell into each category.</p>
+                    <p><strong>Tag override:</strong> You can manually assign a card to a category by giving it a tag named <em>Lands</em>, <em>Ramp</em>, <em>Removal</em>, <em>Draw</em>, or <em>Core</em> (exact spelling). Tag overrides always take priority over automatic classification.</p>
+                </details>
                 <select id="deck-template-guideline-select" style="width:100%; box-sizing:border-box; padding:0.4rem 0.6rem; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:0.85rem;">
                     <option value="">None</option>
                 </select>
@@ -332,6 +338,9 @@
                 <div class="guideline-panel-title">Guideline: <span id="guideline-name"></span></div>
                 <div id="guideline-bars" class="guideline-bars">
                     {# 5 progress bars rendered by JS #}
+                </div>
+                <div class="guideline-panel-help" style="font-size:0.7rem;color:var(--text-dim);margin-top:0.4rem;text-align:center;">
+                    Click a bar to see which cards are in each category · Tag cards with <em>Ramp</em>, <em>Removal</em>, etc. to override classification
                 </div>
             </div>
 
