@@ -148,16 +148,23 @@
     {# ── Right Panel: Templates ── #}
     <div class="template-right-panel">
         <div class="template-right-header">
-            <h2>Card Templates</h2>
+            <h2 id="tpl-right-heading">Card Templates</h2>
             <button class="btn-template-action" id="btn-new-template">New Template</button>
         </div>
 
+        {# Mode toggle #}
+        <div class="template-mode-toggle">
+            <button class="mode-btn active" data-mode="cards">Card Templates</button>
+            <button class="mode-btn" data-mode="guidelines">Guidelines</button>
+        </div>
+
         <div class="template-right-body" id="template-right-body">
-            {# Default: template grid #}
+            {# Card template grid #}
             <div id="templates-grid">
-                {% if templates %}
+                {% set card_templates = templates | selectattr('type', 'undefined') | list if templates else [] %}
+                {% if card_templates %}
                 <div class="card-templates-grid">
-                    {% for t in templates %}
+                    {% for t in card_templates %}
                     <div class="card-template-card" data-name="{{ t.name | e }}">
                         <div class="card-template-card-body">
                             <p class="card-template-name">{{ t.name }}</p>
@@ -171,14 +178,21 @@
                     {% endfor %}
                 </div>
                 {% else %}
-                <div class="card-templates-empty">
+                <div class="card-templates-empty" id="templates-empty">
                     <p>No saved templates yet.</p>
                     <button class="btn-template-action" style="margin-top:1rem;" onclick="document.getElementById('btn-new-template').click()">Create your first template</button>
                 </div>
                 {% endif %}
             </div>
 
-            {# Editor (hidden initially) #}
+            {# Guidelines grid #}
+            <div id="guidelines-grid" hidden>
+                <div class="card-templates-grid" id="guidelines-inner">
+                    {# Rendered by JS #}
+                </div>
+            </div>
+
+            {# Card template editor (hidden initially) #}
             <div id="template-editor" hidden>
                 <h3 id="editor-heading">New Template</h3>
 
@@ -202,6 +216,48 @@
                     <button class="btn-template-action btn-template-secondary" id="btn-cancel-edit">Cancel</button>
                 </div>
             </div>
+
+            {# Guideline editor (hidden initially) #}
+            <div id="guideline-editor" hidden>
+                <h3 id="guideline-heading">New Guideline</h3>
+
+                <div class="guideline-editor-field">
+                    <label>Guideline Name</label>
+                    <input type="text" id="guideline-name-input" placeholder="e.g. Default Commander">
+                </div>
+
+                <div class="guideline-category-fields">
+                    <div class="guideline-editor-field">
+                        <label>Lands</label>
+                        <input type="number" id="gcat-lands" value="38" min="0" max="100">
+                    </div>
+                    <div class="guideline-editor-field">
+                        <label>Ramp</label>
+                        <input type="number" id="gcat-ramp" value="10" min="0" max="100">
+                    </div>
+                    <div class="guideline-editor-field">
+                        <label>Draw</label>
+                        <input type="number" id="gcat-draw" value="10" min="0" max="100">
+                    </div>
+                    <div class="guideline-editor-field">
+                        <label>Removal</label>
+                        <input type="number" id="gcat-removal" value="12" min="0" max="100">
+                    </div>
+                    <div class="guideline-editor-field" style="grid-column: 1 / -1;">
+                        <label>Strategy</label>
+                        <input type="number" id="gcat-strategy" value="30" min="0" max="100">
+                    </div>
+                </div>
+
+                <div class="guideline-total-row">
+                    <span>Total: <strong id="guideline-total">100</strong></span>
+                </div>
+
+                <div class="template-editor-actions">
+                    <button class="btn-template-action" id="btn-save-guideline">Save</button>
+                    <button class="btn-template-action btn-template-secondary" id="btn-cancel-guideline">Cancel</button>
+                </div>
+            </div>
         </div>
     </div>
 </div>
@@ -216,6 +272,11 @@
     var searchParams = null;
     var searchPage = 1;
     var searchTotalPages = 0;
+
+    // Guideline state
+    var currentMode = 'cards';
+    var editingGuidelineName = null;
+    var guidelineCategories = { Lands: 38, Ramp: 10, Draw: 10, Removal: 12, Strategy: 30 };
 
     function $(sel) { return document.querySelector(sel); }
     function $$(sel) { return document.querySelectorAll(sel); }
@@ -689,13 +750,16 @@
     /* ─── Grid management ─── */
     function refreshGrid(callback) {
         fetch('/api/template/list').then(function(r) { return r.json(); }).then(function(templates) {
-            grid.innerHTML = '';
-            if (!templates || templates.length === 0) {
-                grid.innerHTML = '<div class="card-templates-empty"><p>No saved templates yet.</p>' +
+            // Filter to card templates only (no type field, or type != 'guideline')
+            var cardTmpls = (templates || []).filter(function(t) { return t.type !== 'guideline'; });
+            var gridEl = $('#templates-grid');
+            gridEl.innerHTML = '';
+            if (cardTmpls.length === 0) {
+                gridEl.innerHTML = '<div class="card-templates-empty"><p>No saved card templates yet.</p>' +
                     '<button class="btn-template-action" style="margin-top:1rem;" onclick="document.getElementById(\'btn-new-template\').click()">Create your first template</button></div>';
             } else {
                 var html = '<div class="card-templates-grid">';
-                templates.forEach(function(t) {
+                cardTmpls.forEach(function(t) {
                     var count = (t.cards || []).length;
                     html += '<div class="card-template-card" data-name="' + escAttr(t.name) + '">' +
                         '<div class="card-template-card-body">' +
@@ -709,7 +773,7 @@
                     '</div>';
                 });
                 html += '</div>';
-                grid.innerHTML = html;
+                gridEl.innerHTML = html;
             }
             if (callback) callback();
         });
@@ -717,6 +781,7 @@
 
     /* ─── Grid event delegation ─── */
     document.addEventListener('click', function(e) {
+        // Card template buttons
         var editBtn = e.target.closest('.btn-edit-template');
         var deleteBtn = e.target.closest('.btn-delete-template');
 
@@ -724,7 +789,10 @@
 
         if (deleteBtn) {
             var dname = deleteBtn.dataset.name;
-            if (!confirm('Delete template "' + dname + '"?')) return;
+            var confirmMsg = currentMode === 'guidelines' ?
+                'Delete guideline "' + dname + '"?' :
+                'Delete template "' + dname + '"?';
+            if (!confirm(confirmMsg)) return;
             fetch('/api/template/delete', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -733,24 +801,248 @@
                 if (data.success) {
                     var card = deleteBtn.closest('.card-template-card');
                     if (card) card.remove();
-                    if (!document.querySelector('.card-template-card')) refreshGrid();
+                    if (currentMode === 'guidelines') {
+                        if (!document.querySelector('#guidelines-inner .card-template-card')) refreshGuidelineGrid();
+                    } else {
+                        if (!document.querySelector('#templates-grid .card-template-card')) refreshGrid();
+                    }
                 } else {
                     showToast(data.error || 'Failed to delete.');
                 }
             }).catch(function() { showToast('Failed to delete.'); });
         }
 
-        // Click card body to edit
-        var cardBody = e.target.closest('.card-template-card-body');
-        if (cardBody && !editBtn && !deleteBtn) {
-            var cardEl = cardBody.closest('.card-template-card');
-            if (cardEl) showEditor(cardEl.dataset.name);
+        // Click card body to edit (cards mode)
+        if (currentMode !== 'guidelines') {
+            var cardBody = e.target.closest('.card-template-card-body');
+            if (cardBody && !editBtn && !deleteBtn) {
+                var cardEl = cardBody.closest('.card-template-card');
+                if (cardEl) showEditor(cardEl.dataset.name);
+            }
+        }
+
+        // Guideline grid card body click
+        if (currentMode === 'guidelines') {
+            var gBody = e.target.closest('.guideline-card-body');
+            var gEditBtn = e.target.closest('.btn-edit-guideline');
+            var gDeleteBtn = e.target.closest('.btn-delete-guideline');
+            if (gBody && !gEditBtn && !gDeleteBtn) {
+                var gCard = gBody.closest('.card-template-card');
+                if (gCard) showGuidelineEditor(gCard.dataset.name);
+            }
+            if (gEditBtn) { showGuidelineEditor(gEditBtn.dataset.name); }
         }
     });
+
+    /* ─── Mode switching ─── */
+    var gridsGuidelines = $('#guidelines-grid');
+    var tplGrid = $('#templates-grid');
+    var guidelineEditor = $('#guideline-editor');
+    var tplEditor = $('#template-editor');
+    var headingEl = $('#tpl-right-heading');
+    var btnNewEl = $('#btn-new-template');
+
+    $$('.mode-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var mode = this.dataset.mode;
+            if (mode === currentMode) return;
+            switchMode(mode);
+        });
+    });
+
+    function switchMode(mode) {
+        currentMode = mode;
+        $$('.mode-btn').forEach(function(b) { b.classList.toggle('active', b.dataset.mode === mode); });
+
+        if (mode === 'guidelines') {
+            headingEl.textContent = 'Guidelines';
+            btnNewEl.textContent = 'New Guideline';
+            tplGrid.hidden = true;
+            tplEditor.hidden = true;
+            gridsGuidelines.hidden = false;
+            guidelineEditor.hidden = true;
+            refreshGuidelineGrid();
+            // Hide card editor if it was open
+            hideEditor();
+        } else {
+            headingEl.textContent = 'Card Templates';
+            btnNewEl.textContent = 'New Template';
+            tplGrid.hidden = false;
+            gridsGuidelines.hidden = true;
+            guidelineEditor.hidden = true;
+            refreshGrid();
+        }
+    }
+
+    // Override btnNew to be mode-aware
+    btnNewEl.addEventListener('click', function() {
+        if (currentMode === 'guidelines') {
+            showGuidelineEditor(null);
+        } else {
+            showEditor(null);
+        }
+    });
+
+    /* ─── Guideline editor ─── */
+    var gNameInput = $('#guideline-name-input');
+    var gHeading = $('#guideline-heading');
+    var gTotal = $('#guideline-total');
+    var gSaveBtn = $('#btn-save-guideline');
+    var gCancelBtn = $('#btn-cancel-guideline');
+
+    var CAT_CATS = ['Lands', 'Ramp', 'Draw', 'Removal', 'Strategy'];
+
+    function updateGuidelineTotal() {
+        var total = 0;
+        CAT_CATS.forEach(function(cat) {
+            var el = $('#gcat-' + cat.toLowerCase());
+            if (el) total += parseInt(el.value, 10) || 0;
+        });
+        if (gTotal) gTotal.textContent = total;
+    }
+
+    CAT_CATS.forEach(function(cat) {
+        var el = $('#gcat-' + cat.toLowerCase());
+        if (el) el.addEventListener('input', updateGuidelineTotal);
+    });
+
+    function showGuidelineEditor(name) {
+        editingGuidelineName = name || null;
+        gHeading.textContent = name ? 'Edit: ' + name : 'New Guideline';
+        gNameInput.value = name || '';
+
+        if (name) {
+            fetch('/api/template/list?type=guideline').then(function(r) { return r.json(); }).then(function(templates) {
+                var tmpl = (templates || []).find(function(t) { return t.name === name; });
+                if (tmpl && tmpl.categories) {
+                    guidelineCategories = tmpl.categories;
+                    CAT_CATS.forEach(function(cat) {
+                        var el = $('#gcat-' + cat.toLowerCase());
+                        if (el) el.value = guidelineCategories[cat] || 0;
+                    });
+                } else {
+                    CAT_CATS.forEach(function(cat) {
+                        var el = $('#gcat-' + cat.toLowerCase());
+                        if (el) el.value = 0;
+                    });
+                }
+                updateGuidelineTotal();
+            });
+        } else {
+            guidelineCategories = { Lands: 38, Ramp: 10, Draw: 10, Removal: 12, Strategy: 30 };
+            CAT_CATS.forEach(function(cat) {
+                var el = $('#gcat-' + cat.toLowerCase());
+                if (el) el.value = guidelineCategories[cat] || 0;
+            });
+            updateGuidelineTotal();
+        }
+
+        gridsGuidelines.hidden = true;
+        tplGrid.hidden = true;
+        tplEditor.hidden = true;
+        guidelineEditor.hidden = false;
+        btnNewEl.hidden = true;
+    }
+
+    function hideGuidelineEditor() {
+        guidelineEditor.hidden = true;
+        btnNewEl.hidden = false;
+        editingGuidelineName = null;
+        switchMode(currentMode); // re-shows correct grid
+    }
+
+    gSaveBtn.addEventListener('click', function() {
+        var name = gNameInput.value.trim();
+        if (!name) { showToast('Please enter a guideline name.'); return; }
+
+        var cats = {};
+        CAT_CATS.forEach(function(cat) {
+            var el = $('#gcat-' + cat.toLowerCase());
+            cats[cat] = el ? (parseInt(el.value, 10) || 0) : 0;
+        });
+
+        var doSave = function() {
+            fetch('/api/template/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ type: 'guideline', name: name, categories: cats }),
+            }).then(function(r) { return r.json(); }).then(function(data) {
+                if (data.success) {
+                    hideGuidelineEditor();
+                    showToast('Saved: ' + name);
+                } else {
+                    showToast(data.error || 'Failed to save guideline.');
+                }
+            }).catch(function() { showToast('Failed to save guideline.'); });
+        };
+
+        if (editingGuidelineName && safeName(editingGuidelineName) !== safeName(name)) {
+            fetch('/api/template/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: editingGuidelineName }),
+            }).then(function() { doSave(); }).catch(function() { doSave(); });
+        } else {
+            doSave();
+        }
+    });
+
+    gCancelBtn.addEventListener('click', function() {
+        hideGuidelineEditor();
+    });
+
+    /* ─── Guideline grid ─── */
+    function refreshGuidelineGrid() {
+        var inner = $('#guidelines-inner');
+        if (!inner) return;
+        fetch('/api/template/list?type=guideline').then(function(r) { return r.json(); }).then(function(templates) {
+            if (!templates || templates.length === 0) {
+                inner.innerHTML = '<div class="card-templates-empty"><p>No guideline templates yet.</p>' +
+                    '<button class="btn-template-action" style="margin-top:1rem;" onclick="document.getElementById(\'btn-new-template\').click()">Create your first guideline</button></div>';
+            } else {
+                var html = '';
+                templates.forEach(function(t) {
+                    var cats = t.categories || {};
+                    var catStr = CAT_CATS.map(function(c) {
+                        return '<span>' + c + ': <strong>' + (cats[c] || 0) + '</strong></span>';
+                    }).join(' ');
+                    html += '<div class="card-template-card" data-name="' + escAttr(t.name) + '">' +
+                        '<div class="guideline-card-body">' +
+                            '<p class="guideline-card-name">' + escHtml(t.name) + '</p>' +
+                            '<div class="guideline-card-categories">' + catStr + '</div>' +
+                        '</div>' +
+                        '<div class="card-template-actions">' +
+                            '<button class="btn-template-action btn-edit-guideline" data-name="' + escAttr(t.name) + '">Edit</button>' +
+                            '<button class="btn-template-delete btn-delete-guideline" data-name="' + escAttr(t.name) + '">Delete</button>' +
+                        '</div>' +
+                    '</div>';
+                });
+                inner.innerHTML = html;
+            }
+        });
+    }
+
+    /* ─── Auto-create default guideline ─── */
+    function ensureDefaultGuideline() {
+        fetch('/api/template/list?type=guideline').then(function(r) { return r.json(); }).then(function(templates) {
+            if (!templates || templates.length === 0) {
+                fetch('/api/template/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        type: 'guideline',
+                        name: 'Default Commander',
+                        categories: { Lands: 38, Ramp: 10, Draw: 10, Removal: 12, Strategy: 30 }
+                    }),
+                }).then(function() { refreshGuidelineGrid(); });
+            }
+        });
+    }
 
     /* ─── Init ─── */
     initSearch();
     initDropZone();
+    ensureDefaultGuideline();
 })();
 </script>
 {% endblock %}

@@ -1645,6 +1645,37 @@ main:has(.deck-builder-page) {
     display: none;
 }
 
+/* --- Deck Guideline Selector Bar --- */
+.deck-guideline-bar {
+    padding: 0.3rem 1rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-card);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+}
+.deck-guideline-bar label {
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.deck-guideline-bar select {
+    padding: 0.25rem 0.5rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+    font-size: 0.78rem;
+    font-family: inherit;
+    cursor: pointer;
+}
+.deck-guideline-bar select:focus {
+    border-color: var(--accent);
+    outline: none;
+}
+
 .panel-header h2 {
     font-size: 1rem;
     font-weight: 600;
@@ -3286,6 +3317,163 @@ main:has(.card-templates-page) {
     color: var(--text-dim);
     font-size: 0.85rem;
     padding: 1.5rem 0;
+}
+
+/* --- Guideline Templates (Templates page) --- */
+
+.template-mode-toggle {
+    display: flex;
+    gap: 0;
+    padding: 0.35rem 1rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-card);
+    flex-shrink: 0;
+}
+
+.mode-btn {
+    padding: 0.35rem 0.85rem;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 0.82rem;
+    font-family: inherit;
+    transition: color 0.15s, background 0.15s;
+}
+.mode-btn:hover { color: var(--text); background: var(--bg-hover); }
+.mode-btn.active { color: var(--accent); background: rgba(88,166,255,0.1); border-color: var(--accent); }
+
+/* --- Guideline editor --- */
+.guideline-editor-field {
+    margin-bottom: 0.75rem;
+}
+.guideline-editor-field label {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    margin-bottom: 0.25rem;
+}
+.guideline-editor-field input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.45rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 0.9rem;
+    font-family: inherit;
+}
+
+.guideline-category-fields {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.6rem;
+    margin-bottom: 0.75rem;
+}
+
+.guideline-total-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+    font-size: 0.82rem;
+    color: var(--text-dim);
+    padding: 0.25rem 0.5rem;
+    background: var(--bg);
+    border-radius: 6px;
+}
+.guideline-total-row strong { color: var(--text); }
+
+/* --- Guideline grid cards --- */
+.guideline-card-body {
+    padding: 1rem;
+    cursor: pointer;
+}
+.guideline-card-name {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text);
+    margin: 0 0 0.5rem;
+}
+.guideline-card-categories {
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 0.75rem;
+}
+.guideline-card-categories span {
+    white-space: nowrap;
+}
+
+/* --- Guideline progress bars (Deck Builder) --- */
+.guideline-panel {
+    padding: 0.75rem 1rem;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+    flex-shrink: 0;
+}
+.guideline-panel[hidden] { display: none; }
+
+.guideline-panel-title {
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    margin-bottom: 0.5rem;
+}
+.guideline-panel-title span {
+    color: var(--text);
+    font-weight: 600;
+}
+
+.guideline-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.guideline-bar-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.78rem;
+}
+
+.guideline-bar-label {
+    width: 4.5rem;
+    text-align: right;
+    color: var(--text-dim);
+    font-weight: 600;
+    flex-shrink: 0;
+}
+
+.guideline-bar-track {
+    flex: 1;
+    height: 10px;
+    background: var(--bg-card);
+    border-radius: 5px;
+    overflow: hidden;
+}
+
+.guideline-bar-fill {
+    height: 100%;
+    border-radius: 5px;
+    transition: width 0.3s ease;
+    min-width: 2px;
+}
+
+.guideline-bar-fill.under  { background: #f85149; }  /* red */
+.guideline-bar-fill.at     { background: #3fb950; }  /* green */
+.guideline-bar-fill.over   { background: #d29922; }  /* yellow */
+
+.guideline-bar-count {
+    width: 4.5rem;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+    font-size: 0.75rem;
+    flex-shrink: 0;
 }
 
 /* --- Responsive --- */

@@ -47,7 +47,8 @@ def api_template_save():
 
 @templates_bp.route("/api/template/list", methods=["GET"])
 def api_template_list():
-    """List all saved card templates."""
+    """List all saved card templates. Accepts optional ?type=guideline or ?type=cards."""
+    filter_type = request.args.get("type", "").strip()
     templates = []
     if os.path.isdir(TEMPLATES_DIR):
         for fname in sorted(os.listdir(TEMPLATES_DIR)):
@@ -57,6 +58,10 @@ def api_template_list():
             try:
                 with open(fpath) as f:
                     data = json.load(f)
+                if filter_type:
+                    t = data.get("type", "cards")
+                    if t != filter_type:
+                        continue
                 templates.append(data)
             except (json.JSONDecodeError, OSError):
                 pass

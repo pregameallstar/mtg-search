@@ -15,6 +15,38 @@
         'Enchantment', 'Planeswalker', 'Battle', 'Land',
     ];
 
+    /* ─── Card Classification ─── */
+    function classifyCard(card) {
+        /* Classify a card into one of: Lands, Ramp, Removal, Draw, Strategy.
+           Evaluated in priority order — first match wins. */
+        var types = (card.types || '').toLowerCase();
+        var text  = (card.text  || '').toLowerCase();
+        var typeLine = (card.type || '').toLowerCase();
+
+        // 1. Lands — basic and non-basic lands
+        if (types.indexOf('land') !== -1) return 'Lands';
+
+        // 2. Ramp — mana acceleration
+        if (/search.*library.*for.*land/.test(text)) return 'Ramp';
+        if (types.indexOf('artifact') !== -1 && /add.*\{/.test(text)) return 'Ramp'; // mana rock
+        if (types.indexOf('creature') !== -1 && /\{t\}.*add/.test(text)) return 'Ramp'; // mana dork
+        if (/(instant|sorcery)/.test(typeLine) && /add.*\{/.test(text)) return 'Ramp'; // ritual
+        if (/put.*land.*onto the battlefield/.test(text)) return 'Ramp';
+
+        // 3. Removal — targeted removal and board wipes
+        if (/destroy target/.test(text)) return 'Removal';
+        if (/exile target/.test(text)) return 'Removal';
+        if (/deal.*damage to.*target/.test(text)) return 'Removal';
+        if (/counter target spell/.test(text)) return 'Removal';
+        if (/destroy all/.test(text)) return 'Removal';
+
+        // 4. Draw — card advantage, exclude loot/rummage
+        if (/draw/.test(text) && !/discard/.test(text)) return 'Draw';
+
+        // 5. Strategy — everything else
+        return 'Strategy';
+    }
+
     /* ─── Deck Data Model ─── */
     function Deck() {
         this.name = '';
@@ -22,6 +54,7 @@
         this.cards = [];          // [{ uuid, setCode, number, name, quantity, ... }]
         this.evalData = null;     // Commander eval analysis (from embedded eval iframe)
         this.sections = {};       // { "Sideboard": [card, ...], "Maybeboard": [card, ...], custom: [...] }
+        this.guideline = null;    // Guideline template name string (or null)
     }
 
     Deck.prototype.addCard = function (cardData) {
@@ -220,6 +253,7 @@
         this.cards = [];
         this.evalData = null;
         this.sections = {};
+        this.guideline = null;
     };
 
     Deck.prototype.getCommanderCI = function () {
@@ -259,6 +293,7 @@
             evalData: this.evalData,
             cards: this.cards.map(cardMapper),
             sections: sectionsExport,
+            guideline: this.guideline,
         };
     };
 
@@ -266,6 +301,7 @@
         this.name = data.name || '';
         this.commander = data.commander || null;
         this.evalData = data.evalData || null;
+        this.guideline = data.guideline || null;
         this.cards = (data.cards || []).map(function (c) {
             var card = Object.assign({}, c, { quantity: c.quantity || 1 });
             if (!card.tags) card.tags = [];
@@ -622,6 +658,7 @@
         renderCustomSections();
         renderStats();
         renderDeckCharts();
+        renderGuidelineProgress();
         updateDeckNameInput();
         makeDeckCardRowsDraggable();
         initSectionDropZones();
@@ -1221,6 +1258,83 @@
         } else {
             container.innerHTML = '<span style="color:#3fb950;font-size:0.75rem;">✓ All cards within color identity</span>';
         }
+    }
+
+    /* ─── Guideline Progress Bars ─── */
+    var cachedGuidelineTemplates = [];
+
+    function loadGuidelineList() {
+        fetch('/api/template/list?type=guideline')
+            .then(function(r) { return r.json(); })
+            .then(function(templates) {
+                cachedGuidelineTemplates = templates || [];
+                var select = $('#deck-guideline-select');
+                if (!select) return;
+                var html = '<option value="">None</option>';
+                cachedGuidelineTemplates.forEach(function(t) {
+                    html += '<option value="' + escapeAttr(t.name) + '">' + escapeHtml(t.name) + '</option>';
+                });
+                select.innerHTML = html;
+                // Restore current guideline selection
+                if (deck.guideline) select.value = deck.guideline;
+            })
+            .catch(function() { /* offline */ });
+    }
+
+    function renderGuidelineProgress() {
+        var panel = $('#guideline-panel');
+        var barsEl = $('#guideline-bars');
+        var nameEl = $('#guideline-name');
+        if (!panel || !barsEl) return;
+
+        if (!deck.guideline) {
+            panel.hidden = true;
+            return;
+        }
+
+        // Find the guideline template in cache
+        var guideline = null;
+        for (var i = 0; i < cachedGuidelineTemplates.length; i++) {
+            if (cachedGuidelineTemplates[i].name === deck.guideline) {
+                guideline = cachedGuidelineTemplates[i];
+                break;
+            }
+        }
+        if (!guideline || !guideline.categories) {
+            panel.hidden = true;
+            return;
+        }
+
+        panel.hidden = false;
+        if (nameEl) nameEl.textContent = guideline.name;
+
+        var targets = guideline.categories;
+        var counts = { Lands: 0, Ramp: 0, Draw: 0, Removal: 0, Strategy: 0 };
+
+        // Classify all cards in the main deck (not sections, not commander)
+        deck.cards.forEach(function(card) {
+            var cat = classifyCard(card);
+            if (counts.hasOwnProperty(cat)) {
+                counts[cat] += card.quantity || 1;
+            }
+        });
+
+        var order = ['Lands', 'Ramp', 'Draw', 'Removal', 'Strategy'];
+        var html = '';
+        order.forEach(function(cat) {
+            var actual = counts[cat] || 0;
+            var target = targets[cat] || 0;
+            var pct = target > 0 ? Math.min(100, Math.round((actual / target) * 100)) : (actual > 0 ? 100 : 0);
+            var cls = actual >= target ? 'at' : (actual >= target * 0.75 ? 'over' : 'under');
+            html += '<div class="guideline-bar-row">' +
+                '<span class="guideline-bar-label">' + escapeHtml(cat) + '</span>' +
+                '<div class="guideline-bar-track">' +
+                    '<div class="guideline-bar-fill ' + cls + '" style="width:' + pct + '%"></div>' +
+                '</div>' +
+                '<span class="guideline-bar-count">' + actual + ' / ' + target + '</span>' +
+            '</div>';
+        });
+        barsEl.innerHTML = html;
     }
 
     /* ─── Deck Panel Charts ─── */
@@ -2584,14 +2698,16 @@
                         console.warn('Template list API returned non-array:', templates);
                         templates = [];
                     }
+                    // Filter to card templates only (exclude guidelines)
+                    var cardTmpls = templates.filter(function(t) { return t.type !== 'guideline'; });
                     var html = '<option value="">Select a template…</option>';
-                    templates.forEach(function(t) {
+                    cardTmpls.forEach(function(t) {
                         var cardCount = (t.cards || []).reduce(function(s, c) { return s + (c.quantity || 1); }, 0);
                         html += '<option value="' + escapeAttr(t.name) + '">' + escapeHtml(t.name) + ' (' + cardCount + ' card' + (cardCount !== 1 ? 's' : '') + ')</option>';
                     });
                     select.innerHTML = html;
                     importBtn.disabled = true;
-                    preview.textContent = templates.length === 0 ? 'No templates yet. Create one on the Templates page.' : '';
+                    preview.textContent = cardTmpls.length === 0 ? 'No card templates yet. Create one on the Templates page.' : '';
                 })
                 .catch(function(err) {
                     console.error('Failed to load templates:', err);
@@ -2975,6 +3091,28 @@
             });
         });
     }
+    function initGuideline() {
+        loadGuidelineList();
+
+        // Re-fresh guideline list when Templates tab is clicked (new guidelines may have been created)
+        var tplTab = document.querySelector('.tool-tab-btn[data-tool="templates"]');
+        if (tplTab) {
+            tplTab.addEventListener('click', function() {
+                loadGuidelineList();
+            });
+        }
+
+        // Guideline select change
+        var select = $('#deck-guideline-select');
+        if (select) {
+            select.addEventListener('change', function() {
+                deck.guideline = this.value || null;
+                renderGuidelineProgress();
+                saveCurrentDeck();
+            });
+        }
+    }
+
     function init() {
         initToolTabs();
         initSearch();
@@ -2984,6 +3122,7 @@
         initGroupSelect();
         initQuickAdd();
         initSectionManagement();
+        initGuideline();
         enableGlobalDrag();
         enableCardPanelAddToDeck();
 

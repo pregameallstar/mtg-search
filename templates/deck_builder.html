@@ -254,6 +254,13 @@
                 <button id="deck-clear-btn" class="btn-deck-action btn-danger" title="Clear deck">🗑 Clear</button>
             </div>
         </div>
+        <div class="deck-guideline-bar" id="deck-guideline-bar">
+            <label>Guideline:
+                <select id="deck-guideline-select">
+                    <option value="">None</option>
+                </select>
+            </label>
+        </div>
         <div class="panel-body deck-panel-body">
 
             {# Commander Slot #}
@@ -307,6 +314,14 @@
                 <div class="section-presets">
                     <button class="btn-deck-action btn-secondary section-preset-btn" data-name="Sideboard">+ Sideboard</button>
                     <button class="btn-deck-action btn-secondary section-preset-btn" data-name="Maybeboard">+ Maybeboard</button>
+                </div>
+            </div>
+
+            {# Guideline Progress Panel #}
+            <div id="guideline-panel" class="guideline-panel" hidden>
+                <div class="guideline-panel-title">Guideline: <span id="guideline-name"></span></div>
+                <div id="guideline-bars" class="guideline-bars">
+                    {# 5 progress bars rendered by JS #}
                 </div>
             </div>
 
