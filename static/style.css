@@ -517,6 +517,40 @@ main { flex: 1; max-width: 1400px; margin: 0 auto; padding: 2rem 1rem; width: 10
 }
 .text-import-close:hover { background: var(--border); }
 .text-import-body { padding: 0 1.25rem 1.25rem; }
+
+/* --- Category Breakdown Modal --- */
+.category-modal {
+    width: 480px;
+    max-width: 100%;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+}
+.category-modal .text-import-body {
+    overflow-y: auto;
+    max-height: 60vh;
+}
+.category-card-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.35rem 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.82rem;
+}
+.category-card-row:last-child { border-bottom: none; }
+.category-card-qty {
+    font-weight: 600;
+    color: var(--text);
+    min-width: 2rem;
+    text-align: right;
+}
+.category-card-name {
+    flex: 1;
+    color: var(--text);
+}
+
+/* --- Text Import modal helpers --- */
 .text-import-help {
     font-size: 0.83rem;
     color: var(--text-dim);
@@ -3439,6 +3473,17 @@ main:has(.card-templates-page) {
     align-items: center;
     gap: 0.5rem;
     font-size: 0.78rem;
+}
+
+.guideline-bar-clickable {
+    cursor: pointer;
+    border-radius: 4px;
+    padding: 2px 4px;
+    margin: -2px -4px;
+    transition: background 0.15s;
+}
+.guideline-bar-clickable:hover {
+    background: var(--bg-hover);
 }
 
 .guideline-bar-label {

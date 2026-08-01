@@ -17,7 +17,7 @@
 
     /* ─── Card Classification ─── */
     function classifyCard(card) {
-        /* Classify a card into one of: Lands, Ramp, Removal, Draw, Strategy.
+        /* Classify a card into one of: Lands, Ramp, Removal, Draw, Core.
            Evaluated in priority order — first match wins. */
         var types = (card.types || '').toLowerCase();
         var text  = (card.text  || '').toLowerCase();
@@ -43,8 +43,8 @@
         // 4. Draw — card advantage, exclude loot/rummage
         if (/draw/.test(text) && !/discard/.test(text)) return 'Draw';
 
-        // 5. Strategy — everything else
-        return 'Strategy';
+        // 5. Core — everything else
+        return 'Core';
     }
 
     /* ─── Deck Data Model ─── */
@@ -1262,6 +1262,7 @@
 
     /* ─── Guideline Progress Bars ─── */
     var cachedGuidelineTemplates = [];
+    var categorizedCards = {}; // { Lands: [card, ...], Ramp: [...], ... }
 
     function loadGuidelineList() {
         fetch('/api/template/list?type=guideline')
@@ -1295,6 +1296,7 @@
 
         if (!deck.guideline) {
             panel.hidden = true;
+            categorizedCards = {};
             return;
         }
 
@@ -1308,6 +1310,7 @@
         }
         if (!guideline || !guideline.categories) {
             panel.hidden = true;
+            categorizedCards = {};
             return;
         }
 
@@ -1315,7 +1318,8 @@
         if (nameEl) nameEl.textContent = guideline.name;
 
         var targets = guideline.categories;
-        var counts = { Lands: 0, Ramp: 0, Draw: 0, Removal: 0, Strategy: 0 };
+        var counts = { Lands: 0, Ramp: 0, Draw: 0, Removal: 0, Core: 0 };
+        categorizedCards = { Lands: [], Ramp: [], Draw: [], Removal: [], Core: [] };
 
         // Classify all cards in the main deck (not sections, not commander)
         deck.cards.forEach(function(card) {
@@ -1323,16 +1327,19 @@
             if (counts.hasOwnProperty(cat)) {
                 counts[cat] += card.quantity || 1;
             }
+            if (categorizedCards[cat]) {
+                categorizedCards[cat].push(card);
+            }
         });
 
-        var order = ['Lands', 'Ramp', 'Draw', 'Removal', 'Strategy'];
+        var order = ['Lands', 'Ramp', 'Draw', 'Removal', 'Core'];
         var html = '';
         order.forEach(function(cat) {
             var actual = counts[cat] || 0;
             var target = targets[cat] || 0;
             var pct = target > 0 ? Math.min(100, Math.round((actual / target) * 100)) : (actual > 0 ? 100 : 0);
             var cls = actual >= target ? 'at' : (actual >= target * 0.75 ? 'over' : 'under');
-            html += '<div class="guideline-bar-row">' +
+            html += '<div class="guideline-bar-row guideline-bar-clickable" data-cat="' + escapeAttr(cat) + '" title="Click to view ' + escapeAttr(cat) + ' cards">' +
                 '<span class="guideline-bar-label">' + escapeHtml(cat) + '</span>' +
                 '<div class="guideline-bar-track">' +
                     '<div class="guideline-bar-fill ' + cls + '" style="width:' + pct + '%"></div>' +
@@ -1341,6 +1348,61 @@
             '</div>';
         });
         barsEl.innerHTML = html;
+
+        // Attach click handlers to open category breakdown modal
+        barsEl.querySelectorAll('.guideline-bar-row').forEach(function(row) {
+            row.addEventListener('click', function() {
+                openCategoryModal(this.dataset.cat);
+            });
+        });
+    }
+
+    /* ─── Category Breakdown Modal ─── */
+    function openCategoryModal(cat) {
+        var overlay = $('#category-modal-overlay');
+        var title = $('#category-modal-title');
+        var body = $('#category-modal-body');
+        if (!overlay || !body) return;
+
+        if (title) title.textContent = cat + ' Cards';
+        overlay.hidden = false;
+        overlay.classList.add('open');
+
+        var cards = categorizedCards[cat] || [];
+        if (cards.length === 0) {
+            body.innerHTML = '<p style="color:var(--text-dim);text-align:center;padding:1rem;">No cards in this category.</p>';
+            return;
+        }
+
+        // Sort by name
+        cards.sort(function(a, b) { return a.name.localeCompare(b.name); });
+
+        var html = '';
+        cards.forEach(function(card) {
+            var qty = card.quantity || 1;
+            var manaStr = card.manaCost ? '<span class="card-mana-cost" style="font-size:0.8rem;">' + renderManaSymbols(card.manaCost) + '</span>' : '';
+            html += '<div class="category-card-row">' +
+                '<span class="category-card-qty">' + qty + '×</span>' +
+                '<span class="category-card-name">' + escapeHtml(card.name) + '</span>' +
+                manaStr +
+            '</div>';
+        });
+        body.innerHTML = html;
+
+        // Close handler
+        var closeBtn = $('#category-modal-close');
+        if (closeBtn) {
+            closeBtn.onclick = function() {
+                overlay.hidden = true;
+                overlay.classList.remove('open');
+            };
+        }
+        overlay.onclick = function(e) {
+            if (e.target === overlay) {
+                overlay.hidden = true;
+                overlay.classList.remove('open');
+            }
+        };
     }
 
     /* ─── Deck Panel Charts ─── */
@@ -2823,7 +2885,7 @@
                     }
                 }
                 if (g && g.categories) {
-                    var parts = ['Lands','Ramp','Draw','Removal','Strategy'].map(function(c) {
+                    var parts = ['Lands','Ramp','Draw','Removal','Core'].map(function(c) {
                         return c + ': ' + (g.categories[c] || 0);
                     });
                     guidelinePreview.textContent = parts.join(' · ');

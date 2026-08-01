@@ -409,6 +409,19 @@
     </div>
 </div>
 
+{# Category Breakdown Modal #}
+<div class="text-import-overlay" id="category-modal-overlay" hidden>
+    <div class="text-import-modal category-modal">
+        <div class="text-import-header">
+            <h3 id="category-modal-title">Category Breakdown</h3>
+            <button class="text-import-close" id="category-modal-close">✕</button>
+        </div>
+        <div class="text-import-body" id="category-modal-body">
+            {# Rendered by JS #}
+        </div>
+    </div>
+</div>
+
 {% endblock %}
 
 {% block extra_scripts %}
