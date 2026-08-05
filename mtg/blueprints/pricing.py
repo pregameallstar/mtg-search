@@ -30,7 +30,7 @@ def _fetch_scryfall_prices(scryfall_id):
     last_err = None
     for attempt in range(3):
         try:
-            req = Request(url, headers={"User-Agent": "mtg-search/1.0"})
+            req = Request(url, headers={"User-Agent": "mtg-search/1.0", "Accept": "application/json"})
             with urlopen(req, timeout=10) as resp:
                 card_data = json.loads(resp.read())
             prices = card_data.get("prices", {})
