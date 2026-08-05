@@ -98,6 +98,7 @@ from mtg.blueprints.eval_landing import eval_landing_bp
 from mtg.blueprints.decks import decks_bp
 from mtg.blueprints.templates_bp import templates_bp
 from mtg.blueprints.tags import tags_bp
+from mtg.blueprints.pricing import pricing_bp
 
 app.register_blueprint(search_bp)
 app.register_blueprint(similar_bp)
@@ -107,6 +108,7 @@ app.register_blueprint(eval_landing_bp)
 app.register_blueprint(decks_bp)
 app.register_blueprint(templates_bp)
 app.register_blueprint(tags_bp)
+app.register_blueprint(pricing_bp)
 
 
 # --- Run ---

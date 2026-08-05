@@ -344,6 +344,63 @@
     </div>
 
     <div class="eval-config" style="margin-top: 1.5rem;">
+        <h2 class="eval-config-heading">Pricing</h2>
+        <div style="padding: 1rem;">
+            <p style="margin:0 0 0.75rem 0; color:var(--text-dim); font-size:0.9rem;">
+                Default pricing source used for deck cost calculations. Prices are fetched
+                from Scryfall and cached on disk for 24 hours.
+            </p>
+            <div class="eval-config-row">
+                <label for="pricing_store">Price Source</label>
+                <select name="pricing_store" id="pricing_store" form="pricing-form">
+                    <option value="usd" {% if pricing_store == 'usd' %}selected{% endif %}>USD (Market)</option>
+                    <option value="usd_foil" {% if pricing_store == 'usd_foil' %}selected{% endif %}>USD Foil</option>
+                    <option value="usd_etched" {% if pricing_store == 'usd_etched' %}selected{% endif %}>USD Etched Foil</option>
+                    <option value="eur" {% if pricing_store == 'eur' %}selected{% endif %}>EUR (Cardmarket)</option>
+                </select>
+                <span class="eval-config-hint">
+                    Each deck can override this with its own pricing source via the
+                    Deck Builder's dropdown.
+                </span>
+            </div>
+            <form method="post" id="pricing-form" style="margin-top: 0.75rem;">
+                <input type="hidden" name="save_pricing" value="1">
+                <input type="hidden" name="llm_backend" value="{{ llm_backend }}">
+                <input type="hidden" name="llm_base_url" value="{{ llm_base_url }}">
+                <input type="hidden" name="llm_model" value="{{ llm_model }}">
+                <button type="submit" class="eval-config-save" style="margin-left:0;">Save</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="eval-config" style="margin-top: 1.5rem;">
+        <h2 class="eval-config-heading">Deck History</h2>
+        <div style="padding: 1rem;">
+            <p style="margin:0 0 0.75rem 0; color:var(--text-dim); font-size:0.9rem;">
+                Tracks card additions and removals to help you review deck changes.
+                A reminder will appear when a deck has gone this long without changes.
+            </p>
+            <div class="eval-config-row">
+                <label for="history_warning_days">Reminder Threshold (days)</label>
+                <input type="number" name="history_warning_days" id="history_warning_days"
+                       value="{{ history_warning_days }}" min="7" max="365"
+                       form="history-form" style="width:80px;">
+                <span class="eval-config-hint">
+                    After this many days with no deck changes, you'll be reminded to review
+                    and optionally clear the history. Default 30 days.
+                </span>
+            </div>
+            <form method="post" id="history-form" style="margin-top: 0.75rem;">
+                <input type="hidden" name="save_history" value="1">
+                <input type="hidden" name="llm_backend" value="{{ llm_backend }}">
+                <input type="hidden" name="llm_base_url" value="{{ llm_base_url }}">
+                <input type="hidden" name="llm_model" value="{{ llm_model }}">
+                <button type="submit" class="eval-config-save" style="margin-left:0;">Save</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="eval-config" style="margin-top: 1.5rem;">
         <h2 class="eval-config-heading">Commander Eval Prompt</h2>
         <div style="padding: 1rem;">
             <textarea name="eval_prompt" form="prompt-form" class="prompt-editor eval-prompt-area"

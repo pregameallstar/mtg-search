@@ -64,6 +64,21 @@ def config_page():
                 session["eval_similar_method"] = eval_similar_method
             elif "eval_similar_method" in session:
                 session.pop("eval_similar_method", None)
+        # Pricing config
+        if request.form.get("save_pricing") == "1":
+            pricing_store = request.form.get("pricing_store", "").strip()
+            if pricing_store in ("usd", "usd_foil", "usd_etched", "eur"):
+                session["pricing_store"] = pricing_store
+            elif "pricing_store" in session:
+                session.pop("pricing_store", None)
+        # History config
+        if request.form.get("save_history") == "1":
+            try:
+                threshold = int(request.form.get("history_warning_days", "30"))
+                if 7 <= threshold <= 365:
+                    session["history_warning_days"] = str(threshold)
+            except ValueError:
+                session.pop("history_warning_days", None)
         return redirect(url_for("config.config_page"))
 
     llm_backend = (session.get("llm_backend") or os.environ.get("LLM_BACKEND", "openai"))
@@ -75,6 +90,8 @@ def config_page():
     verify_prompt = session.get("verify_prompt", "")
     similar_method = session.get("similar_method", "embed")
     eval_similar_method = session.get("eval_similar_method", "embed")
+    pricing_store = session.get("pricing_store") or os.environ.get("PRICING_STORE", "usd")
+    history_warning_days = session.get("history_warning_days", "30")
 
     last_ingest = None
     _ingest_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".last_ingest.json")
@@ -108,6 +125,8 @@ def config_page():
                            verify_prompt=verify_prompt,
                            similar_method=similar_method,
                            eval_similar_method=eval_similar_method,
+                           pricing_store=pricing_store,
+                           history_warning_days=history_warning_days,
                            default_prompt=COMMANDER_SYSTEM_PROMPT,
                            default_deepdive_prompt=DEEPDIVE_SYSTEM_PROMPT,
                            default_verify_prompt=VERIFY_SYSTEM_PROMPT,

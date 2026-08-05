@@ -25,6 +25,7 @@ services:
       - ./templates:/app/templates
       - ./decks:/app/decks
       - ./card_templates:/app/card_templates
+      - ./prices:/app/prices
     environment:
       - SEARXNG_URL=http://searxng:8080
       - LLM_BACKEND=${LLM_BACKEND:-openai}

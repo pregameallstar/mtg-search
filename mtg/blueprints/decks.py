@@ -1,10 +1,11 @@
 import json
 import os
 import re
+from datetime import datetime, timezone
 
-from flask import Blueprint, request, render_template, jsonify
+from flask import Blueprint, request, render_template, jsonify, session
 
-from mtg.shared import get_db, DECKS_DIR, card_image
+from mtg.shared import get_db, DECKS_DIR, HISTORY_DIR, card_image
 
 decks_bp = Blueprint("decks", __name__)
 
@@ -17,7 +18,11 @@ def _sanitize_name(name):
 @decks_bp.route("/deck-builder")
 def deck_builder_page():
     """Deck Builder — split-panel page: search on left, deck on right."""
-    return render_template("deck_builder.html")
+    pricing_store = session.get("pricing_store") or os.environ.get("PRICING_STORE", "usd")
+    history_warning_days = session.get("history_warning_days", "30")
+    return render_template("deck_builder.html",
+                           pricing_store=pricing_store,
+                           history_warning_days=history_warning_days)
 
 
 @decks_bp.route("/saved-decks")
@@ -224,3 +229,114 @@ def deck_lookup_by_uuid():
         "uuid": card["uuid"],
         "name": card["name"],
     })
+
+
+# --- Deck History ---
+
+@decks_bp.route("/api/deck/history", methods=["GET"])
+def api_deck_history():
+    """Return history array for a deck."""
+    name = request.args.get("deck", "").strip()
+    if not name:
+        return jsonify({"error": "Deck name is required."}), 400
+    if ".." in name or "/" in name:
+        return jsonify({"error": "Invalid deck name."}), 400
+    fname = _sanitize_name(name)
+    fpath = os.path.join(HISTORY_DIR, fname)
+    try:
+        with open(fpath) as f:
+            history = json.load(f)
+        return jsonify({"success": True, "history": history})
+    except FileNotFoundError:
+        return jsonify({"success": True, "history": []})
+    except (json.JSONDecodeError, OSError) as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@decks_bp.route("/api/deck/history/save", methods=["POST"])
+def api_deck_history_save():
+    """Append events to a deck's history file."""
+    body = request.get_json(silent=True) or {}
+    name = body.get("name", "").strip()
+    events = body.get("events", [])
+    if not name:
+        return jsonify({"error": "Deck name is required."}), 400
+    if not isinstance(events, list) or len(events) == 0:
+        return jsonify({"error": "events array required."}), 400
+    if ".." in name or "/" in name:
+        return jsonify({"error": "Invalid deck name."}), 400
+    fname = _sanitize_name(name)
+    fpath = os.path.join(HISTORY_DIR, fname)
+    try:
+        existing = []
+        if os.path.exists(fpath):
+            with open(fpath) as f:
+                existing = json.load(f)
+        existing.extend(events)
+        with open(fpath, "w") as f:
+            json.dump(existing, f, indent=2)
+        return jsonify({"success": True, "count": len(existing)})
+    except OSError as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@decks_bp.route("/api/deck/history/delete", methods=["POST"])
+def api_deck_history_delete():
+    """Delete the history file for a deck."""
+    body = request.get_json(silent=True) or {}
+    name = body.get("name", "").strip()
+    if not name:
+        return jsonify({"error": "Deck name is required."}), 400
+    if ".." in name or "/" in name:
+        return jsonify({"error": "Invalid deck name."}), 400
+    fname = _sanitize_name(name)
+    fpath = os.path.join(HISTORY_DIR, fname)
+    try:
+        os.unlink(fpath)
+        return jsonify({"success": True})
+    except FileNotFoundError:
+        return jsonify({"error": "History not found."}), 404
+    except OSError as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@decks_bp.route("/api/deck/history/check", methods=["GET"])
+def api_deck_history_check():
+    """Check if any deck needs a history cleanup reminder.
+
+    Query param: threshold_days (default 30).
+    Returns decks whose last history event is >= threshold_days ago.
+    """
+    try:
+        threshold = int(request.args.get("threshold_days", "30"))
+    except ValueError:
+        threshold = 30
+
+    reminders = []
+    if not os.path.isdir(HISTORY_DIR):
+        return jsonify({"reminders": []})
+
+    now = datetime.now(timezone.utc)
+    for fname in os.listdir(HISTORY_DIR):
+        if not fname.endswith(".json"):
+            continue
+        fpath = os.path.join(HISTORY_DIR, fname)
+        try:
+            with open(fpath) as f:
+                history = json.load(f)
+            if not history:
+                continue
+            last_event = max(history, key=lambda e: e.get("timestamp", ""))
+            last_ts = last_event.get("timestamp", "")
+            if not last_ts:
+                continue
+            # ponytail: handle Z suffix compatibly across Python versions
+            last_dt = datetime.fromisoformat(last_ts.replace("Z", "+00:00"))
+            days = (now - last_dt).days
+            if days >= threshold:
+                deck_name = fname.replace("_", " ").replace(".json", "")
+                reminders.append({"deck": deck_name, "days": days})
+        except (json.JSONDecodeError, OSError, ValueError):
+            pass
+
+    return jsonify({"reminders": reminders})

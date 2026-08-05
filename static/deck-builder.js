@@ -16,6 +16,36 @@
     ];
 
     /* ─── Card Classification ─── */
+    // ponytail: history buffer — flushed to server on add/remove events
+    var historyBuffer = [];
+    var historyWarningDays = 30;
+
+    function recordHistoryEvent(action, cardData, sectionName) {
+        if (!deck.name) return;
+        var event = {
+            timestamp: new Date().toISOString(),
+            action: action,
+            card: {
+                name: cardData.name,
+                uuid: cardData.uuid,
+                setCode: cardData.setCode || '',
+                number: cardData.number || '',
+            },
+            section: sectionName || 'main',
+            quantity: cardData.quantity || 1,
+        };
+        historyBuffer.push(event);
+    }
+
+    function flushHistory() {
+        if (!historyBuffer.length || !deck.name) return;
+        var events = historyBuffer.splice(0);
+        fetch('/api/deck/history/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: deck.name, events: events }),
+        }).catch(function () { /* silent — history is nice-to-have */ });
+    }
     function classifyCard(card) {
         /* Classify a card into one of: Lands, Ramp, Removal, Draw, Core.
            Evaluated in priority order — first match wins.
@@ -73,6 +103,8 @@
         this.evalData = null;     // Commander eval analysis (from embedded eval iframe)
         this.sections = {};       // { "Sideboard": [card, ...], "Maybeboard": [card, ...], custom: [...] }
         this.guideline = null;    // Guideline template name string (or null)
+        this.pricingStore = null; // Per-deck pricing override (null = use global)
+        this.pricingSections = {}; // Section include toggles for cost { "main": true, "Sideboard": false, ... }
     }
 
     Deck.prototype.addCard = function (cardData) {
@@ -82,6 +114,7 @@
         if (cardData.isLegendary && cardData.isCreature) {
             if (!this.commander) {
                 this.commander = cardData;
+                recordHistoryEvent('add', cardData, 'commander');
                 return { ok: true, isCommander: true };
             } else if (this.commander.uuid === cardData.uuid) {
                 return { ok: true, isCommander: true }; // already set
@@ -107,12 +140,14 @@
                 return { error: 'Maximum 4 copies per card.' };
             }
             existing.quantity++;
+            recordHistoryEvent('add', cardData, 'main');
             return { ok: true };
         }
 
         cardData.quantity = 1;
         cardData.tags = [];
         this.cards.push(cardData);
+        recordHistoryEvent('add', cardData, 'main');
         return { ok: true };
     };
 
@@ -142,6 +177,7 @@
             cardData.tags = [];
             section.push(cardData);
         }
+        recordHistoryEvent('add', cardData, sectionName);
         return { ok: true };
     };
 
@@ -150,7 +186,9 @@
         if (!section) return false;
         var idx = section.findIndex(function (c) { return c.uuid === uuid; });
         if (idx === -1) return false;
+        var removed = section[idx];
         section.splice(idx, 1);
+        recordHistoryEvent('remove', removed, sectionName);
         return true;
     };
 
@@ -204,21 +242,26 @@
             var section = this.sections[toSection];
             if (!section) return { error: 'Section "' + toSection + '" does not exist.' };
             section.push(movedCard);
+            recordHistoryEvent('add', movedCard, toSection);
         } else {
             // Add to main deck — skip commander logic, preserve quantity
             this.cards.push(movedCard);
+            recordHistoryEvent('add', movedCard, 'main');
         }
         return { ok: true };
     };
 
     Deck.prototype.removeCard = function (uuid) {
         if (this.commander && this.commander.uuid === uuid) {
+            recordHistoryEvent('remove', this.commander, 'commander');
             this.commander = null;
             return true;
         }
         var idx = this.cards.findIndex(function (c) { return c.uuid === uuid; });
         if (idx === -1) return false;
+        var removed = this.cards[idx];
         this.cards.splice(idx, 1);
+        recordHistoryEvent('remove', removed, 'main');
         return true;
     };
 
@@ -236,12 +279,14 @@
         var existing = this.cards.find(function (c) { return c.uuid === cardData.uuid; });
         if (existing) {
             existing.quantity += qty;
+            recordHistoryEvent('add', Object.assign({}, cardData, { quantity: qty }), 'main');
             return { ok: true };
         }
 
         cardData.quantity = qty;
         cardData.tags = [];
         this.cards.push(cardData);
+        recordHistoryEvent('add', cardData, 'main');
         return { ok: true };
     };
 
@@ -272,6 +317,8 @@
         this.evalData = null;
         this.sections = {};
         this.guideline = null;
+        this.pricingStore = null;
+        this.pricingSections = {};
     };
 
     Deck.prototype.getCommanderCI = function () {
@@ -295,6 +342,7 @@
                 text: c.text,
                 supertypes: c.supertypes,
                 tags: c.tags || [],
+                scryfallId: c.scryfallId || '',
             };
         };
 
@@ -312,6 +360,8 @@
             cards: this.cards.map(cardMapper),
             sections: sectionsExport,
             guideline: this.guideline,
+            pricingStore: this.pricingStore || null,
+            pricingSections: this.pricingSections || {},
         };
     };
 
@@ -320,6 +370,8 @@
         this.commander = data.commander || null;
         this.evalData = data.evalData || null;
         this.guideline = data.guideline || null;
+        this.pricingStore = data.pricingStore || null;
+        this.pricingSections = data.pricingSections || {};
         this.cards = (data.cards || []).map(function (c) {
             var card = Object.assign({}, c, { quantity: c.quantity || 1 });
             if (!card.tags) card.tags = [];
@@ -601,6 +653,204 @@
         document.removeEventListener('click', closeTagPopoverOnOutside);
     }
 
+    /* ── Pricing ── */
+    var priceCache = {};      // { scryfallId: { usd: "0.50", ... } }
+    var pricesLoaded = false;
+    var globalPricingStore = 'usd';
+
+    function getDeckPricingStore() {
+        return deck.pricingStore || globalPricingStore || 'usd';
+    }
+
+    function getCardPrice(card) {
+        if (!card || !card.scryfallId) return null;
+        var prices = priceCache[card.scryfallId];
+        if (!prices) return null;
+        var store = getDeckPricingStore();
+        var val = prices[store];
+        if (val === null || val === undefined) return null;
+        return parseFloat(val);
+    }
+
+    function formatPrice(price) {
+        if (price === null || price === undefined) return '--';
+        return '$' + price.toFixed(2);
+    }
+
+    function fetchPrices(onComplete) {
+        // Collect unique scryfallIds
+        var ids = [];
+        function collect(card) {
+            if (card && card.scryfallId && ids.indexOf(card.scryfallId) === -1) {
+                ids.push(card.scryfallId);
+            }
+        }
+        if (deck.commander) collect(deck.commander);
+        deck.cards.forEach(collect);
+        if (deck.sections) {
+            Object.keys(deck.sections).forEach(function (k) {
+                (deck.sections[k] || []).forEach(collect);
+            });
+        }
+
+        if (ids.length === 0) {
+            pricesLoaded = true;
+            if (onComplete) onComplete();
+            return;
+        }
+
+        fetch('/api/pricing/fetch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ scryfallIds: ids }),
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            if (data.success && data.prices) {
+                Object.keys(data.prices).forEach(function (id) {
+                    priceCache[id] = data.prices[id];
+                });
+                pricesLoaded = true;
+            }
+            if (onComplete) onComplete();
+        })
+        .catch(function () {
+            if (onComplete) onComplete();
+        });
+    }
+
+    function computeDeckCost() {
+        var total = 0;
+        var hasAnyPrice = false;
+        var hasMissingPrice = false;
+
+        function sumCards(cards, sectionName) {
+            if (!cards) return;
+            cards.forEach(function (c) {
+                var p = getCardPrice(c);
+                if (p !== null) {
+                    total += p * (c.quantity || 1);
+                    hasAnyPrice = true;
+                } else {
+                    hasMissingPrice = true;
+                }
+            });
+        }
+
+        // Main deck — always check include via checkbox
+        var pSections = deck.pricingSections || {};
+        var includeMain = pSections['main'] !== false; // default true
+        if (includeMain) {
+            if (deck.commander) {
+                var cp = getCardPrice(deck.commander);
+                if (cp !== null) { total += cp; hasAnyPrice = true; }
+                else { hasMissingPrice = true; }
+            }
+            sumCards(deck.cards, 'main');
+        }
+
+        // Custom sections
+        if (deck.sections) {
+            Object.keys(deck.sections).forEach(function (key) {
+                var include = pSections[key] !== false; // default true
+                if (include) {
+                    sumCards(deck.sections[key] || [], key);
+                }
+            });
+        }
+
+        return {
+            total: total,
+            hasAnyPrice: hasAnyPrice,
+            hasMissingPrice: hasMissingPrice,
+            prefix: hasMissingPrice ? '≥ ' : '',
+        };
+    }
+
+    function renderDeckCost() {
+        var bar = $('#deck-cost-bar');
+        var costEl = $('#deck-total-cost');
+        if (!bar || !costEl) return;
+
+        if (!pricesLoaded) {
+            costEl.textContent = '--';
+            bar.style.display = 'none';
+            return;
+        }
+
+        var cost = computeDeckCost();
+        if (cost.hasAnyPrice) {
+            costEl.textContent = cost.prefix + formatPrice(cost.total);
+        } else {
+            costEl.textContent = '--';
+        }
+        bar.style.display = '';
+    }
+
+    function initRefreshPricesButton() {
+        var btn = $('#deck-refresh-prices-btn');
+        if (!btn) return;
+        btn.addEventListener('click', function () {
+            btn.disabled = true;
+            btn.textContent = 'Loading...';
+            // Clear cache to force re-fetch
+            priceCache = {};
+            pricesLoaded = false;
+            fetchPrices(function () {
+                btn.disabled = false;
+                btn.textContent = '💲 Refresh';
+                renderAll();
+                renderDeckCost();
+                showToast('Prices refreshed.');
+            });
+        });
+    }
+
+    function initPricingStoreSelect() {
+        var sel = $('#deck-pricing-store');
+        if (!sel) return;
+        // Set initial value from deck
+        sel.value = deck.pricingStore || '';
+        sel.addEventListener('change', function () {
+            deck.pricingStore = this.value || null;
+            saveCurrentDeck();
+            renderAll();
+            renderDeckCost();
+        });
+    }
+
+    function initSectionIncludeCheckboxes() {
+        var mainCb = $('#deck-include-main-cb');
+        var mainLabel = $('#deck-include-main-label');
+        if (mainCb && mainLabel) {
+            var pSections = deck.pricingSections || {};
+            mainCb.checked = pSections['main'] !== false;
+            mainCb.addEventListener('change', function () {
+                if (!deck.pricingSections) deck.pricingSections = {};
+                deck.pricingSections['main'] = this.checked;
+                saveCurrentDeck();
+                renderDeckCost();
+            });
+        }
+    }
+
+    function updatePricingStoreSelect() {
+        var sel = $('#deck-pricing-store');
+        if (sel) {
+            sel.value = deck.pricingStore || '';
+        }
+    }
+
+    function updateSectionIncludeCheckboxes() {
+        var mainCb = $('#deck-include-main-cb');
+        var mainLabel = $('#deck-include-main-label');
+        var pSections = deck.pricingSections || {};
+        if (mainCb && mainLabel) {
+            mainCb.checked = pSections['main'] !== false;
+            mainLabel.style.display = pricesLoaded ? '' : 'none';
+        }
+    }
+
     /* ── Tag Filter Bar ─── */
     function renderTagFilterBar() {
         // Rebuild the tag filter chips above the card list.
@@ -677,7 +927,10 @@
         renderStats();
         renderDeckCharts();
         renderGuidelineProgress();
+        renderDeckCost();
         updateDeckNameInput();
+        updatePricingStoreSelect();
+        updateSectionIncludeCheckboxes();
         makeDeckCardRowsDraggable();
         initSectionDropZones();
     }
@@ -872,6 +1125,10 @@
             html += '<div class="deck-section-header custom-section-header">';
             html += '<span class="deck-section-title">' + escapeHtml(sectionName) + '</span>';
             html += '<span class="deck-section-count">' + totalCount + '</span>';
+            // Include in cost checkbox
+            var pSections = deck.pricingSections || {};
+            var checked = pSections[sectionName] !== false ? ' checked' : '';
+            html += '<label class="section-include-label" title="Include in deck cost"><input type="checkbox" class="section-include-cb" data-section="' + escapeAttr(sectionName) + '"' + checked + '> Cost</label>';
             html += '<button class="section-delete-btn" data-section="' + escapeAttr(sectionName) + '" title="Delete section">✕</button>';
             html += '<span class="deck-section-arrow">▼</span>';
             html += '</div>';
@@ -891,6 +1148,7 @@
 
         attachSectionCardRowListeners();
         attachSectionDeleteListeners();
+        attachSectionIncludeListeners();
     }
 
     function renderSectionCardRow(card, sectionName) {
@@ -917,6 +1175,7 @@
             '<span class="card-mv" title="Mana Value">' + (card.manaValue !== undefined ? card.manaValue : '—') + '</span>' +
             '<span class="card-name-text" title="' + escapeAttr(card.name) + '">' + escapeHtml(card.name) + '</span>' +
             '<span class="card-mana-cost">' + renderManaSymbols(card.manaCost || '') + '</span>' +
+            '<span class="card-price">' + formatPrice(getCardPrice(card)) + '</span>' +
             tagBadges +
             '<button class="card-tag-btn" data-uuid="' + escapeAttr(card.uuid) + '" data-section="' + escapeAttr(sectionName) + '" title="Edit tags">🏷</button>' +
             '<button class="card-remove-btn" data-uuid="' + escapeAttr(card.uuid) + '" data-section="' + escapeAttr(sectionName) + '" title="Remove">✕</button>' +
@@ -981,6 +1240,20 @@
                 renderAll();
                 saveCurrentDeck();
                 showToast('Section "' + sectionName + '" deleted.');
+            });
+        });
+    }
+
+    function attachSectionIncludeListeners() {
+        $$('#custom-sections .section-include-cb').forEach(function (cb) {
+            cb.addEventListener('click', function (e) {
+                e.stopPropagation();
+            });
+            cb.addEventListener('change', function () {
+                if (!deck.pricingSections) deck.pricingSections = {};
+                deck.pricingSections[this.dataset.section] = this.checked;
+                saveCurrentDeck();
+                renderDeckCost();
             });
         });
     }
@@ -1098,6 +1371,7 @@
             '<span class="card-mv" title="Mana Value">' + (card.manaValue !== undefined ? card.manaValue : '—') + '</span>' +
             '<span class="card-name-text" title="' + escapeAttr(card.name) + '">' + escapeHtml(card.name) + '</span>' +
             '<span class="card-mana-cost">' + renderManaSymbols(card.manaCost || '') + '</span>' +
+            '<span class="card-price">' + formatPrice(getCardPrice(card)) + '</span>' +
             tagBadges +
             '<button class="card-tag-btn" data-uuid="' + escapeAttr(card.uuid) + '" title="Edit tags">🏷</button>' +
             '<button class="card-remove-btn" data-uuid="' + escapeAttr(card.uuid) + '" title="Remove">✕</button>' +
@@ -1630,6 +1904,8 @@
             return;
         }
         needsSave = true;
+        // Flush history events immediately (fire-and-forget)
+        flushHistory();
         // Debounce saves — 600ms cooldown between writes
         if (saveTimer) clearTimeout(saveTimer);
         updateSaveStatus('saving', 'Saving…');
@@ -1638,12 +1914,18 @@
         }, 600);
     }
 
+    function updateHistoryBtnVisibility() {
+        var btn = $('#deck-history-delete-btn');
+        if (btn) btn.style.display = deck.name ? '' : 'none';
+    }
+
     function updateDeckNameInput() {
         var input = $('#deck-name');
         if (input && input !== document.activeElement) {
             input.value = deck.name;
             input.classList.toggle('unnamed', !deck.name);
         }
+        updateHistoryBtnVisibility();
         if (deck.name) {
             updateSaveStatus('saved', 'Saved');
         } else {
@@ -1722,7 +2004,7 @@
     }
 
     /* ── Toast Notifications ─── */
-    function showToast(message) {
+    function showToast(message, duration) {
         var existing = document.querySelector('.deck-toast');
         if (existing) existing.remove();
 
@@ -1731,11 +2013,12 @@
         toast.textContent = message;
         document.body.appendChild(toast);
 
+        var dur = duration || 2000;
         setTimeout(function () {
             toast.style.opacity = '0';
             toast.style.transform = 'translateY(10px)';
             setTimeout(function () { toast.remove(); }, 300);
-        }, 2000);
+        }, dur);
     }
 
     /* ─── Search Panel ─── */
@@ -2257,13 +2540,17 @@
         // If there's an existing commander, move it to main/where this card came from
         if (deck.commander) {
             var oldCommander = Object.assign({}, deck.commander, { quantity: 1, tags: [] });
+            recordHistoryEvent('remove', deck.commander, 'commander');
             if (fromSection) {
                 deck.sections[fromSection].push(oldCommander);
+                recordHistoryEvent('add', oldCommander, fromSection);
             } else {
                 deck.cards.push(oldCommander);
+                recordHistoryEvent('add', oldCommander, 'main');
             }
         }
         deck.commander = Object.assign({}, card, { quantity: 1 });
+        recordHistoryEvent('add', card, 'commander');
         renderAll();
         saveCurrentDeck();
         onComplete({ ok: true, cardName: card.name, moved: true, from: fromSection, to: 'commander' });
@@ -2276,6 +2563,7 @@
                 return;
             }
             deck.commander = card;
+            recordHistoryEvent('add', card, 'commander');
             renderAll();
             saveCurrentDeck();
             onComplete({ ok: true, cardName: card.name, isCommander: true });
@@ -2503,9 +2791,18 @@
         if (!data) return;
         deck.fromImport(data);
         deck.name = data.name || name;
+        // Show price refresh button and history button now that deck is named
+        updateHistoryBtnVisibility();
+        // Auto-fetch prices on load
+        if (deck.name) {
+            fetchPrices(function () {
+                renderAll();
+            });
+        }
         $('#deck-name').value = deck.name;
         renderAll();
         restoreEvalData();
+        checkHistoryReminder();
         // Sync guideline selects now that deck.guideline is set.
         // populateGuidelineSelects may have already been called by the async
         // loadGuidelineList (racing before the deck load), so update the
@@ -3266,6 +3563,43 @@
     var hoverTimeout = null;
     var hoverActiveRow = null;
 
+    /* ── History Delete Button ── */
+    function initHistoryDeleteButton() {
+        var btn = $('#deck-history-delete-btn');
+        if (!btn) return;
+        btn.addEventListener('click', function () {
+            if (!deck.name) { showToast('Save your deck first.'); return; }
+            if (!confirm('Delete all change history for "' + deck.name + '"? This cannot be undone.')) return;
+            fetch('/api/deck/history/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: deck.name }),
+            })
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                if (data.success || data.error === 'History not found.') {
+                    showToast('History deleted.');
+                } else {
+                    showToast(data.error || 'Failed to delete history.');
+                }
+            })
+            .catch(function () { showToast('Network error.'); });
+        });
+    }
+
+    function checkHistoryReminder() {
+        if (!deck.name) return;
+        fetch('/api/deck/history/check?threshold_days=' + historyWarningDays)
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                var match = (data.reminders || []).find(function (r) { return r.deck === deck.name; });
+                if (match) {
+                    showToast('No changes in ' + match.days + ' days. Consider clearing history to save space.', 10000);
+                }
+            })
+            .catch(function () { /* ignore */ });
+    }
+
     function initCardHoverPreview() {
         // Create the preview element once, reuse it
         hoverPreviewEl = document.createElement('img');
@@ -3353,6 +3687,17 @@
         initQuickAdd();
         initSectionManagement();
         initGuideline();
+
+        // Read config from Flask session
+        if (window._mtgConfig) {
+            globalPricingStore = window._mtgConfig.pricingStore || 'usd';
+            historyWarningDays = window._mtgConfig.historyWarningDays || 30;
+        }
+
+        initRefreshPricesButton();
+        initPricingStoreSelect();
+        initSectionIncludeCheckboxes();
+        initHistoryDeleteButton();
         enableGlobalDrag();
         enableCardPanelAddToDeck();
 
@@ -3420,6 +3765,7 @@
             if (needsSave && deck.name) {
                 saveDeckToServer(deck, true);  // fire-and-forget via sendBeacon
             }
+            flushHistory(); // fire-and-forget history events
         });
 
         // Also flush on visibility change (tab close / mobile background)
@@ -3429,6 +3775,7 @@
                 if (needsSave && deck.name) {
                     saveDeckToServer(deck, true);
                 }
+                flushHistory(); // fire-and-forget history events
             }
         });
 

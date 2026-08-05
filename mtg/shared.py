@@ -79,6 +79,10 @@ DECKS_DIR = "decks"
 os.makedirs(DECKS_DIR, exist_ok=True)
 TEMPLATES_DIR = "card_templates"
 os.makedirs(TEMPLATES_DIR, exist_ok=True)
+PRICES_DIR = "prices"
+os.makedirs(PRICES_DIR, exist_ok=True)
+HISTORY_DIR = os.path.join(DECKS_DIR, "_history")
+os.makedirs(HISTORY_DIR, exist_ok=True)
 
 # ponytail: alias for backward compat — Jinja globals and deck routes use this name
 card_image = card_image_url

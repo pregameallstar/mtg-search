@@ -268,6 +268,7 @@
                 <button id="deck-export-btn" class="btn-deck-action" title="Export as JSON">📤 Export</button>
                 <button id="deck-text-import-btn" class="btn-deck-action" title="Import from text list">📋 Text Import</button>
                 <button id="deck-clear-btn" class="btn-deck-action btn-danger" title="Clear deck">🗑 Clear</button>
+                <button id="deck-history-delete-btn" class="btn-deck-action" title="Clear change history" style="display:none;">📜 Clear History</button>
             </div>
         </div>
         <div class="deck-guideline-bar" id="deck-guideline-bar">
@@ -276,6 +277,23 @@
                     <option value="">None</option>
                 </select>
             </label>
+        </div>
+        {# Cost Bar #}
+        <div class="deck-cost-bar" id="deck-cost-bar" style="display:none;">
+            <div class="deck-cost-display">
+                <span class="cost-label">Deck Cost:</span>
+                <span class="cost-value" id="deck-total-cost">--</span>
+            </div>
+            <div class="deck-cost-actions">
+                <select id="deck-pricing-store" class="deck-pricing-select">
+                    <option value="">Global</option>
+                    <option value="usd">USD</option>
+                    <option value="usd_foil">USD Foil</option>
+                    <option value="usd_etched">USD Etched</option>
+                    <option value="eur">EUR</option>
+                </select>
+                <button id="deck-refresh-prices-btn" class="btn-deck-action" title="Refresh prices from Scryfall">💲 Refresh</button>
+            </div>
         </div>
         <div class="panel-body deck-panel-body">
 
@@ -294,6 +312,9 @@
                         <option value="name">Name</option>
                         <option value="mv">Mana Value</option>
                     </select>
+                </label>
+                <label class="deck-include-label" id="deck-include-main-label" title="Include main deck in cost" style="display:none;">
+                    <input type="checkbox" id="deck-include-main-cb" checked> Cost
                 </label>
             </div>
 
@@ -434,5 +455,12 @@
 {% endblock %}
 
 {% block extra_scripts %}
+<script>
+    // Config from Flask session — consumed by deck-builder.js
+    window._mtgConfig = {
+        pricingStore: "{{ pricing_store }}",
+        historyWarningDays: {{ history_warning_days|int }}
+    };
+</script>
 <script src="{{ url_for('static', filename='deck-builder.js') }}"></script>
 {% endblock %}
