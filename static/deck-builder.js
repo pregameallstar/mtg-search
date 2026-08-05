@@ -710,11 +710,12 @@
                 Object.keys(data.prices).forEach(function (id) {
                     priceCache[id] = data.prices[id];
                 });
-                pricesLoaded = true;
             }
+            pricesLoaded = true;
             if (onComplete) onComplete();
         })
         .catch(function () {
+            pricesLoaded = true; // mark loaded so bar shows (even if empty)
             if (onComplete) onComplete();
         });
     }
