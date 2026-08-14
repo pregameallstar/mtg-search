@@ -185,9 +185,9 @@ def semantic_search(
     limit: max results (default 15). Set higher for broader coverage
            when you'll re-rank yourself.
     """
-    import embed
+    from mtg.embed import find
 
-    results = embed.find(db_path(DATABASE), query, top_k=800)
+    results = find(db_path(DATABASE), query, top_k=800)
     if not results:
         return []
 

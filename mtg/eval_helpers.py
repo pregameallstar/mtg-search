@@ -8,6 +8,8 @@ import json
 import os
 import time as _time
 
+from mtg.shared import DEEPDIVE_SUFFIX
+
 
 # --- Placeholder detection ---
 
@@ -60,7 +62,7 @@ def get_commander_filter_sets(db):
 
 def eval_similar_embed(db, card, db_path):
     """Semantic similarity via embedding index. Filters to legendary + Cmdr-legal + MV ±3."""
-    from embed import find
+    from mtg.embed import find
 
     candidates = find(db_path, card.get("text") or "", top_k=200)
     candidates = [c for c in candidates if c["name"] != card["name"]]
@@ -110,7 +112,7 @@ def eval_similar_embed(db, card, db_path):
 
 def eval_similar_legacy(db, card, db_path):
     """TF-IDF strictness-loosening loop — original algorithm."""
-    from similarity import get_idf, extract_terms, split_csv, score_similarity
+    from mtg.similarity import get_idf, extract_terms, split_csv, score_similarity
 
     base = dict(card)
     base["_t"] = split_csv(base["types"])
@@ -208,7 +210,7 @@ def auto_save_deepdives(set_code, number, new_deepdives, reports_dir):
     if not new_deepdives:
         return
     os.makedirs(reports_dir, exist_ok=True)
-    autosave_path = os.path.join(reports_dir, f"{set_code}_{number}_deepdives.json")
+    autosave_path = os.path.join(reports_dir, f"{set_code}_{number}{DEEPDIVE_SUFFIX}")
     try:
         existing = {}
         if os.path.exists(autosave_path):
@@ -225,7 +227,7 @@ def auto_save_deepdives(set_code, number, new_deepdives, reports_dir):
 def load_auto_deepdives(set_code, number, reports_dir):
     """Load auto-saved deepdives from the deterministic file."""
     autosave_path = os.path.join(
-        reports_dir, f"{set_code}_{number}_deepdives.json",
+        reports_dir, f"{set_code}_{number}{DEEPDIVE_SUFFIX}",
     )
     try:
         if os.path.exists(autosave_path):

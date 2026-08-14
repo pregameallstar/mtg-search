@@ -1,10 +1,9 @@
 import json
 import os
-import re
 
 from flask import Blueprint, request, render_template, jsonify
 
-from mtg.shared import TEMPLATES_DIR
+from mtg.shared import TEMPLATES_DIR, sanitize_filename, _list_json_files
 
 templates_bp = Blueprint("templates_bp", __name__)
 
@@ -12,18 +11,7 @@ templates_bp = Blueprint("templates_bp", __name__)
 @templates_bp.route("/card-templates")
 def card_templates_page():
     """Card Templates — manage reusable card packages."""
-    templates = []
-    if os.path.isdir(TEMPLATES_DIR):
-        for fname in sorted(os.listdir(TEMPLATES_DIR)):
-            if not fname.endswith('.json'):
-                continue
-            fpath = os.path.join(TEMPLATES_DIR, fname)
-            try:
-                with open(fpath) as f:
-                    data = json.load(f)
-                templates.append(data)
-            except (json.JSONDecodeError, OSError):
-                pass
+    templates = _list_json_files(TEMPLATES_DIR)
     return render_template("card_templates.html", templates=templates)
 
 
@@ -34,8 +22,7 @@ def api_template_save():
     name = body.get("name", "").strip()
     if not name:
         return jsonify({"error": "Template name is required."}), 400
-    safe_name = re.sub(r'[^a-zA-Z0-9_ -]', '', name)
-    fname = safe_name.replace(' ', '_') + '.json'
+    fname = sanitize_filename(name)
     fpath = os.path.join(TEMPLATES_DIR, fname)
     try:
         with open(fpath, 'w') as f:
@@ -49,22 +36,9 @@ def api_template_save():
 def api_template_list():
     """List all saved card templates. Accepts optional ?type=guideline or ?type=cards."""
     filter_type = request.args.get("type", "").strip()
-    templates = []
-    if os.path.isdir(TEMPLATES_DIR):
-        for fname in sorted(os.listdir(TEMPLATES_DIR)):
-            if not fname.endswith('.json'):
-                continue
-            fpath = os.path.join(TEMPLATES_DIR, fname)
-            try:
-                with open(fpath) as f:
-                    data = json.load(f)
-                if filter_type:
-                    t = data.get("type", "cards")
-                    if t != filter_type:
-                        continue
-                templates.append(data)
-            except (json.JSONDecodeError, OSError):
-                pass
+    templates = _list_json_files(TEMPLATES_DIR)
+    if filter_type:
+        templates = [t for t in templates if t.get("type", "cards") == filter_type]
     return jsonify(templates)
 
 
@@ -75,8 +49,7 @@ def api_template_delete():
     name = body.get("name", "").strip()
     if not name:
         return jsonify({"error": "Template name is required."}), 400
-    safe_name = re.sub(r'[^a-zA-Z0-9_ -]', '', name)
-    fname = safe_name.replace(' ', '_') + '.json'
+    fname = sanitize_filename(name)
     fpath = os.path.join(TEMPLATES_DIR, fname)
     try:
         os.unlink(fpath)

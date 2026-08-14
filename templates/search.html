@@ -234,14 +234,14 @@
 
 <div class="card-grid">
     {% for c in results %}
-    <a href="/card/{{ c['setCode'] }}/{{ c['number'] }}" class="card-cell" data-set-code="{{ c['setCode'] }}" data-number="{{ c['number'] }}">
+    <div class="card-cell" data-set-code="{{ c['setCode'] }}" data-number="{{ c['number'] }}">
         {% set img = card_image(c['scryfallId']) %}
         {% if img %}
         <img src="{{ img }}" alt="{{ c['name'] }}" loading="lazy" width="244" height="340">
         {% else %}
         <div class="card-placeholder">{{ c['name'] }}</div>
         {% endif %}
-    </a>
+    </div>
     {% endfor %}
 </div>
 

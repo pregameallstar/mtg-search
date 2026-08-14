@@ -247,6 +247,7 @@ main { flex: 1; max-width: 1400px; margin: 0 auto; padding: 2rem 1rem; width: 10
     border: 1px solid var(--border);
     transition: border-color 0.2s, transform 0.15s;
     color: var(--text);
+    cursor: pointer;
 }
 .card-cell:hover { border-color: var(--accent); transform: translateY(-2px); color: var(--text); }
 .card-cell img {
@@ -1638,6 +1639,55 @@ main:has(.deck-builder-page) {
     border-bottom: 1px solid var(--border);
     background: var(--bg-card);
     flex-shrink: 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+/* ─── Panel Collapse Toggle ─── */
+.panel-collapse-btn {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
+    line-height: 1;
+    transition: all 0.15s;
+    flex-shrink: 0;
+}
+.panel-collapse-btn:hover {
+    color: var(--text);
+    background: var(--bg-hover);
+    border-color: var(--accent);
+}
+
+/* Collapsed tools panel state */
+.deck-builder-page.collapsed-tools {
+    grid-template-columns: 29px 1fr;
+}
+.deck-builder-page.collapsed-tools .search-panel {
+    position: relative;
+    min-width: 0;
+    overflow: visible;
+}
+.deck-builder-page.collapsed-tools .search-panel > :not(.panel-header) {
+    display: none;
+}
+.deck-builder-page.collapsed-tools .panel-header {
+    padding: 0;
+    border-bottom: none;
+    background: none;
+}
+.deck-builder-page.collapsed-tools .panel-header h2 {
+    display: none;
+}
+.deck-builder-page.collapsed-tools .panel-collapse-btn {
+    position: absolute;
+    top: 0.75rem;
+    left: 2px;
+    z-index: 10;
 }
 
 /* --- Tool tab bar --- */
@@ -3539,9 +3589,23 @@ main:has(.card-templates-page) {
         grid-template-columns: 1fr;
     }
 
-    .search-panel {
-        border-right: none;
-        border-bottom: 1px solid var(--border);
+    .deck-builder-page.collapsed-tools {
+        grid-template-columns: 1fr;
+    }
+    .deck-builder-page.collapsed-tools .search-panel {
+        position: static;
+        min-width: auto;
+        overflow: hidden;
+    }
+    .deck-builder-page.collapsed-tools .search-panel > :not(.panel-header) {
+        display: flex;
+    }
+    .deck-builder-page.collapsed-tools .panel-header h2 {
+        display: block;
+    }
+
+    .panel-collapse-btn {
+        display: none;
     }
 
 }

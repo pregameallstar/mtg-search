@@ -1,18 +1,27 @@
 import json
 import os
-import re
 from datetime import datetime, timezone
 
 from flask import Blueprint, request, render_template, jsonify, session
 
-from mtg.shared import get_db, DECKS_DIR, HISTORY_DIR, card_image
+from mtg.shared import get_db, DECKS_DIR, HISTORY_DIR, card_image, sanitize_filename, _list_json_files
 
 decks_bp = Blueprint("decks", __name__)
 
 
 def _sanitize_name(name):
-    safe_name = re.sub(r'[^a-zA-Z0-9_ -]', '', name)
-    return safe_name.replace(' ', '_') + '.json'
+    """Map a display name to a safe on-disk filename.
+
+    The single sanitizer used by deck save/list and history routes. It strips
+    any character outside [a-zA-Z0-9_ -] (including ., /, ..) so path traversal
+    is prevented incidentally. History routes additionally reject `..`/`/`
+    outright with a 400 for a clearer error; both paths agree on the sanitized
+    filename, so a name like "My Deck (v1)" consistently becomes My_Deck_v1.json.
+
+    Delegates to shared.sanitize_filename so decks and card templates sanitize
+    identically.
+    """
+    return sanitize_filename(name)
 
 
 @decks_bp.route("/deck-builder")
@@ -28,24 +37,20 @@ def deck_builder_page():
 @decks_bp.route("/saved-decks")
 def saved_decks_page():
     """Saved Decks — grid view of all locally saved decks."""
-    decks = []
-    if os.path.isdir(DECKS_DIR):
-        for fname in sorted(os.listdir(DECKS_DIR)):
-            if not fname.endswith('.json') or fname == '_tags.json':
-                continue
-            fpath = os.path.join(DECKS_DIR, fname)
-            try:
-                with open(fpath) as f:
-                    data = json.load(f)
-                decks.append(data)
-            except (json.JSONDecodeError, OSError):
-                pass
+    decks = _list_json_files(DECKS_DIR, skip_names=("_tags.json",))
     return render_template("saved_decks.html", decks=decks)
 
 
 @decks_bp.route("/api/deck/save", methods=["POST"])
 def api_deck_save():
-    """Save deck to disk as JSON."""
+    """Save deck to disk as JSON.
+
+    ponytail: no server-side validation of the card list, commander legality,
+    or color-identity compliance — validation is client-side (deck-builder.js).
+    Downstream consumers (pricing, sectioning, history) tolerate malformed
+    decks defensively, so a hand-crafted body just produces a "broken" deck
+    rather than a crash.
+    """
     body = request.get_json(silent=True) or {}
     name = body.get("name", "").strip()
     if not name:
@@ -63,18 +68,7 @@ def api_deck_save():
 @decks_bp.route("/api/deck/list", methods=["GET"])
 def api_deck_list():
     """List all saved decks."""
-    decks = []
-    if os.path.isdir(DECKS_DIR):
-        for fname in sorted(os.listdir(DECKS_DIR)):
-            if not fname.endswith('.json') or fname == '_tags.json':
-                continue
-            fpath = os.path.join(DECKS_DIR, fname)
-            try:
-                with open(fpath) as f:
-                    data = json.load(f)
-                decks.append(data)
-            except (json.JSONDecodeError, OSError):
-                pass
+    decks = _list_json_files(DECKS_DIR, skip_names=("_tags.json",))
     return jsonify(decks)
 
 
@@ -228,6 +222,51 @@ def deck_lookup_by_uuid():
         "number": card["number"],
         "uuid": card["uuid"],
         "name": card["name"],
+    })
+
+
+@decks_bp.route("/api/deck/cards/enrich", methods=["POST"])
+def api_deck_cards_enrich():
+    """Batch enrich cards with scryfallId from the database.
+
+    Body: {"cards": [{"setCode": "...", "number": "..."}, ...]}
+    Returns enriched cards with scryfallId, uuid, name.
+    """
+    body = request.get_json(silent=True) or {}
+    cards = body.get("cards", [])
+    if not cards or not isinstance(cards, list):
+        return jsonify({"error": "cards array required."}), 400
+    if len(cards) > 300:
+        return jsonify({"error": "Maximum 300 cards per request."}), 400
+
+    # Build IN clauses from setCode/number pairs
+    pairs = [(c.get("setCode", "").strip(), c.get("number", "").strip()) for c in cards]
+    pairs = [(sc, n) for sc, n in pairs if sc and n]
+
+    if not pairs:
+        return jsonify({"enriched": []})
+
+    db = get_db()
+    placeholders = ", ".join(["(?, ?)"] * len(pairs))
+    flat = [v for p in pairs for v in p]
+
+    rows = db.execute(f"""
+        SELECT DISTINCT c.uuid, c.name, c.setCode, c.number, ci.scryfallId
+        FROM cards c
+        JOIN cardIdentifiers ci ON c.uuid = ci.uuid
+        WHERE (c.setCode, c.number) IN ({placeholders})
+          AND c.language = 'English'
+          AND (c.side IS NULL OR c.side = 'a')
+    """, flat).fetchall()
+
+    return jsonify({
+        "enriched": [{
+            "uuid": r["uuid"],
+            "name": r["name"],
+            "setCode": r["setCode"],
+            "number": r["number"],
+            "scryfallId": r["scryfallId"],
+        } for r in rows],
     })
 
 

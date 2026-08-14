@@ -46,6 +46,12 @@
             body: JSON.stringify({ name: deck.name, events: events }),
         }).catch(function () { /* silent — history is nice-to-have */ });
     }
+    /* Split the comma-separated `types` field into trimmed, lowercase tokens.
+       Shared by classifyCard() and getSectionKey() so both parse types identically. */
+    function parseTypes(typesField) {
+        return (typesField || '').split(',').map(function (t) { return t.trim().toLowerCase(); }).filter(Boolean);
+    }
+
     function classifyCard(card) {
         /* Classify a card into one of: Lands, Ramp, Removal, Draw, Core.
            Evaluated in priority order — first match wins.
@@ -53,7 +59,7 @@
            Tags override regex: if a card has a tag matching a category name
            (case-insensitive, any of: Lands, Ramp, Removal, Draw, Core),
            that tag's category wins the match, skipping regex classification. */
-        var types = (card.types || '').toLowerCase();
+        var types = parseTypes(card.types);
         var text  = (card.text  || '').toLowerCase();
         var typeLine = (card.type || '').toLowerCase();
         var tags = (card.tags || []);
@@ -88,8 +94,9 @@
         if (/exile all/.test(text)) return 'Removal'; // exile-based board wipes
         if (/target player sacrifices/.test(text)) return 'Removal'; // edict effects
 
-        // 4. Draw — card advantage, exclude loot/rummage
-        if (/draw/.test(text) && !/discard/.test(text)) return 'Draw';
+        // 4. Draw — card advantage, exclude loot/rummage and draw-hate
+        if (/draw/.test(text) && !/discard/.test(text)
+            && !/can'?t draw|draw step|draw more than/.test(text)) return 'Draw';
 
         // 5. Core — everything else
         return 'Core';
@@ -699,6 +706,8 @@
             return;
         }
 
+        _setRefreshBtnLoading(true);
+
         fetch('/api/pricing/fetch', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -712,12 +721,21 @@
                 });
             }
             pricesLoaded = true;
+            _setRefreshBtnLoading(false);
             if (onComplete) onComplete();
         })
         .catch(function () {
             pricesLoaded = true; // mark loaded so bar shows (even if empty)
+            _setRefreshBtnLoading(false);
             if (onComplete) onComplete();
         });
+    }
+
+    function _setRefreshBtnLoading(loading) {
+        var btn = $('#deck-refresh-prices-btn');
+        if (!btn) return;
+        btn.disabled = loading;
+        btn.textContent = loading ? 'Pricing…' : '💲 Refresh';
     }
 
     function computeDeckCost() {
@@ -773,9 +791,10 @@
         var costEl = $('#deck-total-cost');
         if (!bar || !costEl) return;
 
+        bar.style.display = ''; // always show the bar
+
         if (!pricesLoaded) {
-            costEl.textContent = '--';
-            bar.style.display = 'none';
+            costEl.textContent = 'Pricing…';
             return;
         }
 
@@ -785,23 +804,17 @@
         } else {
             costEl.textContent = '--';
         }
-        bar.style.display = '';
     }
 
     function initRefreshPricesButton() {
         var btn = $('#deck-refresh-prices-btn');
         if (!btn) return;
         btn.addEventListener('click', function () {
-            btn.disabled = true;
-            btn.textContent = 'Loading...';
             // Clear cache to force re-fetch
             priceCache = {};
             pricesLoaded = false;
             fetchPrices(function () {
-                btn.disabled = false;
-                btn.textContent = '💲 Refresh';
                 renderAll();
-                renderDeckCost();
                 showToast('Prices refreshed.');
             });
         });
@@ -1380,9 +1393,9 @@
     }
 
     function getSectionKey(card) {
-        var types = (card.types || '').split(' ');
+        var types = parseTypes(card.types);
         for (var i = 0; i < TYPE_ORDER.length; i++) {
-            if (types.indexOf(TYPE_ORDER[i]) !== -1) return TYPE_ORDER[i];
+            if (types.indexOf(TYPE_ORDER[i].toLowerCase()) !== -1) return TYPE_ORDER[i];
         }
         return 'Other';
     }
@@ -1997,6 +2010,10 @@
         }
         renderAll();
         saveCurrentDeck();
+        // Fetch prices so new card shows price immediately
+        fetchPrices(function () {
+            renderAll();
+        });
         if (result.isCommander) {
             showToast('Commander set: ' + cardData.name);
         } else {
@@ -2792,25 +2809,83 @@
         if (!data) return;
         deck.fromImport(data);
         deck.name = data.name || name;
-        // Show price refresh button and history button now that deck is named
         updateHistoryBtnVisibility();
-        // Auto-fetch prices on load
-        if (deck.name) {
-            fetchPrices(function () {
-                renderAll();
-            });
-        }
+
+        // Render deck UI immediately — don't wait for network calls
         $('#deck-name').value = deck.name;
         renderAll();
         restoreEvalData();
         checkHistoryReminder();
-        // Sync guideline selects now that deck.guideline is set.
-        // populateGuidelineSelects may have already been called by the async
-        // loadGuidelineList (racing before the deck load), so update the
-        // selects to reflect the loaded deck's guideline.
         if (cachedGuidelineTemplates.length > 0) {
             populateGuidelineSelects();
         }
+
+        // Then recover scryfallIds in the background; re-render when prices arrive
+        recoverMissingScryfallIds(function () {
+            if (deck.name) {
+                fetchPrices(function () {
+                    renderAll();
+                });
+            }
+        });
+    }
+
+    /* ─── ScryfallId Recovery ─── */
+    function recoverMissingScryfallIds(onComplete) {
+        // Collect all cards with missing/empty scryfallId
+        var toRecover = [];  // [{ setCode, number, cardRef }]
+
+        function collect(card, cardRef) {
+            if (card && card.setCode && card.number && !card.scryfallId) {
+                toRecover.push({ setCode: card.setCode, number: card.number, cardRef: cardRef });
+            }
+        }
+
+        if (deck.commander) {
+            collect(deck.commander, deck.commander);
+        }
+
+        deck.cards.forEach(function (c) { collect(c, c); });
+
+        if (deck.sections) {
+            Object.keys(deck.sections).forEach(function (key) {
+                (deck.sections[key] || []).forEach(function (c) { collect(c, c); });
+            });
+        }
+
+        if (toRecover.length === 0) {
+            onComplete();
+            return;
+        }
+
+        fetch('/api/deck/cards/enrich', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cards: toRecover }),
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            if (data.enriched && data.enriched.length > 0) {
+                // Build lookup: setCode|number -> scryfallId
+                var lookup = {};
+                data.enriched.forEach(function (e) {
+                    lookup[e.setCode + '|' + e.number] = e.scryfallId;
+                });
+                // Patch scryfallIds back into cards
+                toRecover.forEach(function (item) {
+                    var key = item.setCode + '|' + item.number;
+                    if (lookup[key]) {
+                        item.cardRef.scryfallId = lookup[key];
+                    }
+                });
+                // Persist the repaired deck
+                saveDeckToServer(deck);
+            }
+        })
+        .catch(function () { /* recovery failed — prices won't work, but deck still loads */ })
+        .finally(function () {
+            onComplete();
+        });
     }
 
     /* Push stored evalData to server cache so the iframe can re-render it */
@@ -2931,6 +3006,53 @@
             },
             onEnterEmpty: addSelected
         });
+    }
+
+    /* ─── Panel Collapse ─── */
+    var panelCollapsed = false;
+    var PANEL_COLLAPSE_KEY = 'mtg-search-tools-collapsed';
+
+    function initPanelCollapse() {
+        var btn = $('#deck-tools-collapse-btn');
+        var page = document.querySelector('.deck-builder-page');
+        if (!btn || !page) return;
+
+        // Restore state from localStorage
+        try {
+            panelCollapsed = localStorage.getItem(PANEL_COLLAPSE_KEY) === 'true';
+        } catch (e) { /* ignore */ }
+        if (panelCollapsed) {
+            updateCollapseState();
+        }
+
+        function toggle() {
+            panelCollapsed = !panelCollapsed;
+            try { localStorage.setItem(PANEL_COLLAPSE_KEY, String(panelCollapsed)); } catch (e) { /* ignore */ }
+            updateCollapseState();
+        }
+
+        btn.addEventListener('click', toggle);
+
+        // Click on the collapsed strip expands
+        var searchPanel = page.querySelector('.search-panel');
+        if (searchPanel) {
+            searchPanel.addEventListener('click', function (e) {
+                if (panelCollapsed && e.target === searchPanel) {
+                    toggle();
+                }
+            });
+        }
+    }
+
+    function updateCollapseState() {
+        var page = document.querySelector('.deck-builder-page');
+        var btn = $('#deck-tools-collapse-btn');
+        if (!page) return;
+        page.classList.toggle('collapsed-tools', panelCollapsed);
+        if (btn) {
+            btn.textContent = panelCollapsed ? '▶' : '◀';
+            btn.title = panelCollapsed ? 'Expand tools panel' : 'Collapse tools panel';
+        }
     }
 
     /* ─── Tool Tabs ─── */
@@ -3680,6 +3802,7 @@
 
     function init() {
         initToolTabs();
+        initPanelCollapse();
         initSearch();
         initDropZones();
         initButtons();

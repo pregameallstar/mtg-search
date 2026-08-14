@@ -6,9 +6,7 @@ url_prefix="/card/<set_code>/<number>/eval"
 import json
 import os
 import uuid
-import threading
 import traceback
-from collections import OrderedDict
 from datetime import datetime, timezone
 
 from flask import (
@@ -24,25 +22,25 @@ from flask import (
 
 from mtg.shared import (
     DATABASE,
-    REPORTS_DIR,
-    card_image,
+    REPORTS_PATH,
     color_identity_subset,
     db_path,
     get_db,
+    _latest_printing,
+    _load_card,
+    _other_faces,
 )
 from mtg.eval_cache import (
     _cache_lock,
     _eval_cache,
     _progress_cache,
     cache_put,
-    cache_update,
     cache_update_locked,
 )
 from mtg.eval_helpers import (
     auto_save_deepdives,
     eval_similar_embed,
     eval_similar_legacy,
-    get_commander_filter_sets,
     is_placeholder_name,
     load_auto_deepdives,
 )
@@ -57,10 +55,6 @@ except ImportError:
 import mtg.embed as embed
 
 eval_bp = Blueprint("eval", __name__, url_prefix="/card/<set_code>/<number>/eval")
-
-# Resolve the project root for path construction (replaces os.path.dirname(os.path.abspath(__file__))
-# from the original single-file app, since __file__ now points inside mtg/blueprints/).
-_project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 
 @eval_bp.route("/restore", methods=["POST"])
@@ -103,26 +97,14 @@ def commander_eval(set_code, number):
     # Redirect from name search on eval page
     by_name = request.args.get("by_name", "").strip()
     if by_name:
-        found = db.execute("""
-            SELECT c.setCode, c.number FROM cards c
-            JOIN sets s ON c.setCode = s.code
-            WHERE c.name = ? AND c.language = 'English' AND (c.side IS NULL OR c.side = 'a')
-            ORDER BY s.releaseDate DESC LIMIT 1
-        """, [by_name]).fetchone()
+        found = _latest_printing(by_name)
         if found:
             return redirect(url_for('eval.commander_eval',
                                     set_code=found['setCode'],
                                     number=found['number']))
 
     # Load commander card
-    card = db.execute("""
-        SELECT c.*, ci.scryfallId, s.name as setName, s.releaseDate
-        FROM cards c
-        JOIN cardIdentifiers ci ON c.uuid = ci.uuid
-        JOIN sets s ON c.setCode = s.code
-        WHERE c.setCode = ? AND c.number = ? AND c.language = 'English'
-          AND (c.side IS NULL OR c.side = 'a')
-    """, [set_code, number]).fetchone()
+    card = _load_card(set_code, number)
 
     if not card:
         abort(404)
@@ -130,20 +112,7 @@ def commander_eval(set_code, number):
     card = dict(card)
 
     # Load other faces (for DFCs)
-    other_faces = []
-    if card.get("otherFaceIds"):
-        other_uuids = [u.strip() for u in card["otherFaceIds"].split(",") if u.strip()]
-        if other_uuids:
-            placeholders = ",".join("?" * len(other_uuids))
-            other_faces = db.execute(
-                f"""SELECT c.*, ci.scryfallId
-                    FROM cards c
-                    JOIN cardIdentifiers ci ON c.uuid = ci.uuid
-                    WHERE c.uuid IN ({placeholders})
-                    ORDER BY c.side""",
-                other_uuids,
-            ).fetchall()
-            other_faces = [dict(f) for f in other_faces]
+    other_faces = [dict(f) for f in _other_faces(card)]
 
     # Check commander legality
     try:
@@ -169,7 +138,7 @@ def commander_eval(set_code, number):
     report_data = None
     if not analysis and report_filename:
         if ".." not in report_filename and "/" not in report_filename:
-            report_path = os.path.join(_project_root, REPORTS_DIR, report_filename)
+            report_path = os.path.join(REPORTS_PATH, report_filename)
             try:
                 with open(report_path) as f:
                     report_data = json.load(f)
@@ -197,7 +166,7 @@ def commander_eval(set_code, number):
     # cached deepdives (from this session) > loaded report > auto-save.
     _saved_deepdives = load_auto_deepdives(
         set_code, number,
-        os.path.join(_project_root, REPORTS_DIR),
+        REPORTS_PATH,
     )
     if report_data:
         _saved_deepdives.update(report_data.get("deepdives") or report_data.get("expands", {}))
@@ -249,14 +218,7 @@ def commander_eval_analyze(set_code, number):
 
     _step(1, "Loading card data…")
 
-    card = db.execute("""
-        SELECT c.*, ci.scryfallId, s.name as setName, s.releaseDate
-        FROM cards c
-        JOIN cardIdentifiers ci ON c.uuid = ci.uuid
-        JOIN sets s ON c.setCode = s.code
-        WHERE c.setCode = ? AND c.number = ? AND c.language = 'English'
-          AND (c.side IS NULL OR c.side = 'a')
-    """, [set_code, number]).fetchone()
+    card = _load_card(set_code, number)
 
     if not card:
         return {"error": "Card not found"}, 404
@@ -265,22 +227,10 @@ def commander_eval_analyze(set_code, number):
 
     # Load back face for DFCs (for the LLM prompt)
     back_face = None
-    if card.get("otherFaceIds"):
-        other_uuids = [u.strip() for u in card["otherFaceIds"].split(",") if u.strip()]
-        if other_uuids:
-            placeholders = ",".join("?" * len(other_uuids))
-            faces = db.execute(
-                f"""SELECT c.*, ci.scryfallId
-                    FROM cards c
-                    JOIN cardIdentifiers ci ON c.uuid = ci.uuid
-                    WHERE c.uuid IN ({placeholders})
-                    ORDER BY c.side""",
-                other_uuids,
-            ).fetchall()
-            for f in faces:
-                if f["side"] == "b":
-                    back_face = dict(f)
-                    break
+    for f in _other_faces(card):
+        if f["side"] == "b":
+            back_face = dict(f)
+            break
 
     try:
         # Fetch official rulings for this card
@@ -740,7 +690,7 @@ def commander_eval_deepdive(set_code, number):
         # Manual "Save Report" still creates the timestamped copy.
         auto_save_deepdives(
             set_code, number, {f"{expand_type}:{expand_name}": data},
-            os.path.join(_project_root, REPORTS_DIR),
+            os.path.join(REPORTS_PATH),
         )
 
         data["_pipeline"] = dd_pipeline
@@ -816,7 +766,7 @@ def commander_eval_save(set_code, number):
 
     now_iso = datetime.now(timezone.utc).isoformat()
     safe_name = f"{set_code}_{number}_{now_iso.replace(':', '-')}.json"
-    report_path = os.path.join(_project_root, REPORTS_DIR, safe_name)
+    report_path = os.path.join(REPORTS_PATH, safe_name)
 
     os.makedirs(os.path.dirname(report_path), exist_ok=True)
 
@@ -824,7 +774,7 @@ def commander_eval_save(set_code, number):
     deepdives = cached.get("deepdives", {})
     _autosaved = load_auto_deepdives(
         set_code, number,
-        os.path.join(_project_root, REPORTS_DIR),
+        REPORTS_PATH,
     )
     _autosaved.update(deepdives)  # cache wins over disk
     deepdives = _autosaved
@@ -849,7 +799,7 @@ def commander_eval_load(set_code, number):
     if not filename or ".." in filename or "/" in filename:
         return jsonify({"error": "Invalid filename."}), 400
 
-    report_path = os.path.join(_project_root, REPORTS_DIR, filename)
+    report_path = os.path.join(REPORTS_PATH, filename)
     try:
         with open(report_path) as f:
             data = json.load(f)

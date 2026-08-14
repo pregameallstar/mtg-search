@@ -1,360 +1,515 @@
 # PROJECT_MAP.md — MTG Search
 
-High-density index for coding agents. One read covers the architecture, then
-drill into specific files as needed.
+Tool-first architecture index for coding agents. Each section covers one tool:
+every file, every route, every integration point. Read the tool section relevant
+to your task, then drill into specific files.
 
 ---
 
 ## Shape
 
-- **Type:** Self-hosted web application (Flask monolith, ~3400 loc) + MCP server
-- **Language:** Python 3.9+, Jinja2 templates, vanilla JS + CSS (no framework, no build step)
-- **Storage:** SQLite (`AllPrintings.sqlite` from MTGJSON), with on-disk indexes (`embeddings/`, `images/`)
-- **Deployment:** Docker Compose (Flask + SearXNG + MCP SSE + MCPO proxy in one container)
-- **Test surface:** None (no automated test suite; manual test script at `test_scripts/run_eval_test.py`)
+- **Type:** Self-hosted web app (Flask monolith, ~5,700 loc Python, ~3,500 loc JS, ~3,500 loc CSS)
+- **Stack:** Python/Flask, Jinja2 templates, vanilla JS + CSS (no framework, no build step)
+- **Storage:** SQLite (`AllPrintings.sqlite` from MTGJSON), JSON files on disk
+- **Deployment:** Docker Compose (Flask + SearXNG + MCP SSE + MCPO in one container)
+- **Frontend:** One CDN dependency — `mana-font@1.21.0` for mana symbols
 
 ---
 
-## File Map
+## Tool Index
 
-### Python (application logic)
+| Tool | Page Route | Python | Template | JS | CSS section |
+|------|-----------|--------|----------|----|-------------|
+| **Search** | `/search` | `mtg/blueprints/search.py` (526 lines) | `templates/search.html` | inline in `base.html` | style.css §search |
+| **Similarity** | `/similar`, `/card/{set}/{num}/similar` | `mtg/blueprints/similar.py` (378 lines) | `similar.html`, `similar_landing.html`, `similar_export.html` | inline in `base.html` | style.css §similarity |
+| **Commander Eval** | `/commander-eval`, `/card/{set}/{num}/eval` | `mtg/blueprints/eval.py` (860 lines), `eval_landing.py` (125 lines) | `commander_eval.html`, `commander_eval_landing.html` | inline in `commander_eval.html` | style.css §eval |
+| **Deck Builder** | `/deck-builder` | `mtg/blueprints/decks.py` (226 lines) | `templates/deck_builder.html` (438 lines) | `static/deck-builder.js` (3,460 lines) | style.css §deck-builder |
+| **Saved Decks** | `/saved-decks` | `mtg/blueprints/decks.py` (shared) | `templates/saved_decks.html` (105 lines) | inline in `saved_decks.html` | style.css §saved-decks |
+| **Card Templates** | `/card-templates` | `mtg/blueprints/templates_bp.py` (87 lines) | `templates/card_templates.html` (1,048 lines) | inline in `card_templates.html` | style.css §templates |
+| **Configuration** | `/config` | `mtg/blueprints/config.py` (247 lines) | `templates/config.html` (590 lines) | inline in `config.html` | style.css §config |
+| **MCP Server** | (standalone process) | `mtg/mcp_server.py` (404 lines) | — | — | — |
 
-| File | Role | Lines | Key exports / symbols |
-|------|------|-------|-----------------------|
-| `app.py` | Flask application — routes, search, similarity engine, commander eval pipeline, config, ingest, deck builder API, image proxy, MCP restart endpoint | ~3400 | `app` (Flask instance), `DATABASE`, `COMMANDER_SYSTEM_PROMPT`, `DEEPDIVE_SYSTEM_PROMPT`, `VERIFY_SYSTEM_PROMPT` |
-| `embed.py` | Embedding index: build + search via `all-MiniLM-L6-v2` (384-dim sentence-transformers). Writes `embeddings/vectors.npy` + `embeddings/meta.json` | ~187 | `build(db_path)`, `find(db_path, oracle_text, top_k=200)`, `status()` |
-| `llm.py` | Single `generate()` function with OpenAI + Anthropic backends. JSON repair pipeline for LLM output | ~126 | `generate(system_prompt, user_prompt, backend, api_key, base_url, model)` |
-| `dedup.py` | Database ingestion pipeline: deduplicates MTGJSON SQLite to one row per unique English card (latest printing) | ~171 | `dedup_db(src, dst)`, `dedup_in_place(db_path)` |
-| `mcp_server.py` | Standalone MCP server (FastMCP) exposing 3 tools: `semantic_search`, `keyword_search`, `get_card`. Runs as separate process via stdio/SSE | ~403 | `mcp` (FastMCP instance) |
+**Every page extends `templates/base.html`** (155 lines), which provides:
+- The sidebar nav (hidden when `?embed=1`)
+- Card detail side panel (`#card-panel`, `openPanel()`)
+- Card image lightbox (`#card-lightbox`)
+- Global card drag-and-drop via `MutationObserver` on `.card-cell` elements
+- Escape-key handler for all overlays
 
-### Templates (Jinja2)
+---
 
-| Template | Lines | Purpose |
-|----------|-------|---------|
-| `base.html` | 156 | Layout shell: nav bar, card detail side-panel (`#panel`), image lightbox. Every page extends this |
-| `index.html` | 170 | Homepage: search form + card-count stats |
-| `search.html` | 306 | Search results grid (30/page) + all 30+ filter controls |
-| `card.html` | 100 | Full card detail page (image, rulings, legalities, printings, other faces) |
-| `card_panel.html` | 98 | Same as card detail but as a side-panel fragment (loaded via AJAX, `?fragment=1`) |
-| `similar.html` | 270 | Similarity results: top-N best matches + factor tuning panel + paginated remaining results |
-| `similar_landing.html` | 308 | Similarity landing: name autocomplete + drag-and-drop card image |
-| `similar_export.html` | 139 | Self-contained HTML export of similarity results |
-| `commander_eval.html` | 1069 | Commander analysis display: tabs for strengths/weaknesses, strategies, brackets, deep-dives. Heaviest template |
-| `commander_eval_landing.html` | 238 | Commander eval landing: name search + drag-and-drop + saved reports list |
-| `config.html` | 590 | Configuration page: LLM connection, database ingest, MCP status, search logic, custom prompts |
-| `deck_builder.html` | 341 | Split-panel deck builder: search on left, deck on right |
-| `saved_decks.html` | 105 | Grid view of saved decks |
+## 1. Search (`/search`)
 
-### Static assets
+The core card search engine with 30+ filters.
 
-| File | Lines | Role |
-|------|-------|------|
-| `style.css` | 2746 | Dark theme (GitHub-style), mana symbol classes, card grid, rarity colors, responsive panels. All visual styling |
-| `deck-builder.js` | 2457 | Vanilla JS deck builder: localStorage persistence, drag-and-drop, card sections by type, commander eval iframe integration, import/export |
-
-### Infrastructure
+### Files
 
 | File | Role |
 |------|------|
-| `Dockerfile` | Python 3.12-slim, pip install, copy code, 3 VOLUMEs, EXPOSE 5000/8765/8000 |
-| `docker-compose.yml` | Two services: `app` (bind-mounts all .py + templates/static for live dev) + `searxng` (port 8888→8080, config from `searxng/`) |
-| `docker-entrypoint.sh` | Starts Flask + MCP SSE + MCPO proxy in one container; respawns MCP/MCPO if they die; kills all if Flask dies |
-| `requirements.txt` | Flask + sentence-transformers + openai + anthropic + numpy + mcp + mcpo |
-| `.env.example` | Required: `SEARXNG_SECRET`. Optional: ports, LLM backend/URL/model/key |
-| `searxng/settings.yml` | SearXNG: JSON enabled, rate limiter off, image proxy off |
-| `searxng/limiter.toml` | Disabled |
+| `mtg/blueprints/search.py` | Route handler — builds SQL WHERE clauses from query params |
+| `templates/search.html` | Search form + results grid |
+| `templates/card.html` | Full card detail page (DFC faces, rulings, legalities, printings) |
+| `templates/card_panel.html` | Card detail as a side-panel fragment (`?fragment=1`) |
+| `templates/index.html` | Homepage redirects to `/search` |
+
+### Routes
+
+| Route | Purpose |
+|-------|---------|
+| `GET /` | Redirects to `/search` |
+| `GET /search` | Search form + results (30+ query params) |
+| `GET /card/<set_code>/<number>` | Card detail page (`?fragment=1` → side panel) |
+| `GET /card-autocomplete?q=...` | JSON: top 10 name matches |
+| `GET /img/<size>/<face>/<c1>/<c2>/<id>.jpg` | Lazy image proxy (cache from Scryfall) |
+| `GET /llm-models?base_url=...` | JSON: fetch models from LLM API |
+
+### Key detail: `deck-builder.js` scrapes search HTML
+
+The Deck Builder's embedded Search tool fetches `/search?...` and parses the HTML
+with `DOMParser` to extract `.card-grid`, `.result-count`, and pagination. Changes
+to `search.html`'s card grid structure WILL break the Deck Builder search tab.
+
+### Key detail: color ordering
+
+- `cards.colors`: WUBRG order
+- `cards.colorIdentity`: alphabetical order
+
+Both are stored as comma-separated strings like `"W, U"`. Always use `sorted()` or
+`wubrg_sort()` from `mtg/similarity.py` when comparing CI.
 
 ---
 
-## Architecture Overview
+## 2. Similarity (`/similar`, `/card/{set}/{num}/similar`)
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│ Docker container (mtg-search)                                │
-│                                                              │
-│  docker-entrypoint.sh                                        │
-│  ├── Flask app.py         :5000   (web UI + API)             │
-│  ├── MCP SSE server       :8765   (LLM agent tools)          │
-│  └── MCPO proxy           :8000   (OpenAPI bridge)           │
-│                                                              │
-│  Depends on: SearXNG      :8080   (container-internal)       │
-└─────────────────────────────────────────────────────────────┘
-```
+Finds mechanically similar cards. Two backends: semantic (embeddings) and legacy (TF-IDF).
 
-### Data flow for the three main features:
+### Files
 
-**Search:**
-```
-Browser → GET /search?q=...&color=... → Flask → SQLite (LIKE queries, 30 filters)
-       → render_template("search.html", results, pagination)
-```
+| File | Role |
+|------|------|
+| `mtg/blueprints/similar.py` | Route handler — dispatches to embedding or legacy scoring |
+| `mtg/similarity.py` | TF-IDF scoring engine (286 lines): `extract_terms()`, `score_similarity()`, `gate()`, `get_idf()` |
+| `mtg/embed.py` | Embedding index: `build()`, `find()`, `status()` |
+| `templates/similar.html` | Results page with top-N + paginated remaining |
+| `templates/similar_landing.html` | Landing page: name autocomplete + image drop zone |
+| `templates/similar_export.html` | Self-contained HTML export |
+| `embeddings/vectors.npy` | 384-dim normalized vectors for all cards |
+| `embeddings/meta.json` | Metadata array (no oracle text — fetched from DB on demand) |
+| `embeddings/build_info.json` | Build timestamp + card count |
 
-**Similarity (semantic):**
-```
-Browser → GET /card/{set}/{num}/similar
-       → Flask → embed.find(db_path, text, top_k=200)
-       → Post-filter: dedupe by name, color identity gate, MV ±3 window
-       → Sort by cosine similarity, split top-N from remaining
-       → render_template("similar.html", ...)
-```
+### Routes
 
-**Similarity (legacy):**
-```
-Browser → GET /card/{set}/{num}/similar?method=legacy
-       → Flask → SQLite (fetch candidates: same name exclusion, MV ±3, latest printing)
-       → For each candidate: _score_similarity(base, candidate, factors, idf)
-         - Oracle text: IDF-weighted term overlap, then exponentiated by s_oracle strictness
-         - Optional gates (types, keywords, subtypes, supertypes, MV, CI): Jaccard similarity
-         - Gates combined via geometric mean, multiplied against oracle score
-       → Sort, split top-N, paginate remaining
-```
+| Route | Purpose |
+|-------|---------|
+| `GET/POST /similar` | Landing page; POST handles drag-drop image lookup |
+| `GET/POST /cards/<set>/similar` | Alias for landing with pre-selected set |
+| `GET /card/<set>/<num>/similar` | Results page with 14+ tuning params |
+| `GET /card/<set>/<num>/similar?export=1` | Download as self-contained HTML |
 
-**Commander Eval (6-step pipeline):**
-```
-Browser → POST /card/{set}/{num}/eval/analyze (AJAX, poll /eval/progress)
-       → Step 1: Load card from DB (oracle text, rulings, DFC back face)
-       → Step 2: Web research via SearXNG (5 search queries × 5 results each)
-       → Step 3: embed.find() for mechanically similar cards (200 results, CI-filtered)
-       → Step 4: LLM call (commander_prompt + user_prompt with card_data + web_research + similar_cards)
-       → Step 5: Second-pass LLM verification (verify_prompt, checks for invented abilities, wrong zones, hallucinated names)
-       → Step 6: Store in server-side cache (_eval_cache, FIFO capped at 100)
-       → Browser: render_template("commander_eval.html", analysis=cached)
-```
+### How it works
+
+**Semantic (embed):** `embed.find()` → 200 candidates → post-filter by name, CI, MV ±3, type → score as cosine × 100.
+
+**Legacy (TF-IDF):** SQL candidate fetch (same name exclusion, MV ±3, latest printing) → `score_similarity()` per candidate → sort → split top-N.
+
+### Key detail: strictness values
+
+`STRICT_VALUES`, `COLOR_STRICT`, `ORACLE_STRICT` in `similar.py` lines 105-107 are
+calibrated against real data. Changing them changes result quality non-linearly.
+
+### Key detail: IDF cache
+
+Module-level singleton in `mtg/similarity.py`. Rebuilt if card count drifts by >100.
+Bump `_idf_version` when `extract_terms()` logic changes.
 
 ---
 
-## Database Schema (MTGJSON `AllPrintings.sqlite`)
+## 3. Commander Eval (`/commander-eval`, `/card/{set}/{num}/eval`)
 
-Key tables and columns used throughout the codebase:
+6-step LLM pipeline analyzing legendary creatures as Commanders. The most complex tool.
+
+### Files
+
+| File | Role |
+|------|------|
+| `mtg/blueprints/eval.py` | All eval routes under `/card/<set>/<num>/eval` |
+| `mtg/blueprints/eval_landing.py` | Landing page + report listing/deletion |
+| `mtg/eval_cache.py` | Server-side OrderedDict cache (FIFO 100); Flask sessions cap at 4KB |
+| `mtg/eval_helpers.py` | Similarity search (embed + legacy), placeholder detection, deepdive auto-save |
+| `mtg/websearch.py` | SearXNG query function — returns `None` when unreachable |
+| `mtg/prompts.py` | Three LLM system prompts: commander, deepdive, verify |
+| `mtg/llm.py` | `generate()` — OpenAI/Anthropic backends with JSON repair |
+| `mtg/embed.py` | Embedding index (shared with Similarity) |
+| `templates/commander_eval.html` | Analysis display (1,069 lines): tabs for strengths, strategies, brackets, deepdives |
+| `templates/commander_eval_landing.html` | Landing: name search + image drop + saved reports list |
+| `eval_reports/` | Saved analysis JSON files + per-commander deepdive auto-saves |
+
+### Routes
+
+| Route | Purpose |
+|-------|---------|
+| `GET/POST /commander-eval` | Landing page; POST handles drag-drop lookup |
+| `GET /card/<set>/<num>/eval` | Main analysis page (loads from cache or `?report=`) |
+| `POST /card/<set>/<num>/eval/restore` | Deck Builder injects saved evalData into cache |
+| `POST /card/<set>/<num>/eval/analyze` | AJAX: run 6-step pipeline |
+| `GET /card/<set>/<num>/eval/progress` | AJAX poll: `{step, total, label}` |
+| `POST /card/<set>/<num>/eval/deepdive` | AJAX: strategy/unique_build deep-dive |
+| `POST /card/<set>/<num>/eval/similar` | AJAX: find similar legendary commanders |
+| `POST /card/<set>/<num>/eval/save` | Save report to `eval_reports/` |
+| `POST /card/<set>/<num>/eval/load` | Load saved report |
+| `POST /commander-eval/reports/delete` | Delete report |
+
+### Pipeline (6 steps)
+
+1. Load card data (oracle text, rulings, DFC back face)
+2. SearXNG web research (5 queries × 5 results)
+3. `embed.find()` for mechanically similar cards (200, CI-filtered)
+4. LLM call with commander prompt + card data + web research + similar cards
+5. Second-pass LLM verification (checks for invented abilities, wrong zones, hallucinated names)
+6. Store in `_eval_cache` (FIFO 100)
+
+### Cross-tool: Deck Builder integration
+
+- Deck Builder loads `/card/<set>/<num>/eval?embed=1` in an iframe
+- `commander_eval.html` posts `{type: 'mtg-eval-data', data}` to `window.parent`
+- On deck load, `restoreEvalData()` POSTs to `/eval/restore` to repopulate the cache
+- The `embed=1` param removes sidebar chrome (checked in `base.html` line 11)
+
+### Key detail: Cache validation
+
+`_eval_cache` entries include `_card: "set/number"`. On page load, `eval.py` checks
+that the cached analysis belongs to the viewed card. Session `eval_key` bleeds
+across navigations — this guard prevents cross-card cache bleed.
+
+---
+
+## 4. Deck Builder (`/deck-builder`)
+
+Split-panel drag-and-drop Commander deck builder. The most JS-heavy tool.
+
+### Files
+
+| File | Role |
+|------|------|
+| `mtg/blueprints/decks.py` | 2 page routes + 5 JSON API endpoints |
+| `mtg/blueprints/tags.py` | Global tag catalog CRUD at `/api/tags` |
+| `templates/deck_builder.html` | Page layout: 4-tab left panel + right deck panel + 2 modals |
+| `static/deck-builder.js` | Entire client app (3,460 lines): Deck model, drag-drop, search, charts, autosave |
+| `decks/` | Saved deck JSON files (one per deck) |
+| `decks/_tags.json` | Global tag catalog (shared across all decks) |
+
+### Routes
+
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/deck-builder?deck=<name>` | GET | Deck Builder page |
+| `/saved-decks` | GET | Saved decks grid |
+| `/api/deck/save` | POST | Save deck JSON to `decks/name.json` |
+| `/api/deck/list` | GET | List all saved decks (returns full JSON array) |
+| `/api/deck/delete` | POST | Delete deck file |
+| `/api/deck/card-lookup` | POST | Card by setCode+number or uuid |
+| `/api/deck/lookup-by-name` | POST | Card by exact name (latest printing) |
+| `/api/deck/lookup-by-uuid` | POST | Scryfall UUID → setCode+number |
+| `/api/tags/list` | GET | Tag catalog (auto-seeds 8 predefined tags) |
+| `/api/tags/save` | POST | Save tag catalog |
+
+### Deck data model (client-side)
+
+```js
+Deck {
+  name: string,           // also the filename key
+  commander: card | null, // { uuid, setCode, number, name, manaCost, types, colors, colorIdentity, imageUrl, ... }
+  cards: [card],          // main 99; each card has uuid, setCode, number, name, quantity, tags, ...
+  evalData: object | null,// Commander Eval analysis blob
+  sections: {             // extra zones
+    "Sideboard": [card],
+    "Maybeboard": [card],
+    ...
+  },
+  guideline: string | null // guideline template name
+}
+```
+
+Deck JSON files are stored verbatim — the server never validates card contents,
+only requires a non-empty name. Filenames: `re.sub(r'[^a-zA-Z0-9_ -]', '', name).replace(' ', '_') + '.json'`.
+
+### JS architecture (`static/deck-builder.js`)
+
+- IIFE wrapper, ES5-style (`var`, `function`), no framework
+- `Deck` constructor + prototype (lines 69–338) — the data model
+- `classifyCard()` (lines 19–66) — regex-based Lands/Ramp/Removal/Draw/Core
+- Tag popover is **duplicated twice**: `openTagPopover()` (line 495) for main deck, `openTagPopoverForSection()` (line 988) for custom sections (~90 lines each, near-identical)
+- Search scrapes `/search?...` HTML with `DOMParser` (line 1934)
+- Similarity scrapes `/card/{set}/{num}/similar` HTML, takes `grids[1]` (line 2010)
+- Autosave: 600ms debounce + `beforeunload`/`visibilitychange` `sendBeacon`
+- Load: **synchronous XHR** to `/api/deck/list`, linear search by name (line 384)
+- Two mana curve renderers: `renderManaCurve()` (stats bar) and `renderManaCurveChart()` (charts panel)
+- Card hover preview: `initCardHoverPreview()` (line 3269), 250ms delay, 400×560px
+
+### Known dead/stale code in deck-builder.js
+
+- `STORAGE_PREFIX` (line 10) — declared but unused (persistence moved to server)
+- `renderTagFilterBar()` — targets `#tag-filter-bar` which doesn't exist in any template
+- `showTagUI()` — defined but never called
+- `activePopoverCard` — assigned but never meaningfully read
+
+### Cross-tool: search integration
+
+Deck Builder embeds a compact search form (tab 1). It does NOT call the JSON API —
+it fetches the search page HTML and parses it. Changes to `search.html`'s `.card-grid`
+structure break this.
+
+### Cross-tool: card drag-and-drop
+
+`base.html` lines 121-148 has a global `MutationObserver` that marks every `.card-cell`
+draggable with `application/mtg-card` data. `deck-builder.js` has its own
+`makeCardsDraggable()` for the embedded search grid. The drop handler
+(`handleCardDrop`, line 2160) dispatches to copy/move/commander handlers.
+
+### Cross-tool: card detail panel
+
+`base.html` provides `openPanel(setCode, number)` which fetches `/card/{set}/{num}?fragment=1`.
+`deck-builder.js` line 2539 uses a `MutationObserver` on `#card-panel-sheet` to inject
+an "Add to Deck" button into the card detail panel.
+
+---
+
+## 5. Card Templates (`/card-templates`)
+
+Reusable card packages and guideline templates (deck-building category targets).
+
+### Files
+
+| File | Role |
+|------|------|
+| `mtg/blueprints/templates_bp.py` | 1 page route + 3 JSON API endpoints |
+| `templates/card_templates.html` | Split-panel editor (card search on left, template list on right) |
+| `card_templates/` | Saved template JSON files |
+
+### Routes
+
+| Route | Purpose |
+|-------|---------|
+| `GET /card-templates` | Template editor page |
+| `POST /api/template/save` | Save template to `card_templates/name.json` |
+| `GET /api/template/list?type=cards|guideline` | List templates (filter by type) |
+| `POST /api/template/delete` | Delete template |
+
+Two template types:
+- **Card templates:** `{name, cards: [...]}` — type defaults to `"cards"` when absent
+- **Guideline templates:** `{type: "guideline", name, categories: {Lands, Ramp, Draw, Removal, Core}}`
+
+### Cross-tool: Deck Builder integration
+
+- Templates tab loads card templates via `/api/template/list` for bulk import
+- Guideline selector loads guidelines via `/api/template/list?type=guideline`
+- If zero guidelines exist, `loadGuidelineList()` auto-creates "Default Guideline"
+
+---
+
+## 6. Configuration (`/config`)
+
+LLM settings, database ingest, embedding rebuild, MCP management.
+
+### Files
+
+| File | Role |
+|------|------|
+| `mtg/blueprints/config.py` | All config routes |
+| `mtg/ingest.py` | Database upload → dedup → replace pipeline (240 lines) |
+| `mtg/dedup.py` | Dedup engine: one row per unique English card (171 lines) |
+| `mtg/mcp_control.py` | MCP process management: `restart_mcp()`, `port_alive()` |
+| `templates/config.html` | Config form with 6 panels |
+
+### Routes
+
+| Route | Purpose |
+|-------|---------|
+| `GET/POST /config` | Config form (POST saves to Flask session) |
+| `GET /config/embed-status` | JSON: embedding index status |
+| `POST /config/embed-build` | Trigger async embedding rebuild |
+| `GET /config/mcp-status` | JSON: MCP SSE + MCPO alive status |
+| `POST /config/mcp-restart` | Kill + respawn MCP SSE + MCPO |
+| `POST /config/ingest` | Upload + validate + deduplicate + replace DB |
+
+### Config is session-based
+
+LLM keys, models, custom prompts, and similarity method preferences are stored in
+Flask's cryptographically-signed session cookie (30-day lifetime). The API key
+never touches server-side storage. `.secret_key` file auto-generated on first run.
+
+---
+
+## 7. Saved Decks (`/saved-decks`)
+
+Grid view of all saved decks, delete, JSON file import.
+
+### Files
+
+| File | Role |
+|------|------|
+| `mtg/blueprints/decks.py` | Shared with Deck Builder (routes above) |
+| `templates/saved_decks.html` | Deck grid + inline JS for delete/import |
+
+### Entry point to Deck Builder
+
+Clicks link to `/deck-builder?deck=<urlencoded name>`. Deck Builder reads the
+`?deck=` param at init (line 3436) and loads via `loadDeckFromServer()`.
+
+---
+
+## Cross-Tool Integration Points
+
+### Card drag-and-drop (global)
+- **Source:** `base.html` inline script — `MutationObserver` marks all `.card-cell` draggable
+- **Data:** `application/mtg-card` = `{setCode, number}`, `text/uri-list` = card URL
+- **Consumer:** `deck-builder.js` `handleCardDrop()`, which also handles Scryfall UUIDs from external drops
+
+### Deck Builder ↔ Search
+- Deck Builder tab 1 fetches `/search?...` HTML and scrapes `.card-grid`
+- Card grid HTML structure must be stable — changes to `search.html` break the builder
+
+### Deck Builder ↔ Similarity
+- Deck Builder tab 2 fetches `/card/{set}/{num}/similar` HTML, takes `grids[1]` ("All Results")
+- Paginates client-side from the scraped data
+
+### Deck Builder ↔ Commander Eval
+- Deck Builder tab 3 loads `/card/{set}/{num}/eval?embed=1` in an iframe
+- Eval page posts `mtg-eval-data` via `window.parent.postMessage()`
+- On deck load, `restoreEvalData()` POSTs to `/eval/restore` to warm the cache
+- `enableCardPanelAddToDeck()` injects "Add to Deck" into the card detail panel via MutationObserver
+
+### Deck Builder ↔ Templates
+- Templates tab loads via `/api/template/list` and `/api/template/list?type=guideline`
+- Guideline auto-creation on first load if none exist
+
+### Card detail panel (global)
+- `base.html` provides `openPanel(setCode, number)` → fetches `/card/{set}/{num}?fragment=1`
+- `deck-builder.js` injects "Add to Deck" button via MutationObserver
+- Panel is shared across ALL tools — any `.card-cell` click opens it
+
+---
+
+## Supporting Modules
+
+These are not tied to a single tool but used by several.
+
+| File | Lines | Role | Used by |
+|------|-------|------|---------|
+| `mtg/shared.py` | 127 | `get_db()`, `db_path()`, `color_identity_subset()`, `card_image`, `render_mana()`, `pagination_url()`, `DECKS_DIR`/`TEMPLATES_DIR` constants | All blueprints, MCP server |
+| `mtg/similarity.py` | 286 | `score_similarity()`, `extract_terms()`, `get_idf()`, `gate()`, `split_csv()`, `similarity_label()`, `wubrg_sort()` | Similarity tool, Eval deepdive/similar, MCP server |
+| `mtg/embed.py` | 232 | `build(db_path)`, `find(db_path, text, top_k=200)`, `status()` | Similarity tool, Eval pipeline, Config page |
+| `mtg/llm.py` | 163 | `generate()`, `_parse_json()` (JSON repair), `fetch_models()` | Commander Eval, Config page |
+| `mtg/images.py` | 81 | `card_image_url()`, `fetch_scryfall_image()`, `mana_symbols()` | Search routes, shared helpers |
+| `mtg/prompts.py` | 142 | Three system prompt constants | Commander Eval |
+| `mtg/websearch.py` | 42 | `web_search(query, max_results)` → SearXNG | Commander Eval pipeline |
+| `mtg/eval_cache.py` | 42 | `_eval_cache` (OrderedDict, FIFO 100), `cache_put/get/update` | Commander Eval routes |
+| `mtg/eval_helpers.py` | 237 | `eval_similar_embed/legacy`, `get_commander_filter_sets()`, `is_placeholder_name()`, `auto_save_deepdives()` | Commander Eval routes |
+| `mtg/ingest.py` | 240 | `process_upload()` — validate, dedup, replace DB | Config page |
+| `mtg/dedup.py` | 171 | `dedup_db()`, `dedup_in_place()` | Config page (ingest) |
+| `mtg/mcp_server.py` | 404 | FastMCP server: `semantic_search`, `keyword_search`, `get_card` | Standalone process (managed by `mcp_control.py`) |
+| `mtg/mcp_control.py` | 61 | `restart_mcp()`, `port_alive()` | Config page, docker-entrypoint |
+| `app.py` | 116 | Flask app factory: secret key, security headers, Jinja globals, blueprint registration | All web routes |
+
+---
+
+## Database Schema
+
+Key tables in `AllPrintings.sqlite` (MTGJSON). After dedup, one row per unique English card (latest printing).
 
 ### `cards` (primary table)
-Used everywhere. After dedup, one row per unique English card (latest printing).
 
-| Column | Type | Usage |
+| Column | Type | Notes |
 |--------|------|-------|
-| `uuid` | TEXT | Primary join key |
-| `name` | TEXT | Display, search, DFC ` // ` suffix for double-faced cards |
-| `text` | TEXT | Oracle text — similarity scoring, embeddings, LLM prompts |
-| `type` | TEXT | Full type line (includes em-dash `—` from MTGJSON) |
-| `types` | TEXT | Comma-separated types (e.g. "Creature,Artifact") |
-| `subtypes` | TEXT | Comma-separated subtypes |
-| `supertypes` | TEXT | Comma-separated supertypes (e.g. "Legendary") |
+| `uuid` | TEXT | Primary key |
+| `name` | TEXT | DFCs have ` // ` separating faces |
+| `text` | TEXT | Oracle text |
+| `type` | TEXT | Full type line with em-dash `—` |
+| `types` | TEXT | Comma-separated (e.g. "Creature,Artifact") |
+| `subtypes` | TEXT | Comma-separated |
+| `supertypes` | TEXT | Comma-separated (e.g. "Legendary") |
 | `manaCost` | TEXT | e.g. `{1}{R}{G}` |
-| `manaValue` | REAL | Numeric mana value, nullable |
-| `colors` | TEXT | e.g. "W, U" (WUBRG order) |
-| `colorIdentity` | TEXT | e.g. "W, G" (alphabetical order — **important**: differs from `colors` ordering) |
-| `keywords` | TEXT | Comma-separated keyword abilities |
-| `power` / `toughness` / `loyalty` | TEXT | May be `'*'` for variable values; CAST AS REAL for comparisons |
+| `manaValue` | REAL | Nullable |
+| `colors` | TEXT | WUBRG order (e.g. "W, U") |
+| `colorIdentity` | TEXT | Alphabetical order (e.g. "U, W") — **different from colors** |
+| `keywords` | TEXT | Comma-separated |
+| `power`/`toughness`/`loyalty` | TEXT | May be `'*'` — CAST AS REAL for comparisons |
 | `setCode` | TEXT | Three-letter set code |
-| `number` | TEXT | Collector number (with letter suffixes) |
-| `side` | TEXT | `'a'` / `'b'` for DFCs, NULL for single-faced |
+| `number` | TEXT | Collector number (may have letter suffixes) |
+| `side` | TEXT | `'a'`/`'b'` for DFCs, NULL for single-faced |
 | `otherFaceIds` | TEXT | Comma-separated UUIDs of other faces |
 | `language` | TEXT | Always filtered to `'English'` |
-| `rarity`, `borderColor`, `layout`, `frameVersion` | TEXT | Search filters |
-| `isReprint`, `isReserved`, `isFunny`, `isOversized`, `isFullArt`, `isTextless`, `isPromo`, `isRebalanced` | INT | Boolean search filters |
-| `leadershipSkills` | TEXT | JSON string; `"commander": true` for commander-legal |
-| `edhrecRank` / `edhrecSaltiness` | INT/FLOAT | EDHREC metadata |
-| `faceName` | TEXT | Name of this face for DFCs |
-| `printings` | TEXT | Comma-separated set codes of all printings |
+| `printings` | TEXT | Comma-separated set codes |
+| `rarity`/`borderColor`/`layout`/`frameVersion` | TEXT | Search filters |
+| `isReprint`/`isReserved`/`isFunny`/`isOversized`/`isFullArt`/`isTextless`/`isPromo`/`isRebalanced` | INT | Boolean flags |
 | `isGameChanger` | INT | Game Changer card flag |
+| `leadershipSkills` | TEXT | JSON string; `"commander": true` |
+| `edhrecRank`/`edhrecSaltiness` | INT/FLOAT | EDHREC metadata |
 
 ### Other tables
 
 | Table | Key columns | Used by |
 |-------|-------------|---------|
-| `cardIdentifiers` | `uuid`, `scryfallId` | Image URLs, MCP tools, autocomplete |
-| `cardLegalities` | `uuid`, `commander`, `standard`, ... | Format legality filters, commander-legal check |
-| `cardRulings` | `uuid`, `date`, `text` | Card detail, commander eval prompts |
+| `cardIdentifiers` | `uuid`, `scryfallId` | Image URLs, autocomplete, MCP |
+| `cardLegalities` | `uuid`, `commander`, `standard`, ... | Format legality filters |
+| `cardRulings` | `uuid`, `date`, `text` | Card detail, eval prompts |
 | `sets` | `code`, `name`, `releaseDate` | Latest-printing resolution, display |
 
 ---
 
-## Route Map
+## Infrastructure
 
-### Pages (GET, return HTML)
+```
+docker-compose.yml
+├── app (Flask :5000, MCP SSE :8765, MCPO :8000)
+│   └── docker-entrypoint.sh — starts all 3, respawns MCP/MCPO, kills all if Flask dies
+└── searxng (:8888→8080)
+    ├── searxng/settings.yml — JSON enabled, rate limiter off
+    └── searxng/limiter.toml — disabled
+```
 
-| Route | Template | Notes |
-|-------|----------|-------|
-| `/` | `index.html` | Homepage |
-| `/search` | `search.html` | Card search with 30+ filters |
-| `/card/<set_code>/<number>` | `card.html` or `card_panel.html` | `?fragment=1` loads side-panel version |
-| `/similar` + `/cards/<set_code>/similar` | `similar_landing.html` | Similarity landing; POST handles drag-drop |
-| `/card/<set_code>/<number>/similar` | `similar.html` | Similarity results; `?export=1` returns self-contained HTML |
-| `/commander-eval` | `commander_eval_landing.html` | Landing page; POST handles drag-drop |
-| `/card/<set_code>/<number>/eval` | `commander_eval.html` | Analysis display; `?report=<filename>` loads saved |
-| `/config` | `config.html` | Settings page (GET renders, POST saves to session) |
-| `/deck-builder` | `deck_builder.html` | Split-panel deck builder |
-| `/saved-decks` | `saved_decks.html` | Saved deck grid |
+**Bind mounts for live dev:** All `.py` files, `templates/`, `static/`, `decks/`, `card_templates/` are bind-mounted — edits take effect on browser refresh, no rebuild.
 
-### JSON API Endpoints
+### Environment variables
 
-| Route | Method | Purpose |
-|-------|--------|---------|
-| `/card-autocomplete` | GET | Card name autocomplete (`?q=...`) |
-| `/card/<set>/<num>/eval/analyze` | POST | Run commander eval pipeline |
-| `/card/<set>/<num>/eval/progress` | GET | Poll pipeline progress |
-| `/card/<set>/<num>/eval/deepdive` | POST | Deep-dive on strategy/unique build |
-| `/card/<set>/<num>/eval/similar` | POST | Find similar legendary creatures |
-| `/card/<set>/<num>/eval/save` | POST | Save analysis to `eval_reports/` |
-| `/card/<set>/<num>/eval/load` | POST | Load saved report |
-| `/card/<set>/<num>/eval/restore` | POST | Restore evalData from deck builder into cache |
-| `/commander-eval/reports` | GET | List saved reports (JSON) |
-| `/commander-eval/reports/delete` | POST | Delete saved report |
-| `/config/embed-status` | GET | Embedding index status (JSON) |
-| `/config/embed-build` | POST | Trigger async embedding rebuild |
-| `/config/mcp-status` | GET | MCP server status (JSON) |
-| `/config/mcp-restart` | POST | Restart MCP SSE + MCPO |
-| `/config/ingest` | POST | Upload + ingest new database |
-| `/llm-models` | GET | Proxy to fetch models from API base URL |
-| `/api/deck/save` | POST | Save deck to `decks/` |
-| `/api/deck/list` | GET | List saved decks |
-| `/api/deck/delete` | POST | Delete deck |
-| `/api/deck/card-lookup` | POST | Card by setCode+number or uuid |
-| `/api/deck/lookup-by-name` | POST | Card by exact name |
-| `/api/deck/lookup-by-uuid` | POST | Card by Scryfall UUID |
-| `/api/tags/list` | GET | Tag catalog (auto-seeds predefined tags) |
-| `/api/tags/save` | POST | Save tag catalog |
-
-### Special
-
-| Route | Purpose |
-|-------|---------|
-| `/img/<size>/<face>/<c1>/<c2>/<scryfall_id>.jpg` | Lazy image cache-through proxy (fetches from Scryfall, caches locally, retries 3× with exponential backoff) |
-
----
-
-## Key Idioms & Patterns
-
-### `ponytail:` comments
-Every block comment beginning with `ponytail:` is a design note / rationale. These are throughout the codebase and explain **why** a non-obvious choice was made. Agents should read these when modifying code near them — they encode edge cases and trade-offs.
-
-### Session-based config (no database for settings)
-LLM keys, model selection, custom prompts, and similarity method preferences are stored in Flask's cryptographically-signed session cookie. The cookie is permanent (30-day lifetime). The `.secret_key` file (auto-generated on first run) ensures sessions survive restarts. The API key **never** touches server-side storage.
-
-### Server-side analysis cache (`_eval_cache`)
-Commander eval results are too large for Flask's 4KB cookie limit. Stored in an `OrderedDict` (FIFO capped at 100). A UUID key is stored in the session. Cache entries are validated against the card being viewed to prevent cross-card cache bleed.
-
-### DFC (Double-Faced Card) handling
-- DB stores front face as name, back face has `side='b'` and `otherFaceIds` pointing to each other
-- Names like `"Sol Ring // Sol Ring"` are split on ` // ` for dedup purposes
-- Back face oracle text is included in LLM prompts
-- Web searches use only the front-face name (before ` // `)
-
-### Color ordering quirk
-- `cards.colors`: WUBRG order (W, U, B, R, G)
-- `cards.colorIdentity`: alphabetical order (B, G, R, U, W)
-
-This matters for exact-match comparisons. `_wubrg_sort()` handles colors; CI is handled with `sorted()`.
-
-### IDF cache
-`_get_idf()` computes term frequencies once per server lifetime. Invalidates if card count drifts by >100. The extraction logic version (`_idf_version`) forces rebuild when `_extract_terms` changes.
-
-### Embedding index (`embeddings/`)
-- `vectors.npy`: 384-dim normalized embeddings for all unique English cards
-- `meta.json`: metadata array (uuid, name, type, keywords, CI, MV, scryfallId) — no oracle text
-- `build_info.json`: status info (card count, build timestamp)
-- `.build.lock`: temporary file indicating build-in-progress
-- Oracle text for results is fetched from DB on the fly (keeps meta.json small)
-
-### Ingest pipeline
-1. Accept upload (`.sqlite`, `.gz`, `.bz2`, `.xz`, `.zip`, `.tgz`)
-2. Decompress if needed; handle `tar.gz` archives containing `.sqlite`
-3. Validate (must have ≥1000 English cards)
-4. `dedup.dedup_db()` — one row per unique English card (latest printing)
-5. Validate dedup result (≥500 cards)
-6. Atomically replace live database
-7. Trigger background embedding rebuild
-
-### Image proxy
-`/img/normal/front/0/1/abcd1234.jpg` → checks local disk → fetches from Scryfall → caches → serves. Three retries with exponential backoff (Scryfall drops burst requests from 30-image search grids).
-
-### MCP infrastructure
-- `mcp_server.py`: standalone process using FastMCP, supports `--transport stdio|sse|streamable-http`
-- MCP SSE runs on `:8765`, MCPO proxy on `:8000` (OpenAPI bridge for OpenWebUI)
-- Flask manages MCP lifecycle via `_restart_mcp()` (kill by PID file, respawn)
-- CORS is wide-open on the MCP server (needed for browser-based OpenWebUI clients)
-
----
-
-## Configuration Surface
-
-### Environment variables (Flask app)
-
-| Variable | Default | Used in |
+| Variable | Default | Used by |
 |----------|---------|---------|
-| `SEARXNG_URL` | `http://localhost:8888` | `app.py::_web_search()` |
-| `LLM_BACKEND` | `openai` | `llm.py::generate()` |
-| `LLM_BASE_URL` | (empty) | `llm.py::generate()` |
-| `LLM_MODEL` | (empty) | `llm.py::generate()` |
-| `LLM_API_KEY` | (empty) | `llm.py::generate()` |
-| `SECRET_KEY` | (auto-generated) | Flask session signing |
-| `PORT` | `5000` | docker-compose port mapping |
-| `FLASK_DEBUG` | (empty) | Debug mode (any truthy) |
-| `MCP_SSE_PORT` | `8765` | MCP SSE + MCPO config |
-| `MCPO_PORT` | `8000` | MCPO proxy port |
-| `MCP_HOST` | `0.0.0.0` | MCP bind address |
-| `MTG_DATABASE` | `AllPrintings.sqlite` | Only used by `mcp_server.py` |
-
-### Session-based settings (browser cookie)
-Configured from `/config` page:
-- `llm_backend`, `llm_base_url`, `llm_model`, `llm_api_key`
-- `eval_prompt`, `deepdive_prompt`, `verify_prompt` (custom system prompts)
-- `similar_method`, `eval_similar_method` (embed vs legacy)
-- Override env vars when set
-
-### Docker Compose env vars (.env file)
-- `SEARXNG_SECRET` (required)
-- `PORT`, `SEARXNG_HOST_PORT`, `MCP_SSE_PORT`, `MCPO_PORT`
-- `LLM_BACKEND`, `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY`
-- `FLASK_DEBUG`
+| `SEARXNG_URL` | `http://localhost:8888` | `websearch.py` |
+| `LLM_BACKEND` | `openai` | `llm.py` |
+| `LLM_BASE_URL` | (empty) | `llm.py` |
+| `LLM_MODEL` | (empty) | `llm.py` |
+| `LLM_API_KEY` | (empty) | `llm.py` |
+| `SECRET_KEY` | auto-generated | Flask session signing |
+| `PORT` | `5000` | docker-compose |
+| `FLASK_DEBUG` | (empty) | Debug mode |
+| `MCP_SSE_PORT` | `8765` | MCP server |
+| `MCPO_PORT` | `8000` | MCPO proxy |
+| `MTG_DATABASE` | `AllPrintings.sqlite` | MCP server only |
 
 ---
 
-## Dependencies
+## Patterns & Gotchas When Modifying
 
-| Package | Role |
-|---------|------|
-| Flask 3.x | Web framework |
-| sentence-transformers 4.x | Embedding model (`all-MiniLM-L6-v2`) |
-| numpy 2.x | Vector operations |
-| openai 2.x | OpenAI-compatible LLM backend |
-| anthropic 0.116+ | Anthropic LLM backend |
-| mcp 1.28+ | MCP server framework (FastMCP) |
-| mcpo 0.0.20+ | MCP-to-OpenAPI proxy |
+1. **DFC names** — many places split on ` // ` for dedup. New name-based logic must handle this.
 
-No ORM, no migrations, no task queue, no Redis — SQLite is the only database.
+2. **Color ordering quirk** — `colors` is WUBRG, `colorIdentity` is alphabetical. When comparing CI across cards, always `sorted()` or use `color_identity_subset()` from `shared.py`.
 
----
+3. **Session cookie size** — capped at ~4KB. Eval results are too large → stored in `_eval_cache` (in-memory OrderedDict) with UUID keys in the session.
 
-## Hooks & Entry Points
+4. **Deck Builder scrapes HTML** — the embedded Search and Similarity tabs parse the search/similar HTML pages. Changes to `.card-grid` or pagination structure in those templates break the Deck Builder.
 
-- **Flask dev server:** `python app.py` (binds 0.0.0.0:5000)
-- **MCP stdio:** `python mcp_server.py` (for local Claude Code / VS Code)
-- **MCP SSE:** `python mcp_server.py --transport sse --port 8765` (for remote agents)
-- **Docker:** `docker compose up -d` (all three services via `docker-entrypoint.sh`)
-- **Embedding build:** `embed.build(db_path)` — called from ingest pipeline or config page button (async via thread)
-- **Database dedup:** `dedup.dedup_db(src, dst)` or `dedup.dedup_in_place(db_path)`
+5. **Embedding index** — must be rebuilt after DB ingest. `embed.build()` is async (threaded) and thread-safe (mutex). `status()` shows building state via lock file.
 
----
+6. **Image proxy burst handling** — 30-image grids burst 30 concurrent requests to Scryfall, which drops them. Exponential backoff (3 retries, 0.5s/1s/2s) is load-bearing in `fetch_scryfall_image()`.
 
-## Areas to Watch When Modifying
+7. **LLM JSON repair** — `_parse_json()` in `llm.py` handles markdown fences, trailing commas, missing commas, unescaped newlines, and invalid escape sequences. When changing LLM prompt output format, check this still works.
 
-1. **`app.py` is ~3400 lines.** New routes should follow the existing pattern: use `ponytail:` comments, session for config, `_eval_cache` for large data. Avoid adding new Python files unless the module has a clear standalone concern (like `embed.py`).
+8. **SearXNG unavailable** — `web_search()` returns `None` on connection errors. The eval pipeline continues with web research as empty dicts. The LLM still produces analysis from card data + similar cards.
 
-2. **DFC names** — many places split on ` // ` for dedup. Adding name-based logic without handling this produces duplicate results for double-faced cards.
+9. **Server validates nothing** — deck save only checks non-empty name. All rules (100-card max, 4-copy limit, legend rule, CI compliance) are enforced client-side in `deck-builder.js`.
 
-3. **Color ordering** — `colors` is WUBRG, `colorIdentity` is alphabetical. Off-by-one in color filtering produces wrong results.
+10. **ECON 2024** — this codebase follows a "ponytail" design philosophy (laziest-thing-that-works). Comment blocks beginning with `ponytail:` explain non-obvious design choices. Read them before modifying nearby code.
 
-4. **Session cookie size** — Flask sessions cap at ~4KB. Commander eval results are too big; use `_eval_cache` with UUID keys. New features storing large data should follow this pattern.
+11. **app.py is only 116 lines now** — it's a thin app factory. All route logic is in `mtg/blueprints/`. New routes go in the appropriate blueprint or a new one registered in `app.py`.
 
-5. **Embedding index must be rebuilt** after any DB change. The config page shows status and has a "Build Now" button. `embed.build()` is async but thread-safe (mutex lock).
-
-6. **Image proxy burst handling** — Scryfall drops concurrent requests. The exponential backoff (3 retries, 0.5s/1s/2s) is load-bearing. Changing image loading (e.g., lazy loading more images at once) may need a fetch queue instead.
-
-7. **LLM JSON parsing** — `llm._parse_json()` handles markdown fences, trailing commas, missing commas, unescaped newlines, and invalid escape sequences. Changes to LLM prompt output format may need updates here.
-
-8. **Legacy similarity scoring** — the strictness values (`STRICT_VALUES`, `COLOR_STRICT`, `ORACLE_STRICT`) were calibrated against real card data. Changing them changes result quality non-linearly. The round thresholds in `_eval_similar_legacy()` are tuned for commander similarity specifically.
-
-9. **`_idf_version`** — bump this integer when `_extract_terms()` logic changes. Forces IDF cache rebuild so old term frequencies don't poison new scoring.
-
-10. **SearXNG unavailable** is handled gracefully: `_web_search()` returns `None` on connection errors, the pipeline continues with web research as empty dicts, and the LLM still produces analysis from card data + similar cards alone.
+12. **No tests for Deck Builder or templates** — the 4 pytest files (`tests/`) only cover LLM, mana, shared, and similarity. Manual QA docs are in `QA_TEST_PLAN.md` and `QA_FINDINGS.md`.

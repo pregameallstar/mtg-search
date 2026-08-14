@@ -7,12 +7,11 @@ import os
 import sys
 import re
 
-from flask import Blueprint, g, render_template, request, abort, send_file, jsonify, session, redirect, url_for
-from urllib.parse import quote
+from flask import Blueprint, render_template, request, abort, send_file, jsonify, session, redirect, url_for
 
 from mtg.shared import (
-    get_db, _db_ready, card_image, render_mana, pagination_url,
-    IMAGE_DIR, DATABASE,
+    get_db, _db_ready,
+    IMAGE_DIR, DEFAULT_PER_PAGE, VALID_FORMATS,
 )
 from mtg.similarity import normalize_dash, wubrg_sort
 from mtg.images import fetch_scryfall_image
@@ -88,8 +87,8 @@ def search():
     page = request.args.get("page", 1, type=int)
     if page < 1:
         page = 1
-    per_page_raw = request.args.get("per_page", "30")
-    per_page = int(per_page_raw) if per_page_raw.isdigit() and int(per_page_raw) in (10, 25, 50) else 30
+    per_page_raw = request.args.get("per_page", str(DEFAULT_PER_PAGE))
+    per_page = int(per_page_raw) if per_page_raw.isdigit() and int(per_page_raw) in (10, 25, 50) else DEFAULT_PER_PAGE
 
     if not _db_ready():
         return render_template(
@@ -165,7 +164,7 @@ def search():
         color_chars = [ch for ch in color.upper() if ch in "WUBRGC"]
         has_c = "C" in color_chars
         color_chars = [ch for ch in color_chars if ch != "C"]
-        if has_c and color_rule != "at_most":
+        if has_c:
             if not color_chars:
                 where.append("c.colors = ''")
             elif color_rule == "exact":
@@ -191,7 +190,7 @@ def search():
         ci_chars = [ch for ch in ci.upper() if ch in "WUBRGC"]
         has_c = "C" in ci_chars
         ci_chars = [ch for ch in ci_chars if ch != "C"]
-        if has_c and ci_rule != "at_most":
+        if has_c:
             if not ci_chars:
                 where.append("c.colorIdentity = ''")
             elif ci_rule == "exact":
@@ -284,12 +283,8 @@ def search():
     # Format legality
     join_clause = ""
     if fmt:
-        valid_formats = {"standard","commander","modern","legacy","pioneer","vintage",
-                         "pauper","brawl","historic","oathbreaker","penny","duel",
-                         "alchemy","gladiator","oldschool","premodern","predh",
-                         "paupercommander","timeless","standardbrawl","competitivebrawl"}
         fmt_lower = fmt.lower()
-        if fmt_lower in valid_formats:
+        if fmt_lower in VALID_FORMATS:
             join_clause = "JOIN cardLegalities cl ON c.uuid = cl.uuid"
             if legality == "banned":
                 where.append(f"cl.{fmt_lower} = 'Banned'")

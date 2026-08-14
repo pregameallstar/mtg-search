@@ -13,7 +13,7 @@ from flask import (
     url_for,
 )
 
-from mtg.shared import get_db, REPORTS_DIR
+from mtg.shared import get_db, REPORTS_PATH, DEEPDIVE_SUFFIX, _latest_printing
 
 eval_landing_bp = Blueprint("eval_landing", __name__)
 
@@ -52,15 +52,7 @@ def commander_eval_landing():
     # GET: name search
     by_name = request.args.get("by_name", "").strip()
     if by_name:
-        found = db.execute(
-            """
-            SELECT c.setCode, c.number FROM cards c
-            JOIN sets s ON c.setCode = s.code
-            WHERE c.name = ? AND c.language = 'English' AND (c.side IS NULL OR c.side = 'a')
-            ORDER BY s.releaseDate DESC LIMIT 1
-        """,
-            [by_name],
-        ).fetchone()
+        found = _latest_printing(by_name)
         if found:
             return redirect(
                 url_for(
@@ -70,14 +62,14 @@ def commander_eval_landing():
                 )
             )
 
-    reports_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), REPORTS_DIR)
+    reports_dir = REPORTS_PATH
     saved_reports = []
     if os.path.isdir(reports_dir):
         for fname in sorted(os.listdir(reports_dir), reverse=True):
             if (
                 not fname.endswith(".json")
                 or fname == ".gitkeep"
-                or fname.endswith("_deepdives.json")
+                or fname.endswith(DEEPDIVE_SUFFIX)
             ):
                 continue
             try:
@@ -112,9 +104,7 @@ def commander_eval_reports_delete():
     filename = body.get("filename", "").strip()
     if not filename or ".." in filename or "/" in filename:
         return jsonify({"error": "Invalid filename."}), 400
-    report_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), REPORTS_DIR, filename
-    )
+    report_path = os.path.join(REPORTS_PATH, filename)
     try:
         os.unlink(report_path)
     except FileNotFoundError:

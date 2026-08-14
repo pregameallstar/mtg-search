@@ -1,6 +1,8 @@
 #Dev directories
 decks/
 eval_reports/
+prices/
+card_templates/
 
 # SQLite database (large file, symlinked)
 AllPrintings.sqlite

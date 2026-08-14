@@ -7,8 +7,11 @@ from flask import (
     url_for, jsonify, make_response,
 )
 
-from mtg.shared import get_db, card_image, render_mana, DATABASE, db_path, color_identity_subset
-from mtg.similarity import similarity_label, get_idf, extract_terms, split_csv, score_similarity
+from mtg.shared import (
+    get_db, DATABASE, db_path, color_identity_subset,
+    VALID_FORMATS, _load_card, _latest_printing,
+)
+from mtg.similarity import get_idf, extract_terms, split_csv, score_similarity
 import mtg.embed as embed
 
 similar_bp = Blueprint("similar", __name__)
@@ -43,12 +46,7 @@ def similar_landing(set_code=None):
     # --- GET: name search ---
     by_name = request.args.get("by_name", "").strip()
     if by_name:
-        found = db.execute("""
-            SELECT c.setCode, c.number FROM cards c
-            JOIN sets s ON c.setCode = s.code
-            WHERE c.name = ? AND c.language = 'English' AND (c.side IS NULL OR c.side = 'a')
-            ORDER BY s.releaseDate DESC LIMIT 1
-        """, [by_name]).fetchone()
+        found = _latest_printing(by_name)
         if found:
             keep = {}
             for k in ("use_types", "use_keywords", "use_subtypes", "use_supertypes",
@@ -139,11 +137,7 @@ def similar_cards(set_code, number):
     mtg_filter = request.args.get("mtg_filter") == "1"
 
     fmt = request.args.get("format", "").strip().lower()
-    valid_formats = {"standard", "commander", "modern", "legacy", "pioneer", "vintage",
-                     "pauper", "brawl", "historic", "oathbreaker", "penny", "duel",
-                     "alchemy", "gladiator", "oldschool", "premodern", "predh",
-                     "paupercommander", "timeless", "standardbrawl", "competitivebrawl"}
-    if fmt not in valid_formats:
+    if fmt not in VALID_FORMATS:
         fmt = ""
 
     top_n = request.args.get("top_n", "5")
@@ -154,12 +148,7 @@ def similar_cards(set_code, number):
     # --- Name-based lookup ---
     by_name = request.args.get("by_name", "").strip()
     if by_name:
-        found = db.execute("""
-            SELECT c.setCode, c.number FROM cards c
-            JOIN sets s ON c.setCode = s.code
-            WHERE c.name = ? AND c.language = 'English' AND (c.side IS NULL OR c.side = 'a')
-            ORDER BY s.releaseDate DESC LIMIT 1
-        """, [by_name]).fetchone()
+        found = _latest_printing(by_name)
         if found:
             # Preserve all factor params in the redirect
             keep = {}
@@ -181,14 +170,7 @@ def similar_cards(set_code, number):
                                     **keep))
 
     # --- Load base card ---
-    base_card = db.execute("""
-        SELECT c.*, ci.scryfallId, s.name as setName, s.releaseDate
-        FROM cards c
-        JOIN cardIdentifiers ci ON c.uuid = ci.uuid
-        JOIN sets s ON c.setCode = s.code
-        WHERE c.setCode = ? AND c.number = ? AND c.language = 'English'
-          AND (c.side IS NULL OR c.side = 'a')
-    """, [set_code, number]).fetchone()
+    base_card = _load_card(set_code, number)
 
     if not base_card:
         abort(404)
