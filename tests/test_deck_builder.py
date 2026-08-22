@@ -539,6 +539,36 @@ def test_deck_moveCardBetweenSections_preserves_quantity(js):
     assert r["mainQty"] == 3  # quantity survives the round-trip
 
 
+def test_deck_moveCardBetweenSections_merges_duplicate_uuid(js):
+    r = js.run("""(function () {
+        var d = new __exposed.Deck();
+        d.createSection('Sideboard');
+        // Same uuid already in the target section at qty 2.
+        d.addToSection('Sideboard', %s);
+        d.sections['Sideboard'][0].quantity = 2;
+        // Add the same uuid to the main deck (qty 1), then move it into Sideboard.
+        d.addCardTo99(%s);
+        d.moveCardBetweenSections(d.cards[0], '', 'Sideboard');
+        return { sideboardLen: d.sections['Sideboard'].length, qty: d.sections['Sideboard'][0].quantity, mainLen: d.cards.length };
+    })()""" % (js_card(card(uuid="u1")), js_card(card(uuid="u1"))))
+    assert r["sideboardLen"] == 1      # no duplicate entry
+    assert r["qty"] == 3               # 2 + 1 merged
+    assert r["mainLen"] == 0           # removed from source
+
+
+def test_deck_moveCardBetweenSections_missing_target_keeps_source(js):
+    r = js.run("""(function () {
+        var d = new __exposed.Deck();
+        d.createSection('Sideboard');
+        d.addToSection('Sideboard', %s);
+        // Move into a nonexistent section must error and NOT remove from source.
+        var result = d.moveCardBetweenSections(d.sections['Sideboard'][0], 'Sideboard', 'Nope');
+        return { error: result.error, stillThere: d.sections['Sideboard'].length };
+    })()""" % js_card(card(uuid="u1")))
+    assert "does not exist" in r["error"]
+    assert r["stillThere"] == 1
+
+
 # --------------------------------------------------------------------------- #
 # Deck model — remove / quantities / totals / clear / CI
 # --------------------------------------------------------------------------- #

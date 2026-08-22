@@ -90,18 +90,13 @@ def api_deck_delete():
         return jsonify({"error": str(e)}), 500
 
 
-@decks_bp.route("/api/deck/card-lookup", methods=["POST"])
-def deck_card_lookup():
-    """Look up a card by setCode+number or uuid. Returns card JSON."""
-    body = request.get_json(silent=True) or {}
+def _lookup_card(set_code="", number="", uuid_val=""):
+    """Return the primary English card row (with scryfallId + set info) by
+    setCode+number or by uuid. Single source of truth for card lookups in deck
+    routes (card-lookup, add-card)."""
     db = get_db()
-
-    set_code = body.get("setCode", "").strip()
-    number = body.get("number", "").strip()
-    uuid_val = body.get("uuid", "").strip()
-
     if uuid_val:
-        card = db.execute("""
+        return db.execute("""
             SELECT c.*, ci.scryfallId, s.name as setName, s.releaseDate
             FROM cards c
             JOIN cardIdentifiers ci ON c.uuid = ci.uuid
@@ -109,8 +104,8 @@ def deck_card_lookup():
             WHERE c.uuid = ? AND c.language = 'English'
               AND (c.side IS NULL OR c.side = 'a')
         """, [uuid_val]).fetchone()
-    elif set_code and number:
-        card = db.execute("""
+    if set_code and number:
+        return db.execute("""
             SELECT c.*, ci.scryfallId, s.name as setName, s.releaseDate
             FROM cards c
             JOIN cardIdentifiers ci ON c.uuid = ci.uuid
@@ -118,9 +113,48 @@ def deck_card_lookup():
             WHERE c.setCode = ? AND c.number = ? AND c.language = 'English'
               AND (c.side IS NULL OR c.side = 'a')
         """, [set_code, number]).fetchone()
-    else:
+    return None
+
+
+def _card_to_deck_json(card):
+    """Map a looked-up card row to the saved-deck card shape.
+
+    Mirrors `cardMapper` in static/deck-builder.js `Deck.prototype.toExport()`
+    exactly (15 fields), so server-side additions and client-side saves produce
+    identical card objects.
+    """
+    return {
+        "uuid": card["uuid"],
+        "setCode": card["setCode"],
+        "number": card["number"],
+        "name": card["name"],
+        "types": card["types"] or "",
+        "manaCost": card["manaCost"] or "",
+        "manaValue": card["manaValue"],
+        "colors": card["colors"] or "",
+        "colorIdentity": card["colorIdentity"] or "",
+        "imageUrl": card_image(card["scryfallId"]),
+        "quantity": 1,
+        "text": card["text"] or "",
+        "supertypes": card["supertypes"] or "",
+        "tags": [],
+        "scryfallId": card["scryfallId"] or "",
+    }
+
+
+@decks_bp.route("/api/deck/card-lookup", methods=["POST"])
+def deck_card_lookup():
+    """Look up a card by setCode+number or uuid. Returns card JSON."""
+    body = request.get_json(silent=True) or {}
+
+    set_code = body.get("setCode", "").strip()
+    number = body.get("number", "").strip()
+    uuid_val = body.get("uuid", "").strip()
+
+    if not uuid_val and not (set_code and number):
         return jsonify({"error": "Provide setCode+number or uuid."}), 400
 
+    card = _lookup_card(set_code, number, uuid_val)
     if not card:
         return jsonify({"error": "Card not found."}), 404
 
@@ -147,6 +181,67 @@ def deck_card_lookup():
         "isLegendary": "Legendary" in (card["type"] or ""),
         "isCreature": "Creature" in (card["type"] or ""),
     })
+
+
+@decks_bp.route("/api/deck/add-card", methods=["POST"])
+def api_deck_add_card():
+    """Add a card to a saved deck's main list or a named section.
+
+    Body: {"deck": "<name>", "section": "<optional>", "setCode": "...", "number": "..."}
+       or {"deck": "<name>", "section": "<optional>", "uuid": "..."}
+
+    ponytail: server-side read-modify-write of the deck JSON so the standalone
+    Search/Similarity pages (which don't load deck-builder.js) can add a card
+    without shipping whole decks over the wire. If the card's uuid already
+    exists in the target, its quantity is incremented (matching addToSection).
+    """
+    body = request.get_json(silent=True) or {}
+    deck_name = body.get("deck", "").strip()
+    section = (body.get("section") or "").strip()
+    set_code = body.get("setCode", "").strip()
+    number = body.get("number", "").strip()
+    uuid_val = body.get("uuid", "").strip()
+
+    if not deck_name:
+        return jsonify({"error": "Deck name is required."}), 400
+    if not uuid_val and not (set_code and number):
+        return jsonify({"error": "Provide setCode+number or uuid."}), 400
+
+    card = _lookup_card(set_code, number, uuid_val)
+    if not card:
+        return jsonify({"error": "Card not found."}), 404
+
+    fname = _sanitize_name(deck_name)
+    fpath = os.path.join(DECKS_DIR, fname)
+    try:
+        with open(fpath) as f:
+            deck = json.load(f)
+    except FileNotFoundError:
+        return jsonify({"error": "Deck not found."}), 404
+    except (json.JSONDecodeError, OSError) as e:
+        return jsonify({"error": str(e)}), 500
+
+    deck_card = _card_to_deck_json(card)
+
+    if section:
+        sections = deck.setdefault("sections", {})
+        target = sections.setdefault(section, [])
+    else:
+        target = deck.setdefault("cards", [])
+
+    existing = next((c for c in target if c.get("uuid") == deck_card["uuid"]), None)
+    if existing:
+        existing["quantity"] = existing.get("quantity", 1) + 1
+    else:
+        target.append(deck_card)
+
+    try:
+        with open(fpath, "w") as f:
+            json.dump(deck, f, indent=2)
+    except OSError as e:
+        return jsonify({"error": str(e)}), 500
+
+    return jsonify({"success": True, "name": card["name"]})
 
 
 @decks_bp.route("/api/deck/lookup-by-name", methods=["POST"])

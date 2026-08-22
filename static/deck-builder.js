@@ -237,6 +237,16 @@
         // Preserve card quantity and tags across the move
         var movedCard = Object.assign({}, cardData);
 
+        // Validate target BEFORE removing from source (otherwise a missing
+        // section silently destroys the card).
+        var target = null;
+        if (toSection) {
+            target = this.sections[toSection];
+            if (!target) return { error: 'Section "' + toSection + '" does not exist.' };
+        } else {
+            target = this.cards;
+        }
+
         // Remove from source
         if (fromSection) {
             this.removeFromSection(fromSection, cardData.uuid);
@@ -244,16 +254,15 @@
             this.removeCard(cardData.uuid);
         }
 
-        // Add to target (preserving quantity/tags)
-        if (toSection) {
-            var section = this.sections[toSection];
-            if (!section) return { error: 'Section "' + toSection + '" does not exist.' };
-            section.push(movedCard);
-            recordHistoryEvent('add', movedCard, toSection);
+        // Add to target (preserving quantity/tags). Merge on duplicate uuid so a
+        // card already present in the target increments instead of duplicating.
+        var existing = target.find(function (c) { return c.uuid === movedCard.uuid; });
+        if (existing) {
+            existing.quantity = (existing.quantity || 1) + (movedCard.quantity || 1);
+            recordHistoryEvent('add', movedCard, toSection || 'main');
         } else {
-            // Add to main deck — skip commander logic, preserve quantity
-            this.cards.push(movedCard);
-            recordHistoryEvent('add', movedCard, 'main');
+            target.push(movedCard);
+            recordHistoryEvent('add', movedCard, toSection || 'main');
         }
         return { ok: true };
     };
@@ -2960,6 +2969,65 @@
         observer.observe(panel, { childList: true, subtree: true });
     }
 
+    /* ─── Card Context Menu (move between sections) ─── */
+    function initCardContextMenus() {
+        // Right-click a deck card row → "Move to ▸ <section|Main Deck>".
+        // Main rows and section rows both carry data-uuid; section rows also
+        // carry data-section-name (main rows omit it → '' = main deck).
+        document.addEventListener('contextmenu', function (e) {
+            var row = e.target.closest('.deck-card-row');
+            if (!row) return;
+
+            var uuid = row.dataset.uuid;
+            if (!uuid) return;
+
+            var sourceSection = row.dataset.sectionName || '';
+            var card = null;
+            if (sourceSection) {
+                var section = deck.sections[sourceSection];
+                if (section) card = section.find(function (c) { return c.uuid === uuid; });
+            } else {
+                card = deck.cards.find(function (c) { return c.uuid === uuid; });
+            }
+            if (!card) return;
+
+            e.preventDefault();
+
+            // Hide any hover preview so it doesn't linger behind the menu, and
+            // cancel its pending 250ms show-timer (a right-click can beat the
+            // timer, re-showing the preview after the menu opens).
+            if (hoverTimeout) { clearTimeout(hoverTimeout); hoverTimeout = null; }
+            hoverActiveRow = null;
+            if (hoverPreviewEl) hoverPreviewEl.style.display = 'none';
+
+            var targets = [{ label: 'Main Deck', action: function () {
+                if (sourceSection === '') return;
+                finishMove(card, sourceSection, '', function (result) { onMoveResult(result); });
+            } }];
+
+            Object.keys(deck.sections || {}).forEach(function (name) {
+                if (name === sourceSection) return; // same-section move is a no-op
+                targets.push({ label: name, action: function () {
+                    finishMove(card, sourceSection, name, function (result) { onMoveResult(result); });
+                } });
+            });
+
+            if (targets.length === 1) {
+                // No other destinations — still show a disabled hint.
+                targets = [{ label: 'No other sections', disabled: true }];
+            }
+
+            ContextMenu.show(e.clientX, e.clientY, [{ label: 'Move to', children: targets }]);
+        });
+
+        function onMoveResult(result) {
+            if (!result) return;
+            if (result.error) { showToast(result.error); return; }
+            var toLabel = result.to ? '"' + result.to + '"' : 'main deck';
+            showToast('Moved ' + result.cardName + ' to ' + toLabel);
+        }
+    }
+
     /* ─── Sort Select ─── */
     function initSortSelect() {
         var sel = $('#deck-sort-select');
@@ -3824,6 +3892,7 @@
         initHistoryDeleteButton();
         enableGlobalDrag();
         enableCardPanelAddToDeck();
+        initCardContextMenus();
 
         // Listen for eval data from embedded Commander Eval iframe
         window.addEventListener('message', function (e) {

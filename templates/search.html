@@ -393,3 +393,8 @@ document.addEventListener('keydown', function(e) {
     <span>Searching…</span>
 </div>
 {% endblock %}
+
+{% block extra_scripts %}
+<script src="{{ url_for('static', filename='context-menu.js') }}"></script>
+<script src="{{ url_for('static', filename='add-to-deck-menu.js') }}"></script>
+{% endblock %}
