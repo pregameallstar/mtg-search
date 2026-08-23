@@ -15,6 +15,45 @@
         'Enchantment', 'Planeswalker', 'Battle', 'Land',
     ];
 
+    // Standalone stylesheet for the presentation export (self-contained, no CDN).
+    var PRESENTATION_CSS = [
+        ':root{--bg:#0d1117;--bg-card:#161b22;--border:#30363d;--text:#c9d1d9;--text-dim:#8b949e;--accent:#58a6ff;}',
+        '*{box-sizing:border-box;}',
+        'body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.5;padding:2rem 1.25rem 4rem;}',
+        'h1,h2,h3{margin:0 0 0.5rem;}',
+        'h2{font-size:1.25rem;color:var(--text);border-bottom:1px solid var(--border);padding-bottom:0.35rem;margin-top:2rem;}',
+        '.hero{display:flex;gap:1.5rem;align-items:flex-start;flex-wrap:wrap;background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:1.5rem;margin-bottom:0.5rem;max-width:1000px;margin-left:auto;margin-right:auto;}',
+        '.cmdr-img{width:244px;height:340px;object-fit:cover;border-radius:10px;flex-shrink:0;}',
+        '.cmdr-ph{width:244px;height:340px;display:flex;align-items:center;justify-content:center;background:var(--bg-card);border:1px dashed var(--border);border-radius:10px;color:var(--text-dim);text-align:center;padding:1rem;flex-shrink:0;}',
+        '.hero-body{flex:1;min-width:260px;}',
+        '.hero-body h1{font-size:1.8rem;margin:0;}',
+        '.cmdr-mana{display:flex;flex-wrap:wrap;gap:0.2rem;margin:0.4rem 0;}',
+        '.cmdr-type{color:var(--text-dim);font-size:0.95rem;margin-bottom:0.25rem;}',
+        '.cmdr-ci{color:var(--text-dim);font-size:0.85rem;}',
+        '.oracle{font-size:0.9rem;color:var(--text);background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:0.75rem;margin:0.5rem 0 0;}',
+        '.block{max-width:1000px;margin:0 auto;}',
+        '.outline-text{color:var(--text);font-size:0.95rem;line-height:1.6;margin:0.25rem 0 0.5rem;}',
+        '.expand-all{background:var(--bg-card);border:1px solid var(--border);color:var(--text-dim);border-radius:6px;padding:0.3rem 0.7rem;font-size:0.8rem;cursor:pointer;}',
+        '.expand-all:hover{border-color:var(--accent);color:var(--text);}',
+        '.card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:0.75rem;margin-bottom:0.5rem;}',
+        'button.card{display:flex;gap:0.6rem;align-items:center;padding:0.5rem;cursor:pointer;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--text);font:inherit;text-align:left;}',
+        'button.card:hover{border-color:var(--accent);}',
+        '.card-thumb{width:40px;height:56px;object-fit:cover;border-radius:4px;flex-shrink:0;background:var(--bg);}',
+        '.card-name{font-weight:600;font-size:0.9rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+        '.modal{position:fixed;inset:0;background:rgba(0,0,0,0.8);display:none;align-items:center;justify-content:center;z-index:1000;padding:2rem;}',
+        '.modal.open{display:flex;}',
+        '.modal img{max-width:min(360px,90vw);max-height:90vh;border-radius:12px;box-shadow:0 8px 40px rgba(0,0,0,0.6);}',
+        '.mc{display:inline-flex;align-items:center;justify-content:center;min-width:1.35rem;height:1.35rem;padding:0 0.25rem;border-radius:999px;font-size:0.72rem;font-weight:700;background:#2a2f38;color:#e6edf3;}',
+        '.mc-w{background:#f8f6e3;color:#1a1a1a;}',
+        '.mc-u{background:#4a90d9;color:#fff;}',
+        '.mc-b{background:#2a2a2a;color:#e6e6e6;}',
+        '.mc-r{background:#d94a4a;color:#fff;}',
+        '.mc-g{background:#3f9d58;color:#fff;}',
+        '.mc-c{background:#b0b8c0;color:#1a1a1a;}',
+        '.mc-tap{background:#a0a0a0;color:#1a1a1a;}',
+        '.mc-x,.mc-y,.mc-z{background:#5a6572;color:#fff;}'
+    ].join('\n');
+
     /* ─── Card Classification ─── */
     // ponytail: history buffer — flushed to server on add/remove events
     var historyBuffer = [];
@@ -109,6 +148,7 @@
         this.cards = [];          // [{ uuid, setCode, number, name, quantity, ... }]
         this.evalData = null;     // Commander eval analysis (from embedded eval iframe)
         this.sections = {};       // { "Sideboard": [card, ...], "Maybeboard": [card, ...], custom: [...] }
+        this.outline = [];        // [{ name, text, cards: [card, ...] }, ...] — Deck Outline sections
         this.guideline = null;    // Guideline template name string (or null)
         this.pricingStore = null; // Per-deck pricing override (null = use global)
         this.pricingSections = {}; // Section include toggles for cost { "main": true, "Sideboard": false, ... }
@@ -267,6 +307,18 @@
         return { ok: true };
     };
 
+    Deck.prototype.setCardNote = function (uuid, sectionName, note) {
+        // Persist a free-text note onto a single card. sectionName '' = main
+        // deck, otherwise the named custom section. Cards with duplicate uuids
+        // across the main deck and a section are disambiguated by section.
+        var list = sectionName ? (this.sections && this.sections[sectionName]) : this.cards;
+        if (!list) return { error: 'Card not found.' };
+        var card = list.find(function (c) { return c.uuid === uuid; });
+        if (!card) return { error: 'Card not found.' };
+        card.note = note || '';
+        return { ok: true };
+    };
+
     Deck.prototype.removeCard = function (uuid) {
         if (this.commander && this.commander.uuid === uuid) {
             recordHistoryEvent('remove', this.commander, 'commander');
@@ -332,6 +384,7 @@
         this.cards = [];
         this.evalData = null;
         this.sections = {};
+        this.outline = [];
         this.guideline = null;
         this.pricingStore = null;
         this.pricingSections = {};
@@ -358,6 +411,7 @@
                 text: c.text,
                 supertypes: c.supertypes,
                 tags: c.tags || [],
+                note: c.note || '',
                 scryfallId: c.scryfallId || '',
             };
         };
@@ -369,16 +423,157 @@
             }.bind(this));
         }
 
+        var outlineExport = (this.outline || []).map(function (sec) {
+            return {
+                name: sec.name || '',
+                text: sec.text || '',
+                cards: (sec.cards || []).map(cardMapper),
+            };
+        });
+
         return {
             name: this.name,
             commander: this.commander,
             evalData: this.evalData,
             cards: this.cards.map(cardMapper),
             sections: sectionsExport,
+            outline: outlineExport,
             guideline: this.guideline,
             pricingStore: this.pricingStore || null,
             pricingSections: this.pricingSections || {},
         };
+    };
+
+    Deck.prototype.toTextExport = function () {
+        // Plain-text "deckbox" list, importable by Moxfield / Archidekt.
+        // Commander first (auto-detected), then the main deck, then each
+        // non-empty section as a header line followed by its cards.
+        var lines = [];
+
+        if (this.commander && this.commander.name) {
+            lines.push('1 ' + this.commander.name);
+            lines.push('');  // blank line separates commander from main deck
+        }
+
+        (this.cards || []).forEach(function (c) {
+            lines.push((c.quantity || 1) + ' ' + c.name);
+        });
+
+        if (this.sections) {
+            Object.keys(this.sections).forEach(function (key) {
+                var cards = this.sections[key] || [];
+                if (!cards.length) return;
+                lines.push('');
+                lines.push(key);
+                cards.forEach(function (c) {
+                    lines.push((c.quantity || 1) + ' ' + c.name);
+                });
+            }.bind(this));
+        }
+
+        return lines.join('\n') + '\n';
+    };
+
+    Deck.prototype.toPresentationHTML = function (imgResolver) {
+        /* Self-contained presentation page (no external deps). `imgResolver`
+           is (size, scryfallId) -> dataURI string or '' for a placeholder. */
+        function typeLine(card) {
+            if (card.type) return card.type;  // full type line when present (commander / card-lookup)
+            var parts = [];
+            if (card.supertypes) parts.push(card.supertypes);
+            if (card.types) parts.push(card.types.replace(/,/g, ' '));
+            return parts.join(' ');
+        }
+
+        function imgTag(size, scryfallId, alt) {
+            var uri = imgResolver(size, scryfallId);
+            if (!uri) return '';
+            var cls = size === 'normal' ? 'cmdr-img' : 'card-thumb';
+            return '<img class="' + cls + '" src="' + uri + '" alt="' + escapeAttr(alt) + '" loading="lazy">';
+        }
+
+        var parts = [];
+
+        // ── Commander hero ──
+        parts.push('<header class="hero">');
+        if (this.commander) {
+            var cmdr = this.commander;
+            var img = imgTag('normal', cmdr.scryfallId, cmdr.name);
+            parts.push(img || '<div class="cmdr-ph">' + escapeHtml(cmdr.name) + '</div>');
+            parts.push('<div class="hero-body">');
+            parts.push('<h1>' + escapeHtml(cmdr.name) + '</h1>');
+            parts.push('<div class="cmdr-mana">' + renderManaChips(cmdr.manaCost) + '</div>');
+            parts.push('<div class="cmdr-type">' + escapeHtml(typeLine(cmdr)) + '</div>');
+            if (cmdr.colorIdentity) {
+                parts.push('<div class="cmdr-ci">Color identity: ' + escapeHtml(cmdr.colorIdentity) + '</div>');
+            }
+            if (cmdr.text) parts.push('<p class="oracle">' + escapeHtml(cmdr.text) + '</p>');
+            parts.push('</div>');
+        }
+        parts.push('</header>');
+
+        // ── Deck Outline sections ──
+        // Each example card is a clickable thumbnail: no mana cost, type, or
+        // oracle text — clicking opens a modal with the enlarged card image.
+        var outline = this.ensureOutline();
+        outline.forEach(function (sec) {
+            var cards = sec.cards || [];
+
+            parts.push('<section class="block"><h2>' + escapeHtml(sec.name || '') + '</h2>');
+            if (sec.text) {
+                parts.push('<div class="outline-text">' + escapeHtml(sec.text).replace(/\n/g, '<br>') + '</div>');
+            }
+            if (cards.length) {
+                parts.push('<div class="card-grid">');
+                cards.forEach(function (c) {
+                    var img = imgTag('small', c.scryfallId, c.name);
+                    var large = imgResolver('normal', c.scryfallId) || '';
+                    parts.push('<button type="button" class="card" data-large="' + escapeAttr(large) + '" data-name="' + escapeAttr(c.name) + '">'
+                        + img
+                        + '<span class="card-name">' + escapeHtml(c.name) + '</span>'
+                        + '</button>');
+                });
+                parts.push('</div>');
+            }
+            parts.push('</section>');
+        });
+
+        parts.push('<div class="modal" id="card-modal" role="dialog" aria-modal="true">'
+            + '<img id="card-modal-img" alt="">'
+            + '</div>');
+
+        var title = (this.name || 'Deck') + ' — Deck Presentation';
+        var body = parts.join('\n');
+
+        return '<!DOCTYPE html>\n<html lang="en">\n<head>\n'
+            + '<meta charset="UTF-8">\n'
+            + '<meta name="viewport" content="width=device-width, initial-scale=1.0">\n'
+            + '<title>' + escapeHtml(title) + '</title>\n'
+            + '<style>\n' + PRESENTATION_CSS + '\n</style>\n'
+            + '</head>\n<body>\n'
+            + body
+            + '\n<script>\n'
+            + '(function(){'
+            + 'var modal=document.getElementById("card-modal");'
+            + 'var img=document.getElementById("card-modal-img");'
+            + 'if(!modal||!img)return;'
+            + 'var cards=document.querySelectorAll("button.card");'
+            + 'for(var i=0;i<cards.length;i++){'
+            + 'cards[i].addEventListener("click",function(){'
+            + 'var large=this.getAttribute("data-large");'
+            + 'if(!large)return;'
+            + 'img.src=large;'
+            + 'img.alt=this.getAttribute("data-name")||"";'
+            + 'modal.classList.add("open");'
+            + '});}'
+            + 'modal.addEventListener("click",function(e){'
+            + 'if(e.target===modal)modal.classList.remove("open");'
+            + '});'
+            + 'document.addEventListener("keydown",function(e){'
+            + 'if(e.key==="Escape")modal.classList.remove("open");'
+            + '});'
+            + '})();'
+            + '\n</script>\n</body>\n</html>\n';
     };
 
     Deck.prototype.fromImport = function (data) {
@@ -391,6 +586,7 @@
         this.cards = (data.cards || []).map(function (c) {
             var card = Object.assign({}, c, { quantity: c.quantity || 1 });
             if (!card.tags) card.tags = [];
+            if (!card.note) card.note = '';
             return card;
         });
         this.sections = {};
@@ -400,9 +596,46 @@
             self.sections[key] = (sectionsData[key] || []).map(function (c) {
                 var card = Object.assign({}, c, { quantity: c.quantity || 1 });
                 if (!card.tags) card.tags = [];
+                if (!card.note) card.note = '';
                 return card;
             });
         });
+
+        // Deck Outline — ordered array of { name, text, cards[] }. Seed the
+        // three defaults when absent so the editor/export never start blank.
+        this.outline = (data.outline || []).map(function (sec) {
+            return {
+                name: sec.name || '',
+                text: sec.text || '',
+                cards: (sec.cards || []).map(function (c) {
+                    var card = Object.assign({}, c, { quantity: c.quantity || 1 });
+                    if (!card.tags) card.tags = [];
+                    if (!card.note) card.note = '';
+                    return card;
+                }),
+            };
+        });
+        if (!this.outline.length) {
+            this.outline = self.defaultOutline();
+        }
+    };
+
+    Deck.prototype.defaultOutline = function () {
+        /* Seed the three default Deck Outline sections. A fresh section carries
+           a name, an empty narrative body, and an empty example-card list. */
+        return [
+            { name: 'Description', text: '', cards: [] },
+            { name: 'Strategy', text: '', cards: [] },
+            { name: 'How to Win', text: '', cards: [] },
+        ];
+    };
+
+    Deck.prototype.ensureOutline = function () {
+        /* Return the current outline, or the defaults when it is empty. Does
+           not mutate the model — the editor/export seed on read so the three
+           default sections appear without writing until the user edits them. */
+        if (!this.outline || !this.outline.length) return this.defaultOutline();
+        return this.outline;
     };
 
     /* ─── Server-side Persistence ─── */
@@ -947,6 +1180,7 @@
         renderTagStats();
         renderSections();
         renderCustomSections();
+        renderOutline();
         renderStats();
         renderDeckCharts();
         renderGuidelineProgress();
@@ -1195,7 +1429,7 @@
             '<button class="qty-btn qty-plus" data-uuid="' + escapeAttr(card.uuid) + '" data-section="' + escapeAttr(sectionName) + '" data-delta="1" title="Increase quantity">+</button>' +
             '<button class="qty-btn qty-minus" data-uuid="' + escapeAttr(card.uuid) + '" data-section="' + escapeAttr(sectionName) + '" data-delta="-1" title="Decrease quantity">−</button>' +
             '<span class="card-quantity">' + card.quantity + '×</span>' +
-            '<span class="card-mv" title="Mana Value">' + (card.manaValue !== undefined ? card.manaValue : '—') + '</span>' +
+            '<span class="card-note-indicator' + (card.note ? ' has-note' : '') + '" title="' + escapeAttr(card.note || 'No note') + '">📝</span>' +
             '<span class="card-name-text" title="' + escapeAttr(card.name) + '">' + escapeHtml(card.name) + '</span>' +
             '<span class="card-mana-cost">' + renderManaSymbols(card.manaCost || '') + '</span>' +
             '<span class="card-price">' + formatPrice(getCardPrice(card)) + '</span>' +
@@ -1391,7 +1625,7 @@
             '<button class="qty-btn qty-minus" data-uuid="' + escapeAttr(card.uuid) + '" data-delta="-1" title="Decrease quantity">−</button>' +
             '<span class="card-quantity">' + card.quantity + '×</span>' +
             (shouldShowQuantityWarning(card) ? '<span class="qty-warn-icon" title="Exceeds singleton limit">⚠</span>' : '') +
-            '<span class="card-mv" title="Mana Value">' + (card.manaValue !== undefined ? card.manaValue : '—') + '</span>' +
+            '<span class="card-note-indicator' + (card.note ? ' has-note' : '') + '" title="' + escapeAttr(card.note || 'No note') + '">📝</span>' +
             '<span class="card-name-text" title="' + escapeAttr(card.name) + '">' + escapeHtml(card.name) + '</span>' +
             '<span class="card-mana-cost">' + renderManaSymbols(card.manaCost || '') + '</span>' +
             '<span class="card-price">' + formatPrice(getCardPrice(card)) + '</span>' +
@@ -1910,11 +2144,65 @@
         });
     }
 
+    function renderManaChips(manaCost) {
+        /* Self-contained colored mana chips (no mana-font dependency) for the
+           presentation export. {2}{W}{U} -> colored "2","W","U" badges. */
+        if (!manaCost) return '';
+        return manaCost.replace(/\{([^}]+)\}/g, function (match, symbol) {
+            var cls = symbol.toLowerCase();
+            // Hybrid {W/U} and phyrexian {W/P} collapse to a neutral chip
+            // colored by their first color symbol.
+            if (symbol.indexOf('/') !== -1) {
+                cls = symbol.charAt(0).toLowerCase();
+            }
+            return '<span class="mc mc-' + cls + '">' + escapeHtml(symbol) + '</span>';
+        });
+    }
+
     /* ─── Utilities ─── */
+    function copyTextToClipboard(text, onDone) {
+        // ponytail: prefer the async Clipboard API, fall back to a hidden
+        // textarea + execCommand for non-HTTPS self-hosted installs.
+        function done() { if (onDone) onDone(); }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(done, function () { legacyCopy(); });
+            return;
+        }
+        legacyCopy();
+
+        function legacyCopy() {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.setAttribute('readonly', '');
+            ta.style.position = 'fixed';
+            ta.style.left = '-9999px';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch (e) { /* ignore */ }
+            document.body.removeChild(ta);
+            done();
+        }
+    }
+
+    function _fetchAsDataURI(url) {
+        return fetch(url).then(function (r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.blob();
+        }).then(function (blob) {
+            return new Promise(function (resolve, reject) {
+                var reader = new FileReader();
+                reader.onload = function () { resolve(reader.result); };
+                reader.onerror = function () { reject(new Error('read failed')); };
+                reader.readAsDataURL(blob);
+            });
+        });
+    }
+
     function escapeHtml(str) {
-        var div = document.createElement('div');
-        div.textContent = str;
-        return div.innerHTML;
+        // Pure string escape — equivalent to textContent → innerHTML for text
+        // content (escapes & < >; quotes are left alone, escapeAttr handles
+        // attribute contexts). Pure so it works in the QuickJS test harness.
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
 
     function escapeAttr(str) {
@@ -2752,23 +3040,109 @@
     /* ─── Button Handlers ─── */
     function initButtons() {
 
-        // Export JSON
+        // Export (dropdown: text list, JSON backup, presentation HTML)
         var exportBtn = $('#deck-export-btn');
         if (exportBtn) {
-            exportBtn.addEventListener('click', function () {
-                var data = deck.toExport();
-                var json = JSON.stringify(data, null, 2);
-                var blob = new Blob([json], { type: 'application/json' });
-                var url = URL.createObjectURL(blob);
-                var a = document.createElement('a');
-                a.href = url;
-                var fileName = (deck.name || 'deck').replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
-                a.download = fileName + '.json';
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                URL.revokeObjectURL(url);
-                showToast('Deck exported as ' + a.download);
+            exportBtn.addEventListener('click', function (e) {
+                e.stopPropagation();  // keep the click from reaching ContextMenu's document-close handler
+
+                function exportJson() {
+                    var data = deck.toExport();
+                    var json = JSON.stringify(data, null, 2);
+                    var blob = new Blob([json], { type: 'application/json' });
+                    var url = URL.createObjectURL(blob);
+                    var a = document.createElement('a');
+                    a.href = url;
+                    var fileName = (deck.name || 'deck').replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
+                    a.download = fileName + '.json';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    showToast('Deck exported as ' + a.download);
+                }
+
+                function exportText() {
+                    if (deck.getTotalCount() === 0) {
+                        showToast('Deck is empty.');
+                        return;
+                    }
+                    copyTextToClipboard(deck.toTextExport(), function () {
+                        showToast('Deck list copied to clipboard.');
+                    });
+                }
+
+                function exportPresentation() {
+                    if (!deck.commander) {
+                        showToast('Add a commander first.');
+                        return;
+                    }
+
+                    exportBtn.disabled = true;
+                    showToast('Generating presentation…');
+
+                    // Collect unique image URLs to inline (commander normal +
+                    // outline example cards small).
+                    var jobs = [];  // [{ key: 'size:id', url }]
+                    var seen = {};
+
+                    function addJob(size, card) {
+                        if (!card || !card.scryfallId) return;
+                        var key = size + ':' + card.scryfallId;
+                        if (seen[key]) return;
+                        seen[key] = true;
+                        var url = size === 'small' && card.imageUrl
+                            ? card.imageUrl.replace('/normal/', '/small/')
+                            : (card.imageUrl || '/img/' + size + '/front/' + card.scryfallId[0] + '/' + card.scryfallId[1] + '/' + card.scryfallId + '.jpg');
+                        jobs.push({ key: key, url: url });
+                    }
+
+                    addJob('normal', deck.commander);
+                    deck.ensureOutline().forEach(function (sec) {
+                        (sec.cards || []).forEach(function (c) {
+                            addJob('small', c);
+                            addJob('normal', c);  // enlarged image for the click-to-view modal
+                        });
+                    });
+
+                    Promise.all(jobs.map(function (job) {
+                        return _fetchAsDataURI(job.url).then(function (dataURI) {
+                            return { key: job.key, dataURI: dataURI };
+                        }).catch(function () {
+                            return { key: job.key, dataURI: '' };
+                        });
+                    })).then(function (results) {
+                        var map = {};
+                        results.forEach(function (r) { if (r && r.dataURI) map[r.key] = r.dataURI; });
+
+                        var html = deck.toPresentationHTML(function (size, scryfallId) {
+                            return map[size + ':' + scryfallId] || '';
+                        });
+
+                        var blob = new Blob([html], { type: 'text/html' });
+                        var url = URL.createObjectURL(blob);
+                        var a = document.createElement('a');
+                        a.href = url;
+                        var fileName = (deck.name || 'deck').replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
+                        a.download = fileName + '-presentation.html';
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                        showToast('Presentation exported as ' + a.download);
+                    }).catch(function () {
+                        showToast('Presentation export failed.');
+                    }).then(function () {
+                        exportBtn.disabled = false;
+                    });
+                }
+
+                var rect = exportBtn.getBoundingClientRect();
+                ContextMenu.show(rect.left, rect.bottom + 4, [
+                    { label: 'Presentation HTML', action: exportPresentation },
+                    { label: 'Text (Moxfield / Archidekt)', action: exportText },
+                    { label: 'JSON (backup)', action: exportJson }
+                ]);
             });
         }
 
@@ -3017,7 +3391,10 @@
                 targets = [{ label: 'No other sections', disabled: true }];
             }
 
-            ContextMenu.show(e.clientX, e.clientY, [{ label: 'Move to', children: targets }]);
+            ContextMenu.show(e.clientX, e.clientY, [
+                { label: 'Note', action: function () { openNoteEditor(uuid, sourceSection); } },
+                { label: 'Move to', children: targets }
+            ]);
         });
 
         function onMoveResult(result) {
@@ -3026,6 +3403,62 @@
             var toLabel = result.to ? '"' + result.to + '"' : 'main deck';
             showToast('Moved ' + result.cardName + ' to ' + toLabel);
         }
+    }
+
+    /* ─── Card Note Editor ─── */
+    function openNoteEditor(uuid, sectionName) {
+        // Open a modal textarea to edit a single card's note ('' = main deck).
+        // The note is stored on the card object and persisted with the deck.
+        var overlay = $('#card-note-overlay');
+        var textarea = $('#card-note-textarea');
+        var titleEl = $('#card-note-title');
+        if (!overlay || !textarea) return;
+
+        // Resolve the card (main deck vs. named section) to seed the editor.
+        var card = null;
+        if (sectionName) {
+            var section = deck.sections[sectionName];
+            if (section) card = section.find(function (c) { return c.uuid === uuid; });
+        } else {
+            card = deck.cards.find(function (c) { return c.uuid === uuid; });
+        }
+        if (!card) { showToast('Card not found.'); return; }
+
+        if (titleEl) titleEl.textContent = 'Note — ' + card.name;
+        textarea.value = card.note || '';
+
+        overlay.hidden = false;
+        overlay.classList.add('open');
+        textarea.focus();
+
+        function save() {
+            var result = deck.setCardNote(uuid, sectionName, textarea.value);
+            if (result.error) { showToast(result.error); return; }
+            overlay.classList.remove('open');
+            overlay.hidden = true;
+            renderAll();
+            saveCurrentDeck();
+            showToast(card.name + ' note saved.');
+        }
+
+        function cancel() {
+            overlay.classList.remove('open');
+            overlay.hidden = true;
+        }
+
+        var saveBtn = $('#card-note-save');
+        var cancelBtn = $('#card-note-cancel');
+        // Rebind on each open so a stale handler can't reference a previous card.
+        if (saveBtn) saveBtn.onclick = save;
+        if (cancelBtn) cancelBtn.onclick = cancel;
+
+        overlay.onclick = function (e) {
+            if (e.target === overlay) cancel();
+        };
+
+        textarea.onkeydown = function (e) {
+            if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+        };
     }
 
     /* ─── Sort Select ─── */
@@ -3177,6 +3610,9 @@
 
         // --- Templates tab ---
         initTemplatesTab();
+
+        // --- Deck Outline tab ---
+        initOutlineTab();
     }
 
     /* ─── Generic Autocomplete (shared by all autocomplete inputs) ─── */
@@ -3424,6 +3860,176 @@
                 }
             });
         }
+    }
+
+    /* ─── Deck Outline Tab ─── */
+    function renderOutline() {
+        var container = $('#deck-outline');
+        if (!container) return;
+
+        var sections = deck.ensureOutline();
+        var html = '';
+        sections.forEach(function (sec, idx) {
+            html += '<div class="deck-section outline-section" data-outline-index="' + idx + '">';
+            html += '<div class="deck-section-header custom-section-header">';
+            html += '<span class="deck-section-title">' + escapeHtml(sec.name || 'Untitled') + '</span>';
+            html += '<button class="outline-rename-btn" data-outline-index="' + idx + '" title="Rename section">✎</button>';
+            html += '<button class="outline-delete-btn" data-outline-index="' + idx + '" title="Delete section">✕</button>';
+            html += '</div>';
+
+            html += '<div class="outline-section-body" data-outline-index="' + idx + '">';
+            html += '<textarea class="outline-text" data-outline-index="' + idx + '" placeholder="Write this section…" rows="3">' + escapeHtml(sec.text || '') + '</textarea>';
+
+            var cards = sec.cards || [];
+            if (cards.length === 0) {
+                html += '<div class="section-empty-hint outline-drop-hint">Drop cards here to use as examples</div>';
+            } else {
+                html += '<div class="outline-cards">';
+                cards.forEach(function (card, cIdx) {
+                    html += '<div class="outline-card" data-outline-index="' + idx + '" data-card-index="' + cIdx + '">'
+                        + '<img src="' + escapeAttr(card.imageUrl || '') + '" alt="' + escapeAttr(card.name || '') + '" loading="lazy">'
+                        + '<span class="outline-card-name" title="' + escapeAttr(card.name || '') + '">' + escapeHtml(card.name || '') + '</span>'
+                        + '<button class="outline-card-remove-btn" data-outline-index="' + idx + '" data-card-index="' + cIdx + '" title="Remove example">✕</button>'
+                        + '</div>';
+                });
+                html += '</div>';
+            }
+            html += '</div></div>';
+        });
+
+        container.innerHTML = html;
+
+        attachOutlineListeners();
+        initOutlineDropZones();
+    }
+
+    function attachOutlineListeners() {
+        // Textarea edits
+        $$('#deck-outline .outline-text').forEach(function (ta) {
+            ta.addEventListener('input', function () {
+                var idx = parseInt(this.dataset.outlineIndex, 10);
+                var sec = deck.outline[idx];
+                if (!sec) return;
+                sec.text = this.value;
+                saveCurrentDeck();
+            });
+        });
+
+        // Rename
+        $$('#deck-outline .outline-rename-btn').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var idx = parseInt(this.dataset.outlineIndex, 10);
+                var sec = deck.outline[idx];
+                if (!sec) return;
+                var name = window.prompt('Rename section', sec.name || '');
+                if (name === null) return;
+                name = name.trim();
+                if (!name) { showToast('Section name is required.'); return; }
+                sec.name = name;
+                renderOutline();
+                saveCurrentDeck();
+            });
+        });
+
+        // Delete
+        $$('#deck-outline .outline-delete-btn').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var idx = parseInt(this.dataset.outlineIndex, 10);
+                deck.outline.splice(idx, 1);
+                renderOutline();
+                saveCurrentDeck();
+            });
+        });
+
+        // Remove example card
+        $$('#deck-outline .outline-card-remove-btn').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var idx = parseInt(this.dataset.outlineIndex, 10);
+                var cIdx = parseInt(this.dataset.cardIndex, 10);
+                var sec = deck.outline[idx];
+                if (!sec || !sec.cards) return;
+                sec.cards.splice(cIdx, 1);
+                renderOutline();
+                saveCurrentDeck();
+            });
+        });
+    }
+
+    function initOutlineDropZones() {
+        $$('#deck-outline .outline-section-body').forEach(function (body) {
+            var idx = parseInt(body.dataset.outlineIndex, 10);
+            setupDropZone(body, function (onComplete) {
+                return function (dataTransfer) {
+                    handleOutlineCardDrop(dataTransfer, idx, onComplete);
+                };
+            });
+        });
+    }
+
+    function handleOutlineCardDrop(dataTransfer, outlineIndex, onComplete) {
+        // Resolve a card from the drag and push an independent copy onto the
+        // target outline section's example-card list. Does NOT move cards out of
+        // deck.cards/deck.sections — outline examples are separate references.
+        var sec = deck.outline[outlineIndex];
+        if (!sec) { onComplete({ error: 'Outline section not found.' }); return; }
+
+        function addCard(card) {
+            if (!card || !card.uuid) { onComplete({ error: 'Could not identify a card from that drop.' }); return; }
+            var copy = Object.assign({}, card, { quantity: 1, tags: [] });
+            if (!sec.cards) sec.cards = [];
+            sec.cards.push(copy);
+            renderOutline();
+            saveCurrentDeck();
+            onComplete({ ok: true, cardName: card.name });
+        }
+
+        // Both copy ({setCode,number}) and move ({setCode,number,sourceSection,...})
+        // payloads carry setCode+number, so resolve either via lookup.
+        var payload = null;
+        var mtgData = dataTransfer.getData('application/mtg-card');
+        if (mtgData) {
+            try { payload = JSON.parse(mtgData); } catch (e) { /* ignore */ }
+        }
+        if (!payload) {
+            var moveData = dataTransfer.getData('application/mtg-card-move');
+            if (moveData) {
+                try { payload = JSON.parse(moveData); } catch (e) { /* ignore */ }
+            }
+        }
+
+        if (payload && payload.setCode && payload.number) {
+            lookupCardBySetNumber(payload.setCode, payload.number, function (card, err) {
+                if (err) { onComplete({ error: err }); return; }
+                addCard(card);
+            });
+            return;
+        }
+
+        var scryfallId = _extractScryfallIdFromTransfer(dataTransfer);
+        if (scryfallId) {
+            lookupCardByScryfallId(scryfallId, function (card, err) {
+                if (err) { onComplete({ error: err }); return; }
+                addCard(card);
+            });
+            return;
+        }
+
+        onComplete({ error: 'Could not identify a card from that drop.' });
+    }
+
+    function initOutlineTab() {
+        var addBtn = $('#outline-add-btn');
+        if (!addBtn) return;
+
+        addBtn.addEventListener('click', function () {
+            if (!deck.outline) deck.outline = [];
+            deck.outline.push({ name: 'New Section', text: '', cards: [] });
+            renderOutline();
+            saveCurrentDeck();
+            showToast('Section added.');
+        });
+
+        renderOutline();
     }
 
     function initToolDropZone(dropId, loadingId, errorId, onFound) {

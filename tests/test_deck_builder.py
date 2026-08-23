@@ -74,6 +74,7 @@ _EXPOSE_JS = """    // ── test harness: expose pure logic (closure-aware) �
         shouldShowQuantityWarning: shouldShowQuantityWarning,
         isOffColorCard: isOffColorCard,
         renderManaSymbols: renderManaSymbols,
+        renderManaChips: renderManaChips,
         escapeAttr: escapeAttr,
         getDeckPricingStore: getDeckPricingStore,
         getCardPrice: getCardPrice,
@@ -198,6 +199,7 @@ def card(**over):
         "quantity": 1,
         "scryfallId": "",
         "tags": [],
+        "note": "",
         "imageUrl": "",
     }
     base.update(over)
@@ -709,6 +711,239 @@ def test_deck_fromImport_defaults_quantity_and_tags(js):
     })()""")
     assert r["qty"] == 1
     assert r["tags"] == []
+
+
+# --------------------------------------------------------------------------- #
+# Deck model — card notes
+# --------------------------------------------------------------------------- #
+
+def test_deck_setCardNote_main_deck(js):
+    r = js.run("""(function () {
+        var d = new __exposed.Deck();
+        d.addWithQuantity(%s, 1);
+        var result = d.setCardNote('u1', '', 'Tutor target — fetch Sol Ring');
+        return { ok: result.ok, note: d.cards[0].note };
+    })()""" % js_card(card(uuid="u1")))
+    assert r["ok"] is True
+    assert r["note"] == "Tutor target — fetch Sol Ring"
+
+
+def test_deck_setCardNote_section(js):
+    r = js.run("""(function () {
+        var d = new __exposed.Deck();
+        d.createSection('Sideboard');
+        d.addToSection('Sideboard', %s);
+        var result = d.setCardNote('u1', 'Sideboard', 'Board in vs control');
+        return { ok: result.ok, note: d.sections['Sideboard'][0].note, mainUntouched: d.cards.length };
+    })()""" % js_card(card(uuid="u1")))
+    assert r["ok"] is True
+    assert r["note"] == "Board in vs control"
+    assert r["mainUntouched"] == 0
+
+
+def test_deck_setCardNote_missing_card(js):
+    r = js.run("""(function () {
+        var d = new __exposed.Deck();
+        return d.setCardNote('nope', '', 'x');
+    })()""")
+    assert "not found" in r["error"]
+
+
+def test_deck_setCardNote_clears_with_empty_string(js):
+    r = js.run("""(function () {
+        var d = new __exposed.Deck();
+        d.addWithQuantity(%s, 1);
+        d.setCardNote('u1', '', 'old note');
+        d.setCardNote('u1', '', '');
+        return d.cards[0].note;
+    })()""" % js_card(card(uuid="u1")))
+    assert r == ""
+
+
+def test_deck_note_survives_toExport_roundtrip(js):
+    r = js.run("""(function () {
+        var d = new __exposed.Deck();
+        d.addWithQuantity(%s, 1);
+        d.setCardNote('u1', '', 'A persistent note');
+        var exported = d.toExport();
+        var d2 = new __exposed.Deck();
+        d2.fromImport(exported);
+        return d2.cards[0].note;
+    })()""" % js_card(card(uuid="u1")))
+    assert r == "A persistent note"
+
+
+# --------------------------------------------------------------------------- #
+# Deck model — toTextExport (Moxfield / Archidekt deckbox text)
+# --------------------------------------------------------------------------- #
+
+def test_deck_toTextExport_commander_and_main(js):
+    r = js.run("""(function () {
+        var d = new __exposed.Deck();
+        d.addCard(%s);             // commander
+        d.addWithQuantity(%s, 2);  // main x2
+        return d.toTextExport();
+    })()""" % (js_card(card(uuid="u1", name="The General", isLegendary=True, isCreature=True)),
+               js_card(card(uuid="u2", name="Sol Ring"))))
+    assert r == "1 The General\n\n2 Sol Ring\n"
+
+
+def test_deck_toTextExport_sections_and_empty_omitted(js):
+    r = js.run("""(function () {
+        var d = new __exposed.Deck();
+        d.addCard(%s);
+        d.addWithQuantity(%s, 3);
+        d.createSection('Sideboard');
+        d.createSection('Maybeboard');
+        d.createSection('Empty Custom');
+        d.addToSection('Sideboard', %s);
+        d.addToSection('Maybeboard', %s);
+        return d.toTextExport();
+    })()""" % (js_card(card(uuid="u1", name="Gen", isLegendary=True, isCreature=True)),
+               js_card(card(uuid="u2", name="Mountain")),
+               js_card(card(uuid="u3", name="Pyroblast", types="Instant")),
+               js_card(card(uuid="u4", name="Extra", types="Instant"))))
+    assert r == (
+        "1 Gen\n"
+        "\n"
+        "3 Mountain\n"
+        "\n"
+        "Sideboard\n"
+        "1 Pyroblast\n"
+        "\n"
+        "Maybeboard\n"
+        "1 Extra\n"
+    )
+
+
+def test_deck_toTextExport_empty_deck(js):
+    r = js.run("""(function () {
+        var d = new __exposed.Deck();
+        return d.toTextExport();
+    })()""")
+    assert r == "\n"
+
+
+# --------------------------------------------------------------------------- #
+# Deck model — toPresentationHTML (self-contained presentation export)
+# --------------------------------------------------------------------------- #
+
+def _presentation_html(js, deck_expr):
+    """Render a presentation with a fake imgResolver that returns a data URI."""
+    return js.run("""(function () {
+        var d = """ + deck_expr + """;
+        return d.toPresentationHTML(function (size, id) {
+            return 'data:image/jpeg;base64,' + size + ':' + id;
+        });
+    })()""")
+
+
+def test_renderManaChips_basic_and_empty(js):
+    r = js.run("__exposed.renderManaChips('{2}{W}{U}')")
+    assert '<span class="mc mc-2">2</span>' in r
+    assert '<span class="mc mc-w">W</span>' in r
+    assert '<span class="mc mc-u">U</span>' in r
+    assert js.run("__exposed.renderManaChips('')") == ""
+
+
+def test_renderManaChips_hybrid_collapses_to_first_color(js):
+    r = js.run("__exposed.renderManaChips('{W/U}')")
+    assert '<span class="mc mc-w">W/U</span>' in r
+
+
+def test_deck_toPresentationHTML_renders_outline_sections(js):
+    html = _presentation_html(js, """(function () {
+        var d = new __exposed.Deck();
+        d.name = 'Test Deck';
+        d.addCard(%s);             // commander
+        d.outline = [
+            { name: 'Strategy', text: 'Cheat things out', cards: [%s] },
+            { name: 'How to Win', text: '', cards: [] }
+        ];
+        return d;
+    })()""" % (js_card(card(uuid="u1", name="The General", isLegendary=True, isCreature=True,
+                           type="Legendary Creature — Human", types="Creature",
+                           manaCost="{2}{W}{B}", colorIdentity="W,B", text="Whenever...",
+                           scryfallId="abc123")),
+               js_card(card(uuid="u2", name="Sol Ring", types="Artifact", manaCost="{1}",
+                           text="{T}: Add {C}{C}.", scryfallId="def456"))))
+
+    # Commander hero + outline narrative
+    assert "The General" in html
+    assert "<h2>Strategy</h2>" in html
+    assert "Cheat things out" in html
+    assert "<h2>How to Win</h2>" in html
+    # Example card rendered as a clickable thumbnail with the fake resolver URI
+    assert 'class="card"' in html
+    assert "Sol Ring" in html
+    assert "data:image/jpeg;base64,normal:abc123" in html
+    assert "data:image/jpeg;base64,small:def456" in html
+    # Enlarged card image is inlined for the click-to-view modal
+    assert "data:image/jpeg;base64,normal:def456" in html
+    # No mana cost, type line, or oracle text on individual cards
+    assert "card-mana" not in html
+    assert "card-type" not in html
+    assert "card-body" not in html
+    assert "{T}: Add {C}{C}." not in html
+    # Modal markup present for the enlarged-image view
+    assert 'id="card-modal"' in html
+    # No evalData content leaked into the export
+    assert "Kill-on-sight" not in html
+    assert "Strengths" not in html
+    assert "Deck-Building Priorities" not in html
+    # No external dependencies
+    assert "<link" not in html
+    assert 'src="http' not in html
+
+
+def test_deck_toPresentationHTML_defaults_empty_outline(js):
+    html = _presentation_html(js, """(function () {
+        var d = new __exposed.Deck();
+        d.addCard(%s);             // commander
+        return d;                  // no outline set
+    })()""" % js_card(card(uuid="u1", name="Gen", isLegendary=True, isCreature=True,
+                          scryfallId="abc123")))
+
+    assert "Gen" in html
+    # Default section headings are seeded when outline is absent/empty
+    assert "<h2>Description</h2>" in html
+    assert "<h2>Strategy</h2>" in html
+    assert "<h2>How to Win</h2>" in html
+    # No eval-derived content
+    assert "Kill-on-sight" not in html
+    assert "Strengths" not in html
+    assert "Deck-Building Priorities" not in html
+    # No external dependencies
+    assert "<link" not in html
+    assert 'src="http' not in html
+
+
+def test_deck_outline_round_trip(js):
+    r = js.run("""(function () {
+        var d = new __exposed.Deck();
+        d.outline = [
+            { name: 'Description', text: 'A note', cards: [%s] },
+            { name: 'Strategy', text: 'Line 1\\nLine 2', cards: [] }
+        ];
+        var json = JSON.stringify(d.toExport());
+        var d2 = new __exposed.Deck();
+        d2.fromImport(JSON.parse(json));
+        return JSON.stringify(d2.outline);
+    })()""" % js_card(card(uuid="u9", name="Example Card", scryfallId="ex1")))
+
+    assert "Description" in r
+    assert "A note" in r
+    assert "Strategy" in r
+    assert "Line 1\\nLine 2" in r
+    assert "Example Card" in r
+    # clear() resets the outline
+    r2 = js.run("""(function () {
+        var d = new __exposed.Deck();
+        d.outline = [{ name: 'X', text: 'y', cards: [] }];
+        d.clear();
+        return d.outline.length;
+    })()""")
+    assert r2 == 0
 
 
 # --------------------------------------------------------------------------- #

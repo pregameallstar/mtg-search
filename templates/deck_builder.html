@@ -16,6 +16,7 @@
             <button class="tool-tab-btn" data-tool="similarity">Similarity</button>
             <button class="tool-tab-btn" data-tool="eval">Commander Eval</button>
             <button class="tool-tab-btn" data-tool="templates">Templates</button>
+            <button class="tool-tab-btn" data-tool="outline">Outline</button>
         </div>
 
         <div class="panel-body search-panel-body">
@@ -250,6 +251,18 @@
                 </select>
                 <div id="deck-template-guideline-preview" style="margin-top:0.5rem; font-size:0.78rem; color:var(--text-dim);"></div>
             </div>
+
+            {# ── Deck Outline Tool ── #}
+            <div class="tool-content" data-tool="outline" hidden>
+                <p style="font-size:0.85rem; color:var(--text-dim); margin-bottom:0.75rem;">
+                    Author your deck's story: Description, Strategy, How to Win, and any
+                    custom sections. Drag cards into a section to use them as examples.
+                </p>
+                <div id="deck-outline">
+                    {# Outline sections rendered by JS #}
+                </div>
+                <button id="outline-add-btn" class="btn-deck-action" style="margin-top:0.5rem;">+ Add Section</button>
+            </div>
         </div>
     </div>
 
@@ -266,7 +279,7 @@
                 <button id="deck-quick-add-btn" class="btn-deck-action deck-quick-add-btn">Add</button>
             </div>
             <div class="deck-header-actions">
-                <button id="deck-export-btn" class="btn-deck-action" title="Export as JSON">📤 Export</button>
+                <button id="deck-export-btn" class="btn-deck-action" title="Export deck">📤 Export ▾</button>
                 <button id="deck-text-import-btn" class="btn-deck-action" title="Import from text list">📋 Text Import</button>
                 <button id="deck-clear-btn" class="btn-deck-action btn-danger" title="Clear deck">🗑 Clear</button>
                 <button id="deck-history-delete-btn" class="btn-deck-action" title="Clear change history" style="display:none;">📜 Clear History</button>
@@ -449,6 +462,26 @@
         </div>
         <div class="text-import-body" id="category-modal-body">
             {# Rendered by JS #}
+        </div>
+    </div>
+</div>
+
+{# Card Note Modal #}
+<div class="text-import-overlay" id="card-note-overlay" hidden>
+    <div class="text-import-modal">
+        <div class="text-import-header">
+            <h3 id="card-note-title">Card Note</h3>
+            <button class="text-import-close" id="card-note-cancel">✕</button>
+        </div>
+        <div class="text-import-body">
+            <textarea id="card-note-textarea"
+                      class="text-import-textarea"
+                      placeholder="Add a note for this card…"
+                      rows="6"></textarea>
+            <div class="text-import-actions">
+                <div class="text-import-status"></div>
+                <button id="card-note-save" class="btn-deck-action">Save Note</button>
+            </div>
         </div>
     </div>
 </div>
