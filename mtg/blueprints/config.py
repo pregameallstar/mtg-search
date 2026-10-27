@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 from flask import Blueprint, render_template, request, session, redirect, url_for, jsonify, abort
 
 from mtg.shared import get_db, resolve_bind_path, DATABASE, db_path
+from mtg.csrf import csrf_ok
 from mtg.prompts import COMMANDER_SYSTEM_PROMPT, DEEPDIVE_SYSTEM_PROMPT, VERIFY_SYSTEM_PROMPT
 from mtg.prompt_store import get_prompts, save_prompt
 from mtg.mcp_control import (
@@ -28,7 +29,7 @@ def _same_origin_request():
 
     Curl and other non-browser clients send neither Origin nor Referer and are
     allowed. Modern browsers attach Origin to cross-site POSTs, which this
-    check uses without requiring a CSRF token in every form.
+    check uses in addition to the session CSRF token.
     """
     origin = request.headers.get("Origin") or request.headers.get("Referer")
     if not origin:
@@ -37,13 +38,18 @@ def _same_origin_request():
     return parsed.scheme in ("http", "https") and parsed.netloc == request.host
 
 
+def _csrf_ok():
+    token = request.form.get("csrf_token") or request.headers.get("X-CSRF-Token")
+    return csrf_ok(token)
+
+
 @config_bp.route("/", methods=["GET", "POST"])
 def config_page():
     """LLM configuration — shared across tools that use the LLM."""
     import mtg.embed as embed
 
     if request.method == "POST":
-        if not _same_origin_request():
+        if not _same_origin_request() or not _csrf_ok():
             abort(403)
         # Migrate any prompts left in the old oversized session cookie before
         # writing new values; otherwise the legacy value would win on next read.
@@ -170,7 +176,7 @@ def embed_build():
     """Trigger an embedding index rebuild. Returns immediately; build runs async."""
     import mtg.embed as embed
 
-    if not _same_origin_request():
+    if not _same_origin_request() or not _csrf_ok():
         abort(403)
     status_info = embed.status()
     if status_info["building"]:
@@ -210,7 +216,7 @@ def mcp_restart():
     """Restart MCP SSE server + MCPO proxy."""
     import shutil as _shutil
 
-    if not _same_origin_request():
+    if not _same_origin_request() or not _csrf_ok():
         abort(403)
     try:
         script_dir = os.path.dirname(os.path.abspath(__file__))  # mtg/blueprints/
@@ -265,7 +271,7 @@ def ingest_database():
     """
     from mtg.ingest import IngestError, process_upload
 
-    if not _same_origin_request():
+    if not _same_origin_request() or not _csrf_ok():
         abort(403)
     if "database" not in request.files:
         return jsonify({"error": "No file uploaded."}), 400

@@ -14,6 +14,7 @@ from mtg.shared import (
     card_image, render_mana, pagination_url,
 )
 from mtg.similarity import similarity_label
+from mtg.csrf import csrf_token
 
 app = Flask(__name__)
 
@@ -78,6 +79,7 @@ app.jinja_env.globals.update(
     render_mana=render_mana,
     pagination_url=pagination_url,
     similarity_label=similarity_label,
+    csrf_token=csrf_token,
 )
 
 

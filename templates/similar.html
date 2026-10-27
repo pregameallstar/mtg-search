@@ -60,8 +60,13 @@
             {% if method == 'embed' %}
             <p style="font-size:0.82rem; color:var(--text-dim); margin:0.25rem 0 0.75rem 0;">
                 Semantic similarity uses AI embeddings to find cards with similar function.
-                Color identity is applied as a hard filter. Other factor tuning is not applicable.
+                Color identity is always a hard filter. Optionally require a shared card type.
             </p>
+            <label class="factor-toggle">
+                <input type="checkbox" name="use_types" value="1"
+                       class="factor-checkbox" {% if factors.get('use_types') %}checked{% endif %}>
+                Require a shared card type
+            </label>
             {% else %}
             <details class="tuning-help">
                 <summary>How this works</summary>
@@ -286,6 +291,7 @@
 (function() {
     var btn = document.getElementById('toggle-all-factors');
     var boxes = document.querySelectorAll('.factor-checkbox');
+    if (!btn) return;
     btn.addEventListener('click', function() {
         var anyChecked = document.querySelectorAll('.factor-checkbox:checked').length > 0;
         for (var i = 0; i < boxes.length; i++) {

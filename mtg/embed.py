@@ -10,6 +10,7 @@ Status: embed.status() → dict with built/building/count/timestamp
 import json
 import os
 import sqlite3
+import tempfile
 import threading
 import time
 from datetime import datetime, timezone
@@ -28,6 +29,7 @@ LOCK_STALE_SECONDS = 3600  # 1 hour
 
 _index_globals = {}  # ponytail: module-level model/numpy cache per process lifetime
 _build_lock = threading.Lock()  # ponytail: prevent concurrent builds
+_index_lock = threading.RLock()  # guards index file replacement and loading
 
 
 def status():
@@ -94,74 +96,105 @@ def _index_card_count():
 def build(db_path):
     """Embed all unique English cards and save vectors + metadata to disk.
 
-    Thread-safe: only one build at a time across the process."""
+    Thread-safe: only one build at a time across the process. The two index
+    files are written to temporary names and replaced under ``_index_lock`` so
+    a concurrent ``find`` never sees a half-written or mismatched pair.
+    """
     if not _build_lock.acquire(blocking=False):
-        return 0  # ponytail: another build is running
-
-    # Write lock file so status() reports building=True
-    os.makedirs(INDEX_DIR, exist_ok=True)
-    with open(LOCK_FILE, "w") as f:
-        f.write(datetime.now(timezone.utc).isoformat())
+        return 0  # another build is running
 
     try:
-        from sentence_transformers import SentenceTransformer
+        os.makedirs(INDEX_DIR, exist_ok=True)
+        with open(LOCK_FILE, "w") as f:
+            f.write(datetime.now(timezone.utc).isoformat())
 
-        model = SentenceTransformer(MODEL_NAME)
-        db = sqlite3.connect(db_path)
-        db.row_factory = sqlite3.Row
+        try:
+            from sentence_transformers import SentenceTransformer
 
-        rows = db.execute("""
-            SELECT c.uuid, c.name, COALESCE(c.text, '') AS text,
-                   COALESCE(c.type, '') AS type, COALESCE(c.keywords, '') AS keywords,
-                   COALESCE(c.colorIdentity, '') AS colorIdentity, c.manaValue,
-                   COALESCE(ci.scryfallId, '') AS scryfallId
-            FROM cards c
-            LEFT JOIN cardIdentifiers ci ON c.uuid = ci.uuid
-            WHERE c.language = 'English' AND (c.side IS NULL OR c.side = 'a')
-            ORDER BY c.name
-        """).fetchall()
+            model = SentenceTransformer(MODEL_NAME)
+            db = sqlite3.connect(db_path)
+            db.row_factory = sqlite3.Row
+            try:
+                rows = db.execute("""
+                    SELECT c.uuid, c.name, COALESCE(c.text, '') AS text,
+                           COALESCE(c.type, '') AS type, COALESCE(c.keywords, '') AS keywords,
+                           COALESCE(c.colorIdentity, '') AS colorIdentity, c.manaValue,
+                           COALESCE(ci.scryfallId, '') AS scryfallId
+                    FROM cards c
+                    LEFT JOIN cardIdentifiers ci ON c.uuid = ci.uuid
+                    WHERE c.language = 'English' AND (c.side IS NULL OR c.side = 'a')
+                    ORDER BY c.name
+                """).fetchall()
+            finally:
+                db.close()
 
-        texts = [r["text"] for r in rows]
-        embeddings = model.encode(texts, show_progress_bar=False, batch_size=256,
-                                  normalize_embeddings=True)
+            texts = [r["text"] for r in rows]
+            embeddings = model.encode(texts, show_progress_bar=False, batch_size=256,
+                                      normalize_embeddings=True)
 
-        meta = [
-            {
-                "uuid": r["uuid"],
-                "name": r["name"],
-                "type": r["type"],
-                "keywords": r["keywords"],
-                "colorIdentity": r["colorIdentity"],
-                "manaValue": r["manaValue"],
-                "scryfallId": r["scryfallId"],
-            }
-            for r in rows
-        ]
+            meta = [
+                {
+                    "uuid": r["uuid"],
+                    "name": r["name"],
+                    "type": r["type"],
+                    "keywords": r["keywords"],
+                    "colorIdentity": r["colorIdentity"],
+                    "manaValue": r["manaValue"],
+                    "scryfallId": r["scryfallId"],
+                }
+                for r in rows
+            ]
 
-        db.close()
+            vectors_path = os.path.join(INDEX_DIR, "vectors.npy")
+            meta_path = os.path.join(INDEX_DIR, "meta.json")
+            v_tmp = m_tmp = None
+            try:
+                v_fd, v_tmp = tempfile.mkstemp(
+                    prefix=".vectors.", suffix=".npy", dir=INDEX_DIR,
+                )
+                os.close(v_fd)
+                np.save(v_tmp, embeddings)
 
-        np.save(os.path.join(INDEX_DIR, "vectors.npy"), embeddings)
-        with open(os.path.join(INDEX_DIR, "meta.json"), "w") as f:
-            json.dump(meta, f)
+                m_fd, m_tmp = tempfile.mkstemp(
+                    prefix=".meta.", suffix=".json", dir=INDEX_DIR,
+                )
+                with os.fdopen(m_fd, "w") as f:
+                    json.dump(meta, f)
+                    f.flush()
+                    os.fsync(f.fileno())
 
-        # Write success info
-        now = datetime.now(timezone.utc).isoformat()
-        with open(INFO_FILE, "w") as f:
-            json.dump({"cards": len(rows), "built_at": now}, f)
+                with _index_lock:
+                    os.replace(v_tmp, vectors_path)
+                    v_tmp = None
+                    os.replace(m_tmp, meta_path)
+                    m_tmp = None
+            finally:
+                for tmp_path in (v_tmp, m_tmp):
+                    if tmp_path:
+                        try:
+                            os.unlink(tmp_path)
+                        except OSError:
+                            pass
 
-        return len(rows)
+            # Write success info
+            now = datetime.now(timezone.utc).isoformat()
+            with open(INFO_FILE, "w") as f:
+                json.dump({"cards": len(rows), "built_at": now}, f)
 
-    except Exception as e:
-        with open(INFO_FILE, "w") as f:
-            json.dump({"cards": 0, "built_at": None, "error": str(e)}, f)
-        return 0
+            return len(rows)
 
+        except Exception as e:
+            with open(INFO_FILE, "w") as f:
+                json.dump({"cards": 0, "built_at": None, "error": str(e)}, f)
+            return 0
+
+        finally:
+            try:
+                os.unlink(LOCK_FILE)
+            except OSError:
+                pass
     finally:
         _build_lock.release()
-        try:
-            os.unlink(LOCK_FILE)
-        except OSError:
-            pass
 
 
 def find(db_path, oracle_text, top_k=200):
@@ -211,16 +244,22 @@ def find(db_path, oracle_text, top_k=200):
 
 
 def _load_index():
-    """Return (vectors, meta) from disk, or (None, None)."""
+    """Return (vectors, meta) from disk, or (None, None) if unusable."""
     v_path = os.path.join(INDEX_DIR, "vectors.npy")
     m_path = os.path.join(INDEX_DIR, "meta.json")
-    if not os.path.exists(v_path) or not os.path.exists(m_path):
-        return None, None
-
-    vectors = np.load(v_path)
-    with open(m_path) as f:
-        meta = json.load(f)
-    return vectors, meta
+    with _index_lock:
+        if not os.path.exists(v_path) or not os.path.exists(m_path):
+            return None, None
+        try:
+            vectors = np.load(v_path)
+            with open(m_path, encoding="utf-8") as f:
+                meta = json.load(f)
+        except (OSError, ValueError, json.JSONDecodeError):
+            return None, None
+        if not isinstance(meta, list) or len(vectors) != len(meta):
+            # A crash between the two replacements can leave a mismatched pair.
+            return None, None
+        return vectors, meta
 
 
 def _get_model():

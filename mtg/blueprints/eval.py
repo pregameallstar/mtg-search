@@ -144,10 +144,13 @@ def commander_eval(set_code, number):
             try:
                 with open(report_path) as f:
                     report_data = json.load(f)
+                if not isinstance(report_data, dict):
+                    raise ValueError("report is not an object")
                 analysis = report_data.get("analysis", {})
                 loaded_from = report_filename
-            except (FileNotFoundError, json.JSONDecodeError, OSError):
+            except (FileNotFoundError, json.JSONDecodeError, OSError, ValueError):
                 error = "Saved report not found or unreadable."
+                report_data = None
 
     # Seed eval_key + _eval_cache so deepdive/save routes have access to the
     # analysis. Always seed when loading a report from disk so the cache belongs
@@ -806,5 +809,7 @@ def commander_eval_load(set_code, number):
             data = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return jsonify({"error": "Report not found or unreadable."}), 404
+    if not isinstance(data, dict):
+        return jsonify({"error": "Report is not a JSON object."}), 404
 
     return jsonify({"success": True, "analysis": data.get("analysis", {})})

@@ -406,27 +406,44 @@ def test_deck_add_regular_card(js):
 
 
 def test_deck_add_same_card_increments_quantity(js):
+    # Basic lands are the singleton exception.
     r = js.run("""(function () {
         var d = new __exposed.Deck();
         d.addCard(%s);
         d.addCard(%s);
         return { cards: d.cards.length, qty: d.cards[0].quantity, total: d.getTotalCount() };
-    })()""" % (js_card(card(uuid="u1")), js_card(card(uuid="u1"))))
+    })()""" % (
+        js_card(card(uuid="u1", name="Forest", supertypes="Basic")),
+        js_card(card(uuid="u1", name="Forest", supertypes="Basic")),
+    ))
     assert r["cards"] == 1
     assert r["qty"] == 2
     assert r["total"] == 2
 
 
-def test_deck_4_copy_limit(js):
+def test_deck_singleton_limit(js):
     r = js.run("""(function () {
         var d = new __exposed.Deck();
-        var res;
-        for (var i = 0; i < 4; i++) res = d.addCard(%s);
-        var fifth = d.addCard(%s);
-        return { qty: d.cards[0].quantity, fifth: fifth };
+        var first = d.addCard(%s);
+        var second = d.addCard(%s);
+        return { qty: d.cards[0].quantity, first: first, second: second };
     })()""" % (js_card(card(uuid="u1")), js_card(card(uuid="u1"))))
-    assert r["qty"] == 4
-    assert r["fifth"]["error"] == "Maximum 4 copies per card."
+    assert r["qty"] == 1
+    assert r["first"]["ok"] is True
+    assert r["second"]["error"] == "Only one copy of this card is allowed in a Commander deck."
+
+
+def test_deck_any_number_exemption(js):
+    r = js.run("""(function () {
+        var d = new __exposed.Deck();
+        var c = %s;
+        d.addCard(c);
+        d.addCard(c);
+        return d.cards[0].quantity;
+    })()""" % js_card(card(
+        uuid="u1", name="Hare Apparent",
+        text="A deck can have any number of cards named Hare Apparent.")))
+    assert r == 2
 
 
 def test_deck_100_card_cap(js):
@@ -534,7 +551,7 @@ def test_deck_moveCardBetweenSections_preserves_quantity(js):
         var qty = d.sections['Sideboard'][0].quantity;
         d.moveCardBetweenSections(d.sections['Sideboard'][0], 'Sideboard', '');
         return { inSection: inSection, inMain: inMain, qty: qty, mainQty: d.cards[0].quantity };
-    })()""" % js_card(card(uuid="u1")))
+    })()""" % js_card(card(uuid="u1", name="Island", supertypes="Basic")))
     assert r["inSection"] == 3
     assert r["inMain"] == 0
     assert r["qty"] == 3
@@ -599,19 +616,27 @@ def test_deck_addWithQuantity_bulk_and_cap(js):
         var qty = d.cards[0].quantity;
         var over = d.addWithQuantity({ uuid: 'big', name: 'Big' }, 200);
         return { ok: ok, qty: qty, over: over };
-    })()""" % js_card(card(uuid="u1", name="Forest")))
+    })()""" % js_card(card(uuid="u1", name="Forest", supertypes="Basic")))
     assert r["ok"]["ok"] is True
     assert r["qty"] == 10
     assert "exceed" in r["over"]["error"]
 
 
-def test_deck_addWithQuantity_bypasses_4_copy(js):
+def test_deck_addWithQuantity_allows_basic_lands(js):
     r = js.run("""(function () {
         var d = new __exposed.Deck();
         d.addWithQuantity(%s, 30);
         return d.cards[0].quantity;
-    })()""" % js_card(card(uuid="u1")))
+    })()""" % js_card(card(uuid="u1", name="Forest", supertypes="Basic")))
     assert r == 30
+
+
+def test_deck_addWithQuantity_rejects_multiple_nonbasics(js):
+    r = js.run("""(function () {
+        var d = new __exposed.Deck();
+        return d.addWithQuantity(%s, 2);
+    })()""" % js_card(card(uuid="u1")))
+    assert "Only one copy" in r["error"]
 
 
 def test_deck_setQuantity_rollback_over_cap(js):
@@ -619,11 +644,11 @@ def test_deck_setQuantity_rollback_over_cap(js):
         var d = new __exposed.Deck();
         // 98 unique cards -> 98 in the 99, then 'u98' at qty 1 -> total 99.
         for (var i = 0; i < 98; i++) d.addWithQuantity({ uuid: 'u' + i, name: 'C' + i }, 1);
-        d.addWithQuantity(%s, 1);   // 'u98', total now 99
+        d.addWithQuantity(%s, 1);   // 'u98' basic land, total now 99
         var ok = d.setQuantity('u98', 2);   // would be 100 -> allowed
         var over = d.setQuantity('u98', 5); // would be 103 -> rollback to 2
         return { ok: ok, over: over, qty: d.cards[d.cards.length-1].quantity, total: d.getTotalCount() };
-    })()""" % js_card(card(uuid="u98")))
+    })()""" % js_card(card(uuid="u98", name="Island", supertypes="Basic")))
     assert r["ok"] is True
     assert r["over"] is False
     assert r["qty"] == 2     # rolled back to the pre-failed quantity
@@ -638,9 +663,9 @@ def test_deck_getTotalCount_includes_commander(js):
         d.addCard(%s);   // main (same card -> qty 2)
         return d.getTotalCount();
     })()""" % (js_card(card(uuid="u1", isLegendary=True, isCreature=True)),
-               js_card(card(uuid="u2")),
-               js_card(card(uuid="u2"))))
-    assert r == 3  # 1 commander + 2 copies
+               js_card(card(uuid="u2", name="Forest", supertypes="Basic")),
+               js_card(card(uuid="u2", name="Forest", supertypes="Basic"))))
+    assert r == 3  # 1 commander + 2 basic-land copies
 
 
 def test_deck_clear_resets_everything(js):
@@ -693,7 +718,7 @@ def test_deck_toExport_fromImport_roundtrip(js):
             hasTags: Array.isArray(d2.cards[0].tags)
         };
     })()""" % (js_card(card(uuid="u1", name="Gen", isLegendary=True, isCreature=True, colorIdentity="W")),
-               js_card(card(uuid="u2", name="Two-of", tags=["Draw"])),
+               js_card(card(uuid="u2", name="Two-of", supertypes="Basic", tags=["Draw"])),
                js_card(card(uuid="u3", name="Side", types="Instant"))))
     assert r["name"] == "Test Deck"
     assert r["commander"] == "Gen"
@@ -784,8 +809,8 @@ def test_deck_toTextExport_commander_and_main(js):
         d.addWithQuantity(%s, 2);  // main x2
         return d.toTextExport();
     })()""" % (js_card(card(uuid="u1", name="The General", isLegendary=True, isCreature=True)),
-               js_card(card(uuid="u2", name="Sol Ring"))))
-    assert r == "1 The General\n\n2 Sol Ring\n"
+               js_card(card(uuid="u2", name="Mountain", supertypes="Basic"))))
+    assert r == "1 The General\n\n2 Mountain\n"
 
 
 def test_deck_toTextExport_sections_and_empty_omitted(js):
@@ -800,7 +825,7 @@ def test_deck_toTextExport_sections_and_empty_omitted(js):
         d.addToSection('Maybeboard', %s);
         return d.toTextExport();
     })()""" % (js_card(card(uuid="u1", name="Gen", isLegendary=True, isCreature=True)),
-               js_card(card(uuid="u2", name="Mountain")),
+               js_card(card(uuid="u2", name="Mountain", supertypes="Basic")),
                js_card(card(uuid="u3", name="Pyroblast", types="Instant")),
                js_card(card(uuid="u4", name="Extra", types="Instant"))))
     assert r == (

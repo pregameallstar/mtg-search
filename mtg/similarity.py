@@ -208,6 +208,11 @@ def score_similarity(base, candidate, factors, idf, mtg_filter=False):
     if base_terms and base_idf_sum > 0:
         shared_idf_sum = sum(idf.get(t, 0) for t in (base_terms & cand_terms))
         oracle_score = shared_idf_sum / base_idf_sum
+    else:
+        # Textless (or all-stopword) cards have no oracle signal. Treat that
+        # factor as neutral instead of zeroing the whole multiplicative score;
+        # the type/MV/color gates can still find useful cards.
+        oracle_score = 1.0
 
     # --- Oracle strictness: exponentiate the raw overlap ---
     s_oracle = float(factors.get("s_oracle", 1.0))

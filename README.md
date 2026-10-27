@@ -5,10 +5,10 @@ A self-hosted Magic: The Gathering card search engine, deck builder, and Command
 ## Features
 
 - **Card search** — full Scryfall-style query engine: name, oracle text, type line, mana cost, colors, color identity, power/toughness/loyalty, rarity, set, format legality, game availability, and 10+ boolean flags. 30+ filters in total.
-- **Card detail** — full card view with high-res image, oracle text, Oracle rulings, format legalities, all printings across sets, and other faces for DFCs.
+- **Card detail** — full card view with high-res image, oracle text, Oracle rulings, format legalities, latest set info, and other faces for DFCs.
 - **Deck Builder** — split-panel builder with four integrated tools:
   - **Search** — the full card search engine embedded in a compact panel. Name autocomplete, drag-and-drop card results into the deck, and card image preview on hover.
-  - **Similarity** — find mechanically similar cards from the same panel. Same tuning controls as the standalone Similarity tool.
+  - **Similarity** — find mechanically similar cards from the same panel. Semantic mode exposes the filters it actually applies; legacy exposes full tuning.
   - **Commander Eval** — run full LLM-powered commander analysis from within the builder. Restore saved analyses with saved decks.
   - **Templates** — reusable card packages for deck-building patterns.
   - Commander slot, custom sections (Sideboard, Maybeboard), drag-and-drop reordering, card counts, local save/load, JSON import/export.
@@ -27,7 +27,7 @@ A self-hosted Magic: The Gathering card search engine, deck builder, and Command
 - **Card Templates** — reusable card packages saved to `card_templates/`. Two types:
   - **Card templates** — pre-built card lists you can load into the Deck Builder
   - **Guideline templates** — category targets (Ramp, Removal, Card Draw, etc.) with expected counts, used to score decks against deck-building standards
-- **MCP server** — expose `semantic_search`, `keyword_search`, and `get_card` tools to LLM agents (Claude Code, OpenWebUI, etc.) via SSE + MCPO proxy.
+- **MCP server** — expose `semantic_search`, `keyword_search`, `get_card`, `list_decks`, and `get_deck` tools to LLM agents (Claude Code, OpenWebUI, etc.) via SSE + MCPO proxy.
 - **Database ingest** — drag-and-drop upload of MTGJSON `AllPrintings.sqlite` (or `.tar.gz`/`.zip` archives). Deduplication, validation, and embedding rebuild run automatically.
 - **Lazy image cache** — first card view fetches from Scryfall and caches locally. Subsequent views serve from disk.
 
@@ -133,7 +133,7 @@ Environment variables for the app container:
 
 **Boolean flags:** `is_reprint`, `is_reserved`, `is_funny`, `is_oversized`, `is_fullart`, `is_textless`, `is_promo`, `is_rebalanced`
 
-**Display:** `border` (black/white/silver/gold/yellow/borderless), `layout` (normal/split/transform/saga/etc.), `frame` (1993/1997/2003/2015/future), `unique` (deduplicate by name or show all printings)
+**Display:** `border` (black/white/silver/gold/yellow/borderless), `layout` (normal/split/transform/saga/etc.), `frame` (1993/1997/2003/2015/future)
 
 Results are paginated (10, 25, or 50 per page). Click any card to open its detail panel. The root URL `/` redirects to `/search`.
 
@@ -146,7 +146,6 @@ Results are paginated (10, 25, or 50 per page). Click any card to open its detai
 - Set info, rarity, artist
 - **Oracle Rulings** — official Gatherer rulings sorted by date
 - **Format Legalities** — status in every format
-- **All Printings** — every set the card has appeared in
 - **Other Faces** — back faces for DFCs (transform, MDFC, split cards)
 - Quick links: Similar Cards, Commander Eval (for legendary creatures)
 
@@ -158,7 +157,7 @@ Card images are fetched from Scryfall on first view and cached locally in `image
 
 **Search tool** — Embedded card search with the same filters as the standalone search page. Results show card images on hover. Drag-and-drop cards into the deck list. Name autocomplete for quick commander selection.
 
-**Similarity tool** — Run the similarity engine from within the builder. Same semantic/legacy modes and tuning controls as the standalone tool. Drag results directly into the deck.
+**Similarity tool** — Run the similarity engine from within the builder. Same semantic/legacy modes as the standalone tool; semantic mode applies color identity and optional shared type, legacy exposes full tuning. Drag results directly into the deck.
 
 **Commander Eval tool** — Run the full LLM-powered commander analysis pipeline inline. Analysis loads in an iframe; save reports that persist when loading the deck later.
 
@@ -186,7 +185,7 @@ Card images are fetched from Scryfall on first view and cached locally in `image
 
 `GET /similar` — Find mechanically similar cards to a given card. Two search modes:
 
-**Semantic mode** (default, requires embedding index):
+**Semantic mode** (default, requires embedding index; color identity is always a hard filter and a shared card type is optional):
 - Maps oracle text into a 384-dimensional vector space using `all-MiniLM-L6-v2`
 - Finds cards with similar functional meaning — catches "destroy target creature" ≈ "exile target creature", reworded mechanics, and conceptual cousins
 - Color identity is applied as a subset post-filter (colorless cards are legal everywhere)

@@ -1,19 +1,19 @@
 # Additional Bugs Backlog
 
 **Source:** deep dive of the MTG Search application, 2026-10-27
-**Status:** queued/partially addressed
+**Status:** implemented for the selected scope; B-12/B-21 notes remain
 **Scope:** the "additional bugs worth queuing" list from the deep dive. The
 highest-impact findings (configuration cookie/key handling, MCP restart, ingest
 atomicity, SSRF, path traversal, stored XSS, filename collisions, fresh-deck
 outline, and the "All Printings" data loss) are tracked separately as the
 high-impact fix set.
 
-**High-impact pass update:** fixed B-01, B-03, B-04, B-05, B-06, B-07, B-09,
-B-14, B-15, B-16, B-17, B-18, B-19, B-22, and B-23. Partially addressed B-11
-(atomic writes, but no cross-process read-modify-write lock), B-12 (shape guards
-on the main stores), and B-21 (loopback defaults, upload cap, restricted MCP
-CORS; auth and CSRF still open). B-02, B-08, B-10, and B-20 remain queued.
-B-13 was withdrawn after verification.
+**Update (second pass):** fixed B-01, B-02, B-03, B-04, B-05, B-06, B-07,
+B-08, B-09, B-10, B-11, B-14, B-15, B-16, B-17, B-18, B-19, B-20, B-22, and
+B-23. B-12 has shape guards for the main stores and remains a low-priority
+audit of untouched edge routes. B-21 is fixed for the chosen scope (CSRF
+tokens, loopback defaults, upload cap, restricted MCP CORS); a real login/auth
+gate remains intentionally out of scope. B-13 was withdrawn after verification.
 
 Priority is **impact × likelihood**, not effort.
 
@@ -38,7 +38,7 @@ Priority is **impact × likelihood**, not effort.
 | B-17 | Low | Deck Builder / tags | Tag filter chips toggle but never filter; counts go stale |
 | B-18 | Low | Image proxy | Short Scryfall IDs raise `IndexError` and return 500 |
 | B-19 | Low | History | Naive timestamps can raise `TypeError` in the history-check endpoint |
-| B-20 | Low | Similarity | `unique=prints` is misleading because the database stores one printing per card |
+| B-20 | Fixed | Similarity | Removed the misleading `unique=prints` / All Printings UI; single latest printing is explicit |
 | B-21 | Ops | Security posture | No auth/CSRF, wide bind addresses, permissive MCP CORS, no upload cap |
 | B-22 | Ops | Docker entrypoint | `set -e` + `wait -n` exits instead of restarting a crashed child |
 | B-23 | Dev | Tests/docs | Root `pytest` collection fails; README still says three MCP tools |
@@ -104,12 +104,11 @@ and stopped autosave entirely.
 cards, and the UI only warns about quantities >1. The server accepts whatever
 the client sends.
 
-**Proposed fix:** make one rule function (`isSingletonExempt(card)` plus
-`canAdd(card, section)`) used by `addCard`, `addCardTo99`, `addWithQuantity`,
-`setQuantity`, section moves, and `/api/deck/add-card`. Enforce 100 cards for
-the main deck (including commander), one copy for non-exempt cards, and basic
-land / "any number" exemptions. Keep the server validation permissive enough
-for existing imported decks, but reject additions that make a deck illegal.
+**Implemented:** `isSingletonExempt(card)` now gates `_addToMain`,
+`addWithQuantity`, `setQuantity`, and section-to-main moves; the server's
+`_singleton_exempt` enforces the same rule and the 100-card cap in
+`/api/deck/add-card`. Basic lands and explicit "any number" cards remain
+exempt. Tests cover the client and server paths.
 
 **Acceptance tests:** 2nd copy of a non-basic is rejected; basic lands are
 allowed; 101st main-deck card is rejected; server `add-card` respects the same
@@ -269,11 +268,12 @@ the mana-font stylesheet; server and client output agree.
 the user has saved the config; some visible controls do nothing; textless cards
 have no useful similarity path.
 
-**Proposed fix:** pick one default and use it everywhere. In embed mode, either
-hide all factor controls and do not set their flags, or implement the full gate
-set. For textless cards, fall back to a type/MV/color-based legacy search (or
-return an explicit "no oracle text" message). Set `method = score_method`
-after a fallback.
+**Implemented:** embed is now the default in both the config page and the
+engine. Embed mode exposes only the controls it applies — color identity is
+always a hard filter and shared type is an optional checkbox. Textless cards
+(and an empty/failed embedding result) fall back to the legacy attribute path;
+`score_similarity` treats a missing oracle signal as neutral instead of zero.
+`method` is updated after a fallback so the legacy controls render.
 
 **Acceptance tests:** default method matches config; embed mode does not apply
 hidden filters; textless card has a documented behavior; fallback updates the
@@ -326,10 +326,10 @@ point can leave the lock held forever (`:98-106`).
 **Impact:** intermittent 500s from Similarity/Commander Eval and MCP
 `semantic_search`; a failed build can block all future rebuilds until restart.
 
-**Proposed fix:** write both files to temporary names and `os.replace` them
-under a lock, or write a single `.npz`; have `find` take a shared read lock and
-validate lengths; acquire the build lock inside a `try/finally` so it is always
-released.
+**Implemented:** vectors and metadata are written to temporary files and
+replaced under `_index_lock`; `_load_index` takes the same lock and rejects
+length-mismatched pairs. The build lock is acquired/released in an outer
+`try/finally`, so an I/O failure cannot lock future builds.
 
 **Acceptance tests:** a build concurrent with repeated `find` calls never
 raises; vector/meta mismatch is rejected with a clear status; lock is released
@@ -357,10 +357,11 @@ so two tabs can lose each other's changes.
 saved report. A poisoned autosave file can also 500 the eval page because
 `load_auto_deepdives` assumes the JSON is a dict (`eval_helpers.py:233-237`).
 
-**Proposed fix:** centralize a `write_json_atomic(path, obj)` helper
-(temp file in the same directory, `flush`/`fsync`, `os.replace`). Use a
-process/file lock around read-modify-write routes. Validate loaded shapes and
-quarantine/rename corrupt files instead of crashing.
+**Implemented:** `mtg/storage.write_json_atomic` (temp + fsync + `os.replace`)
+is used by decks, templates, tags, history, eval reports, pricing cache, prompt
+store, and deepdive autosaves. `file_lock` (fcntl `flock`) wraps deck add/save/
+delete, template save/delete, history append/delete, tags, and deepdive
+autosave read-modify-write paths.
 
 **Acceptance tests:** simulate a write failure and confirm the old file is
 intact; concurrent append operations do not lose events; corrupt autosave is
@@ -542,13 +543,15 @@ Lightning Bolt (`SLZ/184`) despite its `printings` field listing 48 sets.
 **Impact:** users are promised all printings but can only see one. This is a
 data-model limitation rather than a rendering bug.
 
-**Proposed fix (product decision):** either retain a `printings` table/rows
-during ingest (larger DB, enables real print selection) or rename/remove the
-"All Printings" option and explain that the tool indexes the latest printing.
-Do not silently keep the misleading option.
+**Decision/implemented:** keep exactly one latest printing per card to avoid
+the disk/performance cost of retaining every printing. The "All Printings"
+search option and the card-detail printings list were removed; the UI now
+exposes only the stored printing. Re-ingest still replaces only the DB files,
+so `images/` entries remain in place.
 
-**Acceptance tests:** if retained, Lightning Bolt returns >1 printing; if
-removed, the UI no longer offers the option.
+**Acceptance tests:** `/search?unique=prints` behaves as a normal single-card
+search and neither the search page nor card detail contains "All Printings".
+The test suite covers both.
 
 ---
 
@@ -622,7 +625,7 @@ restarts it; kill Flask and confirm full cleanup.
 - Running `pytest` from the repository root failed collection because
   `test_scripts/run_eval_test.py` imports `requests`, which is not in
   `requirements.txt` (the directory is gitignored but present locally).
-  `pytest tests` passed 171 tests (now 182 after the high-impact tests).
+  `pytest tests` passed 171 tests (now 189 after the regression tests).
 - `README.md:276` said the MCP server exposed three tools; the current code
   exposes five (`semantic_search`, `keyword_search`, `get_card`, `list_decks`,
   `get_deck`).

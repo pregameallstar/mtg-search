@@ -12,6 +12,12 @@ name-sanitizer from :mod:`mtg.shared`.
 import json
 import os
 import tempfile
+from contextlib import contextmanager
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows fallback (app targets Linux/Docker)
+    fcntl = None
 
 from mtg.shared import sanitize_filename
 
@@ -22,6 +28,11 @@ class StorageError(Exception):
     def __init__(self, message, status_code=400):
         super().__init__(message)
         self.status_code = status_code
+
+
+def clean_name(value):
+    """Return a stripped string for a user-supplied JSON name, or ``""``."""
+    return value.strip() if isinstance(value, str) else ""
 
 
 def resolve_json_path(directory, name, reserved=()):
@@ -46,6 +57,31 @@ def read_json(path, default=None):
         return default
     except (json.JSONDecodeError, OSError, UnicodeDecodeError):
         return default
+
+
+@contextmanager
+def file_lock(path):
+    """Serialize read-modify-write operations for a JSON store.
+
+    Uses an advisory ``flock`` on a sibling ``.lock`` file. The lock is held
+    across processes and tabs, so two deck autosaves or history appends cannot
+    lose each other's writes. Falls back to a no-op on platforms without
+    ``fcntl`` (the supported target is Linux/Docker).
+    """
+    if fcntl is None:
+        yield
+        return
+    lock_path = path + ".lock"
+    os.makedirs(os.path.dirname(lock_path) or ".", exist_ok=True)
+    with open(lock_path, "a+") as lock_file:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            yield
+        finally:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
 
 
 def write_json_atomic(path, value, mode=0o644):

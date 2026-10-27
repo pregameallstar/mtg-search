@@ -345,6 +345,10 @@ def get_card(name: str) -> dict:
         ).fetchone()
 
         card_dict = dict(card)
+        # The DB keeps only the latest printing. MTGJSON's `printings` field is
+        # a historical set-code list, not available printings; do not expose it
+        # as if the app could serve those printings.
+        card_dict.pop("printings", None)
         card_dict["rulings"] = [dict(r) for r in rulings]
         card_dict["legalities"] = dict(legalities) if legalities else {}
 

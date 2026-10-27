@@ -75,7 +75,11 @@ def commander_eval_landing():
             try:
                 with open(os.path.join(reports_dir, fname)) as f:
                     data = json.load(f)
+                if not isinstance(data, dict):
+                    continue
                 card = data.get("card", {})
+                if not isinstance(card, dict):
+                    card = {}
                 saved_reports.append(
                     {
                         "filename": fname,

@@ -126,7 +126,8 @@ New routes go in an existing blueprint or a new one registered here.
 
 Sourced from MTGJSON, then **deduplicated** (`mtg/dedup.py`) to **one row per unique
 English card** (latest printing by set `releaseDate`, keeps both `side='a'` and
-`side='b'` rows for DFCs). Five tables:
+`side='b'` rows for DFCs). Only the latest printing is retained; older printings
+are intentionally dropped to keep the DB and image cache small. Five tables:
 
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
@@ -137,7 +138,9 @@ English card** (latest printing by set `releaseDate`, keeps both `side='a'` and
 | `sets` | set metadata | `code`, `name`, `releaseDate` |
 
 The DB is **read-only** at runtime (`PRAGMA query_only`). It's replaced atomically
-by the ingest pipeline.
+by the ingest pipeline. Re-ingest only replaces the database files; the
+`images/` cache is never cleaned, so previously cached card images remain in
+place even when the latest printing changes.
 
 ### 5.2 Critical data quirks (you WILL trip on these)
 
@@ -187,8 +190,10 @@ Deck {
 ```
 
 The server stores deck JSON **verbatim** — it only validates a non-empty name.
-All game rules (100-card max, 4-copy limit, legend rule, color-identity compliance)
-are enforced client-side in `deck-builder.js`.
+Commander rules (100-card main deck, singleton except basic lands and explicit
+"any number" cards, legend/color-identity checks) are enforced in
+`deck-builder.js`, with the same 100-card/singleton checks on the server-side
+`/api/deck/add-card` path.
 
 ---
 
@@ -206,12 +211,12 @@ draggable, and an Escape-key handler.
 `mana_cost` (exact), `keywords` (comma-AND), `color`/`ci` with `*_rule`
 (`at_least`/`exact`/`at_most`), `mv` (supports ranges `1-3` + operators), `pow`/`tou`/`loy`,
 `rarity` (multi), `game` (multi), `format`+`legality`, 8 boolean flags, `border`,
-`layout`, `frame`, `unique` (dedup by name vs all printings).
+`layout`, `frame`.
 
 Also in this blueprint:
 - `GET /` → redirect to `/search`.
-- `GET /card/<set_code>/<number>` → full card detail (rulings, legalities, printings,
-  other faces). `?fragment=1` renders `card_panel.html` for the side panel.
+- `GET /card/<set_code>/<number>` → full card detail (rulings, legalities, latest
+  set info, other faces). `?fragment=1` renders `card_panel.html` for the side panel.
 - `GET /img/<size>/<face>/<c1>/<c2>/<scryfallId>.jpg` → lazy cache-through image proxy
   (fetches from Scryfall with exponential backoff, caches to `images/`).
 - `GET /card-autocomplete?q=` → top 10 name matches (JSON).
@@ -390,10 +395,12 @@ These are where changes in one tool silently break another:
 
 ## 9. MCP server (`mtg/mcp_server.py`, 403 loc)
 
-Standalone FastMCP server exposing three tools to LLM agents, backed by `embed.find()`
-and raw SQL. **No Flask, no auth, read-only.** Long `instructions` string encodes the
-tool-selection heuristics: `semantic_search` for "what a card does" (mechanics),
-`keyword_search` for attributes/name-fragments, `get_card` for full detail.
+Standalone FastMCP server exposing five tools to LLM agents, backed by
+`embed.find()` and raw SQL. **No Flask, no auth, read-only for cards; deck tools
+are read-only.** Long `instructions` string encodes the tool-selection
+heuristics: `semantic_search` for "what a card does" (mechanics),
+`keyword_search` for attributes/name-fragments, `get_card` for full detail,
+and `list_decks`/`get_deck` for saved-deck inspection.
 
 - `semantic_search(query, color_identity, card_type, mana_value_min/max, limit)` —
   embed search (top_k=800) + CI subset + type substring + MV range filters.

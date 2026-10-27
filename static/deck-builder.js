@@ -91,6 +91,19 @@
         return (typesField || '').split(',').map(function (t) { return t.trim().toLowerCase(); }).filter(Boolean);
     }
 
+    function isSingletonExempt(card) {
+        /* Commander allows one copy of a card, except basic lands and cards
+           that explicitly permit any number (e.g. Hare Apparent). */
+        if (!card) return false;
+        if ((card.supertypes || '').indexOf('Basic') !== -1) return true;
+        var basicNames = {
+            'Plains': 1, 'Island': 1, 'Swamp': 1, 'Mountain': 1,
+            'Forest': 1, 'Wastes': 1
+        };
+        if (basicNames[card.name] === 1) return true;
+        return /a deck can have any number of cards named/i.test(card.text || '');
+    }
+
     function classifyCard(card) {
         /* Classify a card into one of: Lands, Ramp, Removal, Draw, Core.
            Evaluated in priority order — first match wins.
@@ -184,10 +197,10 @@
         // Check if card already in deck
         var existing = this.cards.find(function (c) { return c.uuid === cardData.uuid; });
         if (existing) {
-            if (existing.quantity >= 4) {
-                return { error: 'Maximum 4 copies per card.' };
+            if (!isSingletonExempt(cardData) && (existing.quantity || 1) >= 1) {
+                return { error: 'Only one copy of this card is allowed in a Commander deck.' };
             }
-            existing.quantity++;
+            existing.quantity = (parseInt(existing.quantity, 10) || 1) + 1;
             recordHistoryEvent('add', cardData, 'main');
             return { ok: true };
         }
@@ -219,7 +232,7 @@
         if (!section) return { error: 'Section "' + sectionName + '" does not exist. Create it first.' };
         var existing = section.find(function (c) { return c.uuid === cardData.uuid; });
         if (existing) {
-            existing.quantity++;
+            existing.quantity = (parseInt(existing.quantity, 10) || 1) + 1;
         } else {
             cardData.quantity = 1;
             cardData.tags = [];
@@ -286,6 +299,13 @@
             if (!target) return { error: 'Section "' + toSection + '" does not exist.' };
         } else {
             target = this.cards;
+            var alreadyInMain = target.find(function (c) { return c.uuid === movedCard.uuid; });
+            if (!isSingletonExempt(movedCard) && (movedCard.quantity || 1) > 1) {
+                return { error: 'Only one copy of this card is allowed in a Commander deck.' };
+            }
+            if (!isSingletonExempt(movedCard) && alreadyInMain) {
+                return { error: 'Only one copy of this card is allowed in a Commander deck.' };
+            }
         }
 
         // Remove from source
@@ -335,10 +355,12 @@
     };
 
     Deck.prototype.addWithQuantity = function (cardData, qty) {
-        /* Bulk add — bypasses the 4-copy limit for text import use cases
-           (e.g. basic lands). Enforces deck size limit. Always goes to 99. */
+        /* Bulk add for text/template imports. Basic lands and explicit
+           "any number" cards may exceed one copy; other cards are still
+           singleton. Enforces the deck size limit. Always goes to 99. */
         if (!cardData || !cardData.uuid) return { error: 'Invalid card data.' };
-        if (qty < 1) return { error: 'Quantity must be at least 1.' };
+        qty = parseInt(qty, 10);
+        if (!qty || qty < 1) return { error: 'Quantity must be at least 1.' };
 
         var currentTotal = this.getTotalCount();
         if (currentTotal + qty > MAX_CARDS) {
@@ -346,8 +368,16 @@
         }
 
         var existing = this.cards.find(function (c) { return c.uuid === cardData.uuid; });
+        if (!isSingletonExempt(cardData)) {
+            if (existing) {
+                return { error: 'Only one copy of this card is allowed in a Commander deck.' };
+            }
+            if (qty > 1) {
+                return { error: 'Only one copy of this card is allowed in a Commander deck.' };
+            }
+        }
         if (existing) {
-            existing.quantity += qty;
+            existing.quantity = (parseInt(existing.quantity, 10) || 1) + qty;
             recordHistoryEvent('add', Object.assign({}, cardData, { quantity: qty }), 'main');
             return { ok: true };
         }
@@ -360,9 +390,11 @@
     };
 
     Deck.prototype.setQuantity = function (uuid, qty) {
-        if (qty < 1) return false;
+        qty = parseInt(qty, 10);
+        if (!qty || qty < 1) return false;
         var card = this.cards.find(function (c) { return c.uuid === uuid; });
         if (!card) return false;
+        if (!isSingletonExempt(card) && qty > 1) return false;
         var oldQty = card.quantity;
         card.quantity = qty;
         // Check max deck size
@@ -612,7 +644,9 @@
         this.pricingStore = data.pricingStore || null;
         this.pricingSections = data.pricingSections || {};
         this.cards = (data.cards || []).map(function (c) {
-            var card = Object.assign({}, c, { quantity: c.quantity || 1 });
+            var card = Object.assign({}, c, {
+                quantity: parseInt(c.quantity, 10) || 1
+            });
             if (!card.tags) card.tags = [];
             if (!card.note) card.note = '';
             return card;
@@ -622,7 +656,9 @@
         var self = this;
         Object.keys(sectionsData).forEach(function (key) {
             self.sections[key] = (sectionsData[key] || []).map(function (c) {
-                var card = Object.assign({}, c, { quantity: c.quantity || 1 });
+                var card = Object.assign({}, c, {
+                    quantity: parseInt(c.quantity, 10) || 1
+                });
                 if (!card.tags) card.tags = [];
                 if (!card.note) card.note = '';
                 return card;
@@ -636,7 +672,9 @@
                 name: sec.name || '',
                 text: sec.text || '',
                 cards: (sec.cards || []).map(function (c) {
-                    var card = Object.assign({}, c, { quantity: c.quantity || 1 });
+                    var card = Object.assign({}, c, {
+                        quantity: parseInt(c.quantity, 10) || 1
+                    });
                     if (!card.tags) card.tags = [];
                     if (!card.note) card.note = '';
                     return card;
@@ -1417,11 +1455,13 @@
                 var delta = parseInt(this.dataset.delta, 10);
                 var card = deck.cards.find(function (c) { return c.uuid === uuid; });
                 if (!card) return;
-                var newQty = card.quantity + delta;
+                var newQty = (parseInt(card.quantity, 10) || 1) + delta;
                 if (deck.setQuantity(uuid, newQty)) {
                     closeTagPopover();
                     renderAll();
                     saveCurrentDeck();
+                } else {
+                    showToast('Commander decks allow one copy (basic lands excepted), and 100 cards total.');
                 }
             });
         });
@@ -1533,7 +1573,7 @@
                 if (!section) return;
                 var card = section.find(function (c) { return c.uuid === uuid; });
                 if (!card) return;
-                var newQty = card.quantity + delta;
+                var newQty = (parseInt(card.quantity, 10) || 1) + delta;
                 if (deck.setSectionQuantity(sectionName, uuid, newQty)) {
                     closeTagPopover();
                     renderAll();
@@ -1745,19 +1785,10 @@
     }
 
     function shouldShowQuantityWarning(card) {
-        // Show warning only when quantity > 1 (singleton format)
+        // Show warning only when quantity > 1 (singleton format).
         if (card.quantity <= 1) return false;
-
-        // Basic Lands are exempt (e.g., Forest, Mountain, Island)
-        var supertypes = card.supertypes || '';
-        if (supertypes.indexOf('Basic') !== -1) return false;
-
-        // Cards with "any number" Oracle text are exempt
-        // e.g., "A deck can have any number of cards named Hare Apparent"
-        var text = card.text || '';
-        if (/a deck can have any number of cards named/i.test(text)) return false;
-
-        return true;
+        // Basic lands and explicit "any number" cards are exempt.
+        return !isSingletonExempt(card);
     }
 
     function isOffColorCard(card) {
@@ -2974,10 +3005,16 @@
             var oldCommander = Object.assign({}, deck.commander, { quantity: 1, tags: [] });
             recordHistoryEvent('remove', deck.commander, 'commander');
             if (fromSection) {
-                deck.sections[fromSection].push(oldCommander);
+                var source = deck.sections[fromSection] || [];
+                if (!source.find(function (c) { return c.uuid === oldCommander.uuid; })) {
+                    source.push(oldCommander);
+                }
                 recordHistoryEvent('add', oldCommander, fromSection);
             } else {
-                deck.cards.push(oldCommander);
+                // The old commander may already have a copy in the 99.
+                if (!deck.cards.find(function (c) { return c.uuid === oldCommander.uuid; })) {
+                    deck.cards.push(oldCommander);
+                }
                 recordHistoryEvent('add', oldCommander, 'main');
             }
         }

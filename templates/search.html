@@ -173,12 +173,6 @@
                 {% endfor %}
             </select></label>
         </div>
-        <div class="field-row" style="margin-top:0.75rem">
-            <label>Display <select name="unique">
-                <option value="cards" {% if unique=='cards' %}selected{% endif %}>Unique Cards</option>
-                <option value="prints" {% if unique=='prints' %}selected{% endif %}>All Printings</option>
-            </select></label>
-        </div>
     </fieldset>
 
     <div class="advanced-actions">
@@ -224,7 +218,7 @@
 
 <p class="result-count">
     {% if total > 0 %}
-        {{ total }} {{ 'card' if unique=='cards' else 'printing' }}{{ 's' if total != 1 else '' }} found
+        {{ total }} card{{ 's' if total != 1 else '' }} found
     {% elif has_filters %}
         No results found — try adjusting your filters
     {% else %}

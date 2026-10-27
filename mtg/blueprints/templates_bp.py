@@ -5,6 +5,8 @@ from flask import Blueprint, request, render_template, jsonify
 from mtg.shared import TEMPLATES_DIR, _list_json_files
 from mtg.storage import (
     StorageError,
+    clean_name,
+    file_lock,
     read_named_json,
     resolve_json_path,
     write_json_atomic,
@@ -29,30 +31,32 @@ def api_template_save():
     body = request.get_json(silent=True) or {}
     if not isinstance(body, dict):
         return jsonify({"error": "Template body must be a JSON object."}), 400
-    previous_name = (body.pop("previousName", "") or "").strip()
-    name = body.get("name", "").strip()
+    previous_name = clean_name(body.pop("previousName", ""))
+    name = clean_name(body.get("name", ""))
     if not name:
         return jsonify({"error": "Template name is required."}), 400
     try:
         fpath = resolve_json_path(TEMPLATES_DIR, name, reserved=RESERVED_TEMPLATE_FILES)
-        try:
-            read_named_json(fpath, name)
-        except StorageError:
-            if not previous_name:
-                raise
-            read_named_json(fpath, previous_name)
-        write_json_atomic(fpath, body)
-
-        if previous_name and previous_name != name:
+        with file_lock(fpath):
             try:
-                old_path = resolve_json_path(
-                    TEMPLATES_DIR, previous_name, reserved=RESERVED_TEMPLATE_FILES,
-                )
-                if old_path != fpath and os.path.exists(old_path):
-                    if read_named_json(old_path, previous_name) is not None:
-                        os.unlink(old_path)
+                read_named_json(fpath, name)
             except StorageError:
-                pass
+                if not previous_name:
+                    raise
+                read_named_json(fpath, previous_name)
+            write_json_atomic(fpath, body)
+
+            if previous_name and previous_name != name:
+                try:
+                    old_path = resolve_json_path(
+                        TEMPLATES_DIR, previous_name, reserved=RESERVED_TEMPLATE_FILES,
+                    )
+                    if old_path != fpath and os.path.exists(old_path):
+                        with file_lock(old_path):
+                            if read_named_json(old_path, previous_name) is not None:
+                                os.unlink(old_path)
+                except StorageError:
+                    pass
     except StorageError as e:
         return jsonify({"error": str(e)}), e.status_code
     except OSError as e:
@@ -76,14 +80,15 @@ def api_template_delete():
     body = request.get_json(silent=True) or {}
     if not isinstance(body, dict):
         return jsonify({"error": "Template body must be a JSON object."}), 400
-    name = body.get("name", "").strip()
+    name = clean_name(body.get("name", ""))
     if not name:
         return jsonify({"error": "Template name is required."}), 400
     try:
         fpath = resolve_json_path(TEMPLATES_DIR, name, reserved=RESERVED_TEMPLATE_FILES)
-        if read_named_json(fpath, name) is None:
-            return jsonify({"error": "Template not found."}), 404
-        os.unlink(fpath)
+        with file_lock(fpath):
+            if read_named_json(fpath, name) is None:
+                return jsonify({"error": "Template not found."}), 404
+            os.unlink(fpath)
         return jsonify({"success": True})
     except StorageError as e:
         return jsonify({"error": str(e)}), e.status_code

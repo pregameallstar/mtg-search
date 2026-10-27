@@ -5,7 +5,7 @@ import os
 from flask import Blueprint, request, jsonify
 
 from mtg.shared import DECKS_DIR
-from mtg.storage import write_json_atomic
+from mtg.storage import file_lock, write_json_atomic
 
 tags_bp = Blueprint("tags", __name__, url_prefix="/api/tags")
 
@@ -26,8 +26,9 @@ PREDEFINED_TAGS = [
 def api_tags_list():
     """Return the global tag catalog. Seeds predefined tags on first access."""
     if not os.path.exists(TAGS_FILE):
-        with open(TAGS_FILE, "w") as f:
-            json.dump(PREDEFINED_TAGS, f, indent=2)
+        with file_lock(TAGS_FILE):
+            if not os.path.exists(TAGS_FILE):
+                write_json_atomic(TAGS_FILE, PREDEFINED_TAGS)
         return jsonify({"tags": PREDEFINED_TAGS})
     try:
         with open(TAGS_FILE) as f:
@@ -49,7 +50,8 @@ def api_tags_save():
     if not isinstance(tags, list) or not all(isinstance(t, dict) for t in tags):
         return jsonify({"error": "tags must be an array of objects."}), 400
     try:
-        write_json_atomic(TAGS_FILE, tags)
+        with file_lock(TAGS_FILE):
+            write_json_atomic(TAGS_FILE, tags)
         return jsonify({"success": True})
     except OSError as e:
         return jsonify({"error": str(e)}), 500

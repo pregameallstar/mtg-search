@@ -76,24 +76,30 @@ def similar_landing(set_code=None):
 def similar_cards(set_code, number):
     db = get_db()
 
-    # --- First visit: default all factors ON with strictness=strict ---
+    # --- First visit: seed sensible defaults for the selected method ---
     is_tuned = request.args.get("tuned") == "1"
     use_weights = request.args.get("use_weights") == "1"
+    requested_method = request.args.get("method") or session.get("similar_method", "embed")
 
     if not is_tuned:
-        # Default every factor enabled with strictness=strict (3.0)
-        # ponytail: URL params are the source of truth after first submit; no session state.
-        default_on = ("use_types", "use_keywords", "use_subtypes", "use_supertypes",
-                      "use_mv", "use_color")
-        default_strict = ("s_types", "s_keywords", "s_subtypes", "s_supertypes",
-                          "s_mv", "s_color", "s_oracle")
+        # Embed mode applies color identity always and a shared type by
+        # default; legacy mode exposes the full set of factor gates.
+        if requested_method == "embed":
+            default_on = ("use_types",)
+            default_strict = ()
+        else:
+            default_on = ("use_types", "use_keywords", "use_subtypes", "use_supertypes",
+                          "use_mv", "use_color")
+            default_strict = ("s_types", "s_keywords", "s_subtypes", "s_supertypes",
+                              "s_mv", "s_color", "s_oracle")
         args_dict = dict(request.args)
         args_dict["tuned"] = "1"
         for k in default_on:
             args_dict[k] = "1"
         for k in default_strict:
             args_dict[k] = "strict"
-        args_dict["mtg_filter"] = "1"
+        if requested_method != "embed":
+            args_dict["mtg_filter"] = "1"
         return redirect(url_for('similar.similar_cards', set_code=set_code, number=number, **args_dict))
 
     # --- Parse factor toggles, weights, and strictness ---
@@ -188,9 +194,9 @@ def similar_cards(set_code, number):
     base_card["_idf_sum"] = sum(idf.get(t, 0) for t in base_card["_terms"])
 
     # --- Method: embed (semantic) or legacy (TF-IDF with tuning) ---
-    # ponytail: read from session (set in config page), fall back to query param, then legacy.
-    method = request.args.get("method") or session.get("similar_method", "legacy")
-    score_method = method  # ponytail: may fall back to legacy for scoring
+    # ponytail: read from session (set in config page), fall back to query param.
+    method = request.args.get("method") or session.get("similar_method", "embed")
+    score_method = method  # may fall back to legacy for scoring
 
     # --- Candidate query ---
     mv = base_card["manaValue"] or 0
@@ -200,51 +206,64 @@ def similar_cards(set_code, number):
     scored = []
 
     if score_method == "embed":
-        # ponytail: semantic similarity via embedding index.
-        # Factor toggles are applied as hard post-filters (not scoring gates).
+        # Semantic similarity via the embedding index. Color identity is always
+        # a hard subset filter; a shared card type is optional. The UI only
+        # exposes those two controls in embed mode.
         try:
-            candidates = embed.find(db_path(DATABASE), base_card.get("text") or "", top_k=200)
-            candidates = [c for c in candidates if c["name"] != base_card["name"]]
-            for c in candidates:
-                c_mv = c.get("manaValue")
-                if c_mv is not None and (c_mv < mv_min or c_mv > mv_max):
-                    continue
-                # --- Factor-based post-filters ---
-                if factors.get("use_color"):
+            if not (base_card.get("text") or "").strip():
+                # No oracle signal to embed; use the attribute-based legacy path.
+                score_method = "legacy"
+            else:
+                candidates = embed.find(db_path(DATABASE), base_card.get("text") or "", top_k=200)
+                candidates = [c for c in candidates if c["name"] != base_card["name"]]
+                for c in candidates:
+                    c_mv = c.get("manaValue")
+                    if c_mv is not None and (c_mv < mv_min or c_mv > mv_max):
+                        continue
                     cand_ci = (c.get("colorIdentity") or "").strip()
-                    # ponytail: use subset matching instead of exact — so a
-                    # mono-white card also matches colorless artifacts that
-                    # are mechanically similar.  This mirrors the legacy
-                    # similarity's graduated penalty rather than a hard gate.
                     if not color_identity_subset(cand_ci, base_card["_ci"]):
                         continue
-                if factors.get("use_types"):
-                    cand_t = split_csv(c.get("types") or "")
-                    base_t = base_card.get("_t")
-                    if base_t and not (base_t & cand_t):
-                        continue
-                # Look up setCode/number for URL
-                row = db.execute(
-                    "SELECT c.uuid, c.setCode, c.number, c.manaCost, c.manaValue, c.type, c.types, c.supertypes, "
-                    "c.subtypes, c.keywords, c.colors, c.colorIdentity, c.rarity, c.text, "
-                    "ci.scryfallId, s.name as setName, s.releaseDate "
-                    "FROM cards c "
-                    "JOIN cardIdentifiers ci ON c.uuid = ci.uuid "
-                    "JOIN sets s ON c.setCode = s.code "
-                    "WHERE c.uuid = ? AND c.language = 'English'",
-                    (c["uuid"],)
-                ).fetchone()
-                if row:
-                    scored.append((c["score"], row))
-            scored.sort(key=lambda x: x[0], reverse=True)
-
-            # Convert scores to 0-100 scale (cosine similarity is already 0-1)
-            scored = [(round(s * 100, 1), c) for s, c in scored]
+                    if factors.get("use_types"):
+                        cand_t = split_csv(c.get("types") or "")
+                        base_t = base_card.get("_t")
+                        if base_t and not (base_t & cand_t):
+                            continue
+                    # Look up setCode/number for URL
+                    row = db.execute(
+                        "SELECT c.uuid, c.setCode, c.number, c.manaCost, c.manaValue, c.type, c.types, c.supertypes, "
+                        "c.subtypes, c.keywords, c.colors, c.colorIdentity, c.rarity, c.text, "
+                        "ci.scryfallId, s.name as setName, s.releaseDate "
+                        "FROM cards c "
+                        "JOIN cardIdentifiers ci ON c.uuid = ci.uuid "
+                        "JOIN sets s ON c.setCode = s.code "
+                        "WHERE c.uuid = ? AND c.language = 'English'",
+                        (c["uuid"],)
+                    ).fetchone()
+                    if row:
+                        scored.append((c["score"], row))
+                scored.sort(key=lambda x: x[0], reverse=True)
+                # Convert scores to 0-100 scale (cosine similarity is already 0-1)
+                scored = [(round(s * 100, 1), c) for s, c in scored]
+                if not scored:
+                    # Index missing or no semantic candidates: keep the feature usable.
+                    score_method = "legacy"
         except Exception:
             import sys, traceback
             traceback.print_exc(file=sys.stderr)
             print("similar: embed failed, falling back to legacy", file=sys.stderr)
-            score_method = "legacy"  # ponytail: fall back to legacy scoring only
+            score_method = "legacy"
+
+    # If embed could not run, use the legacy gate defaults so the fallback is
+    # still a useful attribute search, and show the legacy controls.
+    if score_method == "legacy" and method == "embed":
+        factors.update({
+            "use_types": True, "use_keywords": True, "use_subtypes": True,
+            "use_supertypes": True, "use_mv": True, "use_color": True,
+            "s_types": 2.0, "s_keywords": 2.0, "s_subtypes": 2.0,
+            "s_supertypes": 2.0, "s_mv": 2.0, "s_color": 2.0,
+            "s_oracle": 1.0,
+        })
+    method = score_method
 
     if score_method == "legacy":
         candidates = db.execute("""

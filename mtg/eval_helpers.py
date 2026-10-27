@@ -8,7 +8,7 @@ import os
 import time as _time
 
 from mtg.shared import DEEPDIVE_SUFFIX
-from mtg.storage import read_json, write_json_atomic
+from mtg.storage import file_lock, read_json, write_json_atomic
 
 
 # --- Placeholder detection ---
@@ -65,6 +65,10 @@ def eval_similar_embed(db, card, db_path):
     from mtg.embed import find
 
     candidates = find(db_path, card.get("text") or "", top_k=200)
+    if not candidates:
+        # Textless cards (or a missing index) have no embedding signal; the
+        # attribute-based path still produces useful legendary matches.
+        return eval_similar_legacy(db, card, db_path)
     candidates = [c for c in candidates if c["name"] != card["name"]]
 
     # Filter to legendary, Commander-legal, MV ±3
@@ -212,14 +216,15 @@ def auto_save_deepdives(set_code, number, new_deepdives, reports_dir):
     os.makedirs(reports_dir, exist_ok=True)
     autosave_path = os.path.join(reports_dir, f"{set_code}_{number}{DEEPDIVE_SUFFIX}")
     try:
-        existing = read_json(autosave_path, default={})
-        if not isinstance(existing, dict):
-            existing = {}
-        merged = existing.get("deepdives", {})
-        if not isinstance(merged, dict):
-            merged = {}
-        merged.update(new_deepdives)
-        write_json_atomic(autosave_path, {"deepdives": merged})
+        with file_lock(autosave_path):
+            existing = read_json(autosave_path, default={})
+            if not isinstance(existing, dict):
+                existing = {}
+            merged = existing.get("deepdives", {})
+            if not isinstance(merged, dict):
+                merged = {}
+            merged.update(new_deepdives)
+            write_json_atomic(autosave_path, {"deepdives": merged})
     except (OSError, ValueError):
         pass  # ponytail: fail silently — deepdives still live in cache for this session
 

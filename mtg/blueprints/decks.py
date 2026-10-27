@@ -6,6 +6,8 @@ from flask import Blueprint, request, render_template, jsonify, session
 from mtg.shared import get_db, DECKS_DIR, HISTORY_DIR, card_image, _list_json_files
 from mtg.storage import (
     StorageError,
+    clean_name,
+    file_lock,
     read_json,
     read_named_json,
     resolve_json_path,
@@ -52,22 +54,23 @@ def api_deck_save():
         return jsonify({"error": "Deck body must be a JSON object."}), 400
     # The client sends its last successfully saved name so a rename can be
     # distinguished from an accidental collision with another deck.
-    previous_name = (body.pop("previousName", "") or "").strip()
-    name = body.get("name", "").strip()
+    previous_name = clean_name(body.pop("previousName", ""))
+    name = clean_name(body.get("name", ""))
     if not name:
         return jsonify({"error": "Deck name is required."}), 400
     try:
         fpath = resolve_json_path(DECKS_DIR, name, reserved=RESERVED_DECK_FILES)
-        # Refuse to overwrite a different display name that sanitizes to the
-        # same filename (e.g. "Alela, Artful" vs "Alela Artful"), unless the
-        # caller is renaming the deck it last saved under the old name.
-        try:
-            read_named_json(fpath, name)
-        except StorageError:
-            if not previous_name:
-                raise
-            read_named_json(fpath, previous_name)
-        write_json_atomic(fpath, body)
+        with file_lock(fpath):
+            # Refuse to overwrite a different display name that sanitizes to
+            # the same filename (e.g. "Alela, Artful" vs "Alela Artful"),
+            # unless the caller is renaming the deck it last saved.
+            try:
+                read_named_json(fpath, name)
+            except StorageError:
+                if not previous_name:
+                    raise
+                read_named_json(fpath, previous_name)
+            write_json_atomic(fpath, body)
     except StorageError as e:
         return jsonify({"error": str(e)}), e.status_code
     except OSError as e:
@@ -88,14 +91,15 @@ def api_deck_delete():
     body = request.get_json(silent=True) or {}
     if not isinstance(body, dict):
         return jsonify({"error": "Deck body must be a JSON object."}), 400
-    name = body.get("name", "").strip()
+    name = clean_name(body.get("name", ""))
     if not name:
         return jsonify({"error": "Deck name is required."}), 400
     try:
         fpath = resolve_json_path(DECKS_DIR, name, reserved=RESERVED_DECK_FILES)
-        if read_named_json(fpath, name) is None:
-            return jsonify({"error": "Deck not found."}), 404
-        os.unlink(fpath)
+        with file_lock(fpath):
+            if read_named_json(fpath, name) is None:
+                return jsonify({"error": "Deck not found."}), 404
+            os.unlink(fpath)
         return jsonify({"success": True})
     except StorageError as e:
         return jsonify({"error": str(e)}), e.status_code
@@ -131,6 +135,18 @@ def _lookup_card(set_code="", number="", uuid_val=""):
     return None
 
 
+BASIC_LAND_NAMES = {"Plains", "Island", "Swamp", "Mountain", "Forest", "Wastes"}
+
+
+def _singleton_exempt(card):
+    """Commander allows one copy except basic lands / explicit any-number cards."""
+    if "Basic" in (card.get("supertypes") or ""):
+        return True
+    if card.get("name") in BASIC_LAND_NAMES:
+        return True
+    return "a deck can have any number of cards named" in (card.get("text") or "").lower()
+
+
 def _card_to_deck_json(card):
     """Map a looked-up card row to the saved-deck card shape.
 
@@ -162,9 +178,9 @@ def deck_card_lookup():
     """Look up a card by setCode+number or uuid. Returns card JSON."""
     body = request.get_json(silent=True) or {}
 
-    set_code = body.get("setCode", "").strip()
-    number = body.get("number", "").strip()
-    uuid_val = body.get("uuid", "").strip()
+    set_code = clean_name(body.get("setCode", ""))
+    number = clean_name(body.get("number", ""))
+    uuid_val = clean_name(body.get("uuid", ""))
 
     if not uuid_val and not (set_code and number):
         return jsonify({"error": "Provide setCode+number or uuid."}), 400
@@ -213,11 +229,11 @@ def api_deck_add_card():
     body = request.get_json(silent=True) or {}
     if not isinstance(body, dict):
         return jsonify({"error": "Request body must be a JSON object."}), 400
-    deck_name = body.get("deck", "").strip()
-    section = (body.get("section") or "").strip()
-    set_code = body.get("setCode", "").strip()
-    number = body.get("number", "").strip()
-    uuid_val = body.get("uuid", "").strip()
+    deck_name = clean_name(body.get("deck", ""))
+    section = clean_name(body.get("section"))
+    set_code = clean_name(body.get("setCode", ""))
+    number = clean_name(body.get("number", ""))
+    uuid_val = clean_name(body.get("uuid", ""))
 
     if not deck_name:
         return jsonify({"error": "Deck name is required."}), 400
@@ -230,58 +246,62 @@ def api_deck_add_card():
 
     try:
         fpath = resolve_json_path(DECKS_DIR, deck_name, reserved=RESERVED_DECK_FILES)
-        deck = read_named_json(fpath, deck_name)
-        if deck is None:
-            return jsonify({"error": "Deck not found."}), 404
+        with file_lock(fpath):
+            deck = read_named_json(fpath, deck_name)
+            if deck is None:
+                return jsonify({"error": "Deck not found."}), 404
+
+            deck_card = _card_to_deck_json(card)
+
+            if section:
+                sections = deck.get("sections")
+                if not isinstance(sections, dict):
+                    # Older saves may store [] for "no sections"; normalize in place.
+                    sections = {}
+                    deck["sections"] = sections
+                target = sections.get(section)
+                if not isinstance(target, list):
+                    target = []
+                    sections[section] = target
+            else:
+                target = deck.get("cards")
+                if not isinstance(target, list):
+                    target = []
+                    deck["cards"] = target
+
+            if not section:
+                def _deck_total():
+                    total = 0
+                    for c in target:
+                        if not isinstance(c, dict):
+                            continue
+                        try:
+                            total += int(c.get("quantity") or 1)
+                        except (TypeError, ValueError):
+                            total += 1
+                    if isinstance(deck.get("commander"), dict):
+                        total += 1
+                    return total
+
+                if _deck_total() >= 100:
+                    return jsonify({"error": "Deck is full (100 cards)."}), 409
+
+            existing = next(
+                (c for c in target if isinstance(c, dict) and c.get("uuid") == deck_card["uuid"]),
+                None,
+            )
+            if not section and existing and not _singleton_exempt(deck_card):
+                return jsonify({
+                    "error": "Only one copy of this card is allowed in a Commander deck."
+                }), 409
+            if existing:
+                existing["quantity"] = existing.get("quantity", 1) + 1
+            else:
+                target.append(deck_card)
+
+            write_json_atomic(fpath, deck)
     except StorageError as e:
         return jsonify({"error": str(e)}), e.status_code
-
-    deck_card = _card_to_deck_json(card)
-
-    if section:
-        sections = deck.get("sections")
-        if not isinstance(sections, dict):
-            # Older saves may store [] for "no sections"; normalize in place.
-            sections = {}
-            deck["sections"] = sections
-        target = sections.get(section)
-        if not isinstance(target, list):
-            target = []
-            sections[section] = target
-    else:
-        target = deck.get("cards")
-        if not isinstance(target, list):
-            target = []
-            deck["cards"] = target
-
-    if not section:
-        def _deck_total():
-            total = 0
-            for c in target:
-                if not isinstance(c, dict):
-                    continue
-                try:
-                    total += int(c.get("quantity") or 1)
-                except (TypeError, ValueError):
-                    total += 1
-            if isinstance(deck.get("commander"), dict):
-                total += 1
-            return total
-
-        if _deck_total() >= 100:
-            return jsonify({"error": "Deck is full (100 cards)."}), 409
-
-    existing = next(
-        (c for c in target if isinstance(c, dict) and c.get("uuid") == deck_card["uuid"]),
-        None,
-    )
-    if existing:
-        existing["quantity"] = existing.get("quantity", 1) + 1
-    else:
-        target.append(deck_card)
-
-    try:
-        write_json_atomic(fpath, deck)
     except OSError as e:
         return jsonify({"error": str(e)}), 500
 
@@ -292,7 +312,7 @@ def api_deck_add_card():
 def deck_lookup_by_name():
     """Look up a card by exact name (case-insensitive). Returns latest printing."""
     body = request.get_json(silent=True) or {}
-    name = body.get("name", "").strip()
+    name = clean_name(body.get("name", ""))
     if not name:
         return jsonify({"error": "No card name provided."}), 400
 
@@ -350,7 +370,7 @@ def deck_lookup_by_name():
 def deck_lookup_by_uuid():
     """Given a Scryfall UUID, find the card and return its setCode + number."""
     body = request.get_json(silent=True) or {}
-    scryfall_id = body.get("scryfallId", "").strip()
+    scryfall_id = clean_name(body.get("scryfallId", ""))
     if not scryfall_id:
         return jsonify({"error": "No scryfallId provided."}), 400
 
@@ -389,7 +409,10 @@ def api_deck_cards_enrich():
         return jsonify({"error": "Maximum 300 cards per request."}), 400
 
     # Build IN clauses from setCode/number pairs
-    pairs = [(c.get("setCode", "").strip(), c.get("number", "").strip()) for c in cards]
+    pairs = [
+        (clean_name(c.get("setCode", "")), clean_name(c.get("number", "")))
+        for c in cards if isinstance(c, dict)
+    ]
     pairs = [(sc, n) for sc, n in pairs if sc and n]
 
     if not pairs:
@@ -424,7 +447,7 @@ def api_deck_cards_enrich():
 @decks_bp.route("/api/deck/history", methods=["GET"])
 def api_deck_history():
     """Return history array for a deck."""
-    name = request.args.get("deck", "").strip()
+    name = clean_name(request.args.get("deck", ""))
     if not name:
         return jsonify({"error": "Deck name is required."}), 400
     try:
@@ -443,7 +466,7 @@ def api_deck_history():
 def api_deck_history_save():
     """Append events to a deck's history file."""
     body = request.get_json(silent=True) or {}
-    name = body.get("name", "").strip()
+    name = clean_name(body.get("name", ""))
     events = body.get("events", [])
     if not name:
         return jsonify({"error": "Deck name is required."}), 400
@@ -455,12 +478,13 @@ def api_deck_history_save():
         fpath = resolve_json_path(HISTORY_DIR, name, reserved=RESERVED_DECK_FILES)
     except StorageError as e:
         return jsonify({"error": str(e)}), e.status_code
-    existing = read_json(fpath, default=[]) if os.path.exists(fpath) else []
-    if not isinstance(existing, list):
-        return jsonify({"error": "History file is unreadable."}), 500
-    existing.extend(events)
     try:
-        write_json_atomic(fpath, existing)
+        with file_lock(fpath):
+            existing = read_json(fpath, default=[]) if os.path.exists(fpath) else []
+            if not isinstance(existing, list):
+                return jsonify({"error": "History file is unreadable."}), 500
+            existing.extend(events)
+            write_json_atomic(fpath, existing)
     except OSError as e:
         return jsonify({"error": str(e)}), 500
     return jsonify({"success": True, "count": len(existing)})
@@ -470,12 +494,13 @@ def api_deck_history_save():
 def api_deck_history_delete():
     """Delete the history file for a deck."""
     body = request.get_json(silent=True) or {}
-    name = body.get("name", "").strip()
+    name = clean_name(body.get("name", ""))
     if not name:
         return jsonify({"error": "Deck name is required."}), 400
     try:
         fpath = resolve_json_path(HISTORY_DIR, name, reserved=RESERVED_DECK_FILES)
-        os.unlink(fpath)
+        with file_lock(fpath):
+            os.unlink(fpath)
         return jsonify({"success": True})
     except StorageError as e:
         return jsonify({"error": str(e)}), e.status_code

@@ -46,20 +46,6 @@
         {% if card['colorIdentity'] %}<p><strong>Color Identity:</strong> {{ card['colorIdentity'] }}</p>{% endif %}
     </div>
 
-    {% if printings %}
-    <div class="printings">
-        <h2>All Printings</h2>
-        <ul>
-            {% for p in printings %}
-            <li>
-                <span>{{ p['name'] }}</span>
-                {% if p['releaseDate'] %}<span class="date">({{ p['releaseDate'] }})</span>{% endif %}
-            </li>
-            {% endfor %}
-        </ul>
-    </div>
-    {% endif %}
-
     {% if legalities %}
     <div class="legalities">
         <h2>Legality</h2>

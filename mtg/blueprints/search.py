@@ -87,7 +87,6 @@ def search():
     border = request.args.get("border", "").strip()             # black / white / silver / borderless
     layout = request.args.get("layout", "").strip()
     frame = request.args.get("frame", "").strip()               # frameVersion
-    unique = request.args.get("unique", "cards")                # cards (dedupe) / prints (all)
 
     page = request.args.get("page", 1, type=int)
     if page < 1:
@@ -106,7 +105,7 @@ def search():
             is_reprint=is_reprint, is_reserved=is_reserved, is_funny=is_funny,
             is_oversized=is_oversized, is_fullart=is_fullart, is_textless=is_textless,
             is_promo=is_promo, is_rebalanced=is_rebalanced,
-            border=border, layout=layout, frame=frame, unique=unique,
+            border=border, layout=layout, frame=frame,
             results=[], page=page, total=0, total_pages=0, per_page=per_page,
             db_unseeded=True, has_filters=False,
         )
@@ -336,9 +335,12 @@ def search():
 
     where_clause = "WHERE " + " AND ".join(where)
 
-    # Count
-    group_col = "c.name" if unique == "cards" else "c.uuid"
-    group_expr = f"CASE WHEN instr({group_col}, ' // ') > 0 THEN substr({group_col}, 1, instr({group_col}, ' // ') - 1) ELSE {group_col} END"
+    # Count — one result per front-face name. The DB intentionally stores only
+    # the latest printing, so there is no "all printings" mode.
+    group_expr = (
+        "CASE WHEN instr(c.name, ' // ') > 0 "
+        "THEN substr(c.name, 1, instr(c.name, ' // ') - 1) ELSE c.name END"
+    )
     count_sql = f"""
         SELECT COUNT(DISTINCT {group_expr})
         FROM cards c
@@ -387,7 +389,7 @@ def search():
         is_reprint=is_reprint, is_reserved=is_reserved, is_funny=is_funny,
         is_oversized=is_oversized, is_fullart=is_fullart, is_textless=is_textless,
         is_promo=is_promo, is_rebalanced=is_rebalanced,
-        border=border, layout=layout, frame=frame, unique=unique,
+        border=border, layout=layout, frame=frame,
         results=results, page=page, total=total, total_pages=total_pages, per_page=per_page,
         has_filters=has_filters,
     )
@@ -420,22 +422,9 @@ def card_detail(set_code, number):
         SELECT * FROM cardLegalities WHERE uuid = ?
     """, [card["uuid"]]).fetchone()
 
-    # All printings (from printings field — comma-separated set codes)
-    # MTGJSON stores this as a comma-space separated list ("2ED, 2X2, …").
-    # Strip each code or only the first one matches the sets table.
-    printing_codes = (
-        [code.strip() for code in card["printings"].split(",") if code.strip()]
-        if card["printings"] else []
-    )
-    printings = []
-    if printing_codes:
-        placeholders = ",".join("?" * len(printing_codes))
-        printings = db.execute(
-            f"""SELECT code, name, releaseDate FROM sets
-                WHERE code IN ({placeholders})
-                ORDER BY releaseDate""",
-            printing_codes,
-        ).fetchall()
+    # NOTE: the DB intentionally keeps only the latest printing per card.
+    # The MTGJSON `printings` field is a list of set codes only, not printable
+    # printings with collector numbers/Scryfall IDs, so it is not used here.
 
     # Other faces (for multi-faced cards)
     other_faces = []
@@ -456,7 +445,7 @@ def card_detail(set_code, number):
     return render_template(
         template,
         card=card, rulings=rulings, legalities=legalities,
-        printings=printings, other_faces=other_faces,
+        other_faces=other_faces,
     )
 
 

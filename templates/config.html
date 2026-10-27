@@ -15,6 +15,7 @@
     <div class="eval-config">
         <h2 class="eval-config-heading">LLM Connection</h2>
         <form method="post" class="eval-config-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="save_llm" value="1">
             <div class="eval-config-row">
                 <label for="llm_backend">Backend</label>
@@ -108,6 +109,7 @@
     </div>
 
     <script>
+    window._mtgCsrf = {{ csrf_token() | tojson }};
     (function() {
         var zone = document.getElementById('db-drop-zone');
         var fileInput = document.getElementById('db-file-input');
@@ -163,6 +165,7 @@
 
             var formData = new FormData();
             formData.append('database', selectedFile);
+            formData.append('csrf_token', window._mtgCsrf);
 
             fetch('/config/ingest', { method: 'POST', body: formData })
                 .then(function(r) { return r.json(); })
@@ -224,7 +227,10 @@
 
         function buildNow() {
             statusEl.innerHTML = '<span style="color: var(--text-dim);">⏳ Embedding index: In Progress…</span>';
-            fetch('/config/embed-build', { method: 'POST' })
+            fetch('/config/embed-build', {
+                method: 'POST',
+                headers: { 'X-CSRF-Token': window._mtgCsrf }
+            })
                 .then(function(r) { return r.json(); })
                 .then(function(data) {
                     if (data.success) {
@@ -334,6 +340,7 @@
                 </span>
             </div>
             <form method="post" id="search-logic-form" style="margin-top: 0.75rem;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="save_search_logic" value="1">
                 {# pass through existing config fields so Save doesn't wipe them #}
                 <input type="hidden" name="llm_backend" value="{{ llm_backend }}">
@@ -365,6 +372,7 @@
                 </span>
             </div>
             <form method="post" id="pricing-form" style="margin-top: 0.75rem;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="save_pricing" value="1">
                 <input type="hidden" name="llm_backend" value="{{ llm_backend }}">
                 <input type="hidden" name="llm_base_url" value="{{ llm_base_url }}">
@@ -392,6 +400,7 @@
                 </span>
             </div>
             <form method="post" id="history-form" style="margin-top: 0.75rem;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="save_history" value="1">
                 <input type="hidden" name="llm_backend" value="{{ llm_backend }}">
                 <input type="hidden" name="llm_base_url" value="{{ llm_base_url }}">
@@ -407,6 +416,7 @@
             <textarea name="eval_prompt" form="prompt-form" class="prompt-editor eval-prompt-area"
                       placeholder="Enter system prompt for Commander Eval analysis…">{{ eval_prompt or default_prompt }}</textarea>
             <form method="post" id="prompt-form" style="margin-top: 0.75rem;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="save_prompt" value="1">
                 {# pass through existing config fields so Save doesn't wipe them #}
                 <input type="hidden" name="llm_backend" value="{{ llm_backend }}">
@@ -426,6 +436,7 @@
             <textarea name="deepdive_prompt" form="deepdive-prompt-form" class="prompt-editor deepdive-prompt-area"
                       placeholder="Enter system prompt for Strategy/Unique Build deep-dive…">{{ deepdive_prompt or default_deepdive_prompt }}</textarea>
             <form method="post" id="deepdive-prompt-form" style="margin-top: 0.75rem;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="save_deepdive_prompt" value="1">
                 {# pass through existing config fields so Save doesn't wipe them #}
                 <input type="hidden" name="llm_backend" value="{{ llm_backend }}">
@@ -445,6 +456,7 @@
             <textarea name="verify_prompt" form="verify-prompt-form" class="prompt-editor verify-prompt-area"
                       placeholder="Enter system prompt for second-pass verification…">{{ verify_prompt or default_verify_prompt }}</textarea>
             <form method="post" id="verify-prompt-form" style="margin-top: 0.75rem;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="save_verify_prompt" value="1">
                 {# pass through existing config fields so Save doesn't wipe them #}
                 <input type="hidden" name="llm_backend" value="{{ llm_backend }}">
@@ -631,7 +643,10 @@ document.getElementById('reset-verify-prompt').addEventListener('click', functio
         restartBtn.textContent = 'Restarting…';
         showResult('', true);
 
-        fetch('/config/mcp-restart', { method: 'POST' })
+        fetch('/config/mcp-restart', {
+            method: 'POST',
+            headers: { 'X-CSRF-Token': window._mtgCsrf }
+        })
             .then(function(r) { return r.json(); })
             .then(function(data) {
                 restartBtn.disabled = false;

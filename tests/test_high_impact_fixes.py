@@ -6,7 +6,6 @@ quantity counts.
 """
 
 import json
-import re
 
 import pytest
 
@@ -53,6 +52,21 @@ def test_deck_save_rejects_tag_catalog_name(tmp_path, monkeypatch):
     assert rv.status_code == 400
 
 
+def test_deck_add_card_enforces_singleton(tmp_path, monkeypatch):
+    monkeypatch.setattr(decks_module, "DECKS_DIR", str(tmp_path))
+    c = _client()
+    assert c.post("/api/deck/save", json={
+        "name": "Singleton Test", "cards": [], "sections": {},
+    }).status_code == 200
+
+    body = {"deck": "Singleton Test", "setCode": "SLZ", "number": "184"}
+    first = c.post("/api/deck/add-card", json=body)
+    second = c.post("/api/deck/add-card", json=body)
+    assert first.status_code == 200
+    assert second.status_code == 409
+    assert "Only one copy" in second.get_json()["error"]
+
+
 def test_deck_save_collision_and_rename(tmp_path, monkeypatch):
     monkeypatch.setattr(decks_module, "DECKS_DIR", str(tmp_path))
     c = _client()
@@ -94,8 +108,12 @@ def test_deck_save_collision_and_rename(tmp_path, monkeypatch):
 def test_config_prompt_uses_server_store_and_keeps_key(tmp_path, monkeypatch):
     monkeypatch.setattr(prompt_store, "PROMPTS_DIR", str(tmp_path))
     c = _client()
+    c.get("/config/")
+    with c.session_transaction() as s:
+        token = s["_csrf_token"]
 
     rv = c.post("/config/", data={
+        "csrf_token": token,
         "save_llm": "1",
         "llm_api_key": "sk-test",
         "llm_backend": "openai",
@@ -106,6 +124,7 @@ def test_config_prompt_uses_server_store_and_keeps_key(tmp_path, monkeypatch):
 
     # A prompt save must not put the 10 KB prompt in the cookie or wipe the key.
     rv = c.post("/config/", data={
+        "csrf_token": token,
         "save_prompt": "1",
         "eval_prompt": "CUSTOM PROMPT",
         "llm_backend": "openai",
@@ -124,6 +143,7 @@ def test_config_prompt_uses_server_store_and_keeps_key(tmp_path, monkeypatch):
 
     # A different sub-form must leave the key and prompt alone.
     c.post("/config/", data={
+        "csrf_token": token,
         "save_history": "1",
         "history_warning_days": "45",
         "llm_backend": "openai",
@@ -134,6 +154,12 @@ def test_config_prompt_uses_server_store_and_keeps_key(tmp_path, monkeypatch):
         assert s.get("llm_api_key") == "sk-test"
         assert s.get("history_warning_days") == "45"
     assert json.loads(files[0].read_text())["eval_prompt"] == "CUSTOM PROMPT"
+
+
+def test_config_post_requires_csrf_token():
+    c = _client()
+    rv = c.post("/config/", data={"save_history": "1", "history_warning_days": "45"})
+    assert rv.status_code == 403
 
 
 # --------------------------------------------------------------------------- #
@@ -156,28 +182,69 @@ def test_install_database_handles_bind_mount_directory(tmp_path):
     src = tmp_path / "new.sqlite"
     src.write_bytes(b"new-db")
     (tmp_path / "stale.sqlite").write_bytes(b"old-db")
+    images = tmp_path / "images" / "normal"
+    images.mkdir(parents=True)
+    cached_image = images / "cached.jpg"
+    cached_image.write_bytes(b"cached-image")
 
     _install_database(str(src), str(tmp_path))
 
     assert (tmp_path / "AllPrintings.sqlite").read_bytes() == b"new-db"
     assert not (tmp_path / "stale.sqlite").exists()
     assert (tmp_path / "AllPrintings.sqlite.bak").read_bytes() == b"old-db"
+    # Re-ingest must not clear the image cache.
+    assert cached_image.read_bytes() == b"cached-image"
 
 
 # --------------------------------------------------------------------------- #
 # Printing list / image IDs
 # --------------------------------------------------------------------------- #
 
-def test_card_detail_prints_all_set_codes():
+def test_single_printing_is_the_only_mode():
     c = _client()
-    rv = c.get("/card/SLZ/184")
+    # The old UI offered "All Printings" even though the DB keeps one latest
+    # printing. It must not promise or render that option.
+    search = c.get("/search", query_string={
+        "name": "Lightning Bolt", "unique": "prints",
+    })
+    assert search.status_code == 200
+    assert b"All Printings" not in search.data
+    assert b"1 card found" in search.data
+
+    detail = c.get("/card/SLZ/184")
+    assert detail.status_code == 200
+    assert b"All Printings" not in detail.data
+
+
+def test_similarity_defaults_to_embed_with_honest_controls():
+    c = _client()
+    rv = c.get("/card/SLZ/184/similar", follow_redirects=False)
+    assert rv.status_code == 302
+    location = rv.headers["Location"]
+    assert "use_types=1" in location
+    assert "use_keywords" not in location
+    assert "mtg_filter" not in location
+
+
+def test_textless_card_falls_back_to_attribute_similarity():
+    c = _client()
+    # Aegis Turtle has no oracle text, so the embedding signal is empty.
+    rv = c.get("/card/FDN/150/similar", follow_redirects=True)
     assert rv.status_code == 200
-    # Lightning Bolt has dozens of printings; the old split(",") left spaces
-    # and matched only the first set code. Count only the printings block so
-    # sidebar list items cannot make the assertion pass accidentally.
-    match = re.search(rb'<div class="printings">(.*?)</div>', rv.data, re.S)
-    assert match
-    assert match.group(1).count(b"<li>") > 10
+    assert b"No cards matched" not in rv.data
+    assert b"card-cell" in rv.data
+
+
+def test_embed_index_rejects_mismatched_lengths(tmp_path, monkeypatch):
+    import numpy as np
+    from mtg import embed
+
+    monkeypatch.setattr(embed, "INDEX_DIR", str(tmp_path))
+    np.save(tmp_path / "vectors.npy", np.array([[1.0, 0.0], [0.0, 1.0]]))
+    (tmp_path / "meta.json").write_text(json.dumps([{"uuid": "only-one"}]))
+    vectors, meta = embed._load_index()
+    assert vectors is None
+    assert meta is None
 
 
 def test_image_proxy_rejects_short_or_traversing_ids():
