@@ -152,6 +152,7 @@
         this.guideline = null;    // Guideline template name string (or null)
         this.pricingStore = null; // Per-deck pricing override (null = use global)
         this.pricingSections = {}; // Section include toggles for cost { "main": true, "Sideboard": false, ... }
+        this._savedName = null;   // Last name successfully persisted (rename tracking)
     }
 
     Deck.prototype.addCard = function (cardData) {
@@ -390,6 +391,16 @@
         this.pricingSections = {};
     };
 
+    Deck.prototype.clearContents = function () {
+        /* Replace the deck's card contents while preserving its identity and
+           presentation metadata (name, outline, guideline, pricing options).
+           Used by the "Replace current deck contents" text import. */
+        this.commander = null;
+        this.cards = [];
+        this.evalData = null;
+        this.sections = {};
+    };
+
     Deck.prototype.getCommanderCI = function () {
         return (this.commander && this.commander.colorIdentity) || '';
     };
@@ -471,6 +482,23 @@
             }.bind(this));
         }
 
+        return lines.join('\n') + '\n';
+    };
+
+    Deck.prototype.toOutlineTextExport = function () {
+        // Plain-text export of the Deck Outline: each section's name as a
+        // header, its narrative text, and (when present) a list of example
+        // card names. Empty sections are skipped so pasting stays clean.
+        var lines = [];
+        this.ensureOutline().forEach(function (sec) {
+            var text = (sec.text || '').trim();
+            var cards = (sec.cards || []).map(function (c) { return c.name || ''; }).filter(Boolean);
+            if (!text && !cards.length) return;
+            if (lines.length) lines.push('');
+            lines.push((sec.name || 'Untitled').trim());
+            if (text) lines.push(text);
+            if (cards.length) lines.push('Example cards: ' + cards.join(', '));
+        });
         return lines.join('\n') + '\n';
     };
 
@@ -631,10 +659,14 @@
     };
 
     Deck.prototype.ensureOutline = function () {
-        /* Return the current outline, or the defaults when it is empty. Does
-           not mutate the model — the editor/export seed on read so the three
-           default sections appear without writing until the user edits them. */
-        if (!this.outline || !this.outline.length) return this.defaultOutline();
+        /* Return the current outline, seeding the three defaults when empty.
+           The seed must be written into the model: every editor/drop handler
+           looks up deck.outline[idx], so returning a detached default array
+           made the visible sections impossible to edit. clear() can still set
+           an empty outline; the defaults reappear on the next read. */
+        if (!this.outline || !this.outline.length) {
+            this.outline = this.defaultOutline();
+        }
         return this.outline;
     };
 
@@ -648,11 +680,24 @@
             updateSaveStatus('unsaved', 'Name your deck to save');
             return;
         }
-        var payload = JSON.stringify(deck.toExport());
+        var exportData = deck.toExport();
+        if (deck._savedName && deck._savedName !== deck.name) {
+            exportData.previousName = deck._savedName;
+        }
+        var payload = JSON.stringify(exportData);
 
         if (useBeacon && navigator.sendBeacon) {
-            navigator.sendBeacon('/api/deck/save', new Blob([payload], {type: 'application/json'}));
-            return;
+            var queued = navigator.sendBeacon(
+                '/api/deck/save',
+                new Blob([payload], {type: 'application/json'})
+            );
+            if (queued) {
+                needsSave = false;
+                return;
+            }
+            // Beacon queue rejected the payload (often > ~64 KB). Fall through
+            // to a keepalive fetch; the visibility handler leaves the debounce
+            // timer alive as a second chance.
         }
 
         updateSaveStatus('saving', 'Saving…');
@@ -660,10 +705,12 @@
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: payload,
+            keepalive: !!useBeacon,
         })
         .then(function (r) { return r.json(); })
         .then(function (data) {
             if (data.success) {
+                deck._savedName = deck.name;
                 updateSaveStatus('saved', 'Saved');
                 needsSave = false;
             } else {
@@ -812,7 +859,7 @@
             var checked = (card.tags || []).indexOf(tag.name) !== -1 ? ' checked' : '';
             html += '<label class="tag-option">' +
                 '<input type="checkbox" class="tag-cb" data-tag="' + escapeAttr(tag.name) + '"' + checked + '>' +
-                '<span class="tag-option-dot" style="background:' + tag.color + '"></span>' +
+                '<span class="tag-option-dot" style="background:' + safeColor(tag.color) + '"></span>' +
                 '<span class="tag-option-name">' + escapeHtml(tag.name) + '</span>' +
             '</label>';
         });
@@ -950,24 +997,33 @@
 
         _setRefreshBtnLoading(true);
 
-        fetch('/api/pricing/fetch', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ scryfallIds: ids }),
-        })
-        .then(function (r) { return r.json(); })
-        .then(function (data) {
-            if (data.success && data.prices) {
-                Object.keys(data.prices).forEach(function (id) {
-                    priceCache[id] = data.prices[id];
+        // The API caps a request at 200 IDs. Split larger decks/sections into
+        // batches instead of letting a 400 silently leave every price empty.
+        var BATCH_SIZE = 50;
+        var chain = Promise.resolve();
+        for (var start = 0; start < ids.length; start += BATCH_SIZE) {
+            (function (batch) {
+                chain = chain.then(function () {
+                    return fetch('/api/pricing/fetch', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ scryfallIds: batch }),
+                    })
+                    .then(function (r) { return r.json(); })
+                    .then(function (data) {
+                        if (data.success && data.prices) {
+                            Object.keys(data.prices).forEach(function (id) {
+                                priceCache[id] = data.prices[id];
+                            });
+                        }
+                    })
+                    .catch(function () { /* try the remaining batches */ });
                 });
-            }
+            })(ids.slice(start, start + BATCH_SIZE));
+        }
+
+        chain.then(function () {
             pricesLoaded = true;
-            _setRefreshBtnLoading(false);
-            if (onComplete) onComplete();
-        })
-        .catch(function () {
-            pricesLoaded = true; // mark loaded so bar shows (even if empty)
             _setRefreshBtnLoading(false);
             if (onComplete) onComplete();
         });
@@ -1110,9 +1166,15 @@
     /* ── Tag Filter Bar ─── */
     function renderTagFilterBar() {
         // Rebuild the tag filter chips above the card list.
-        // Called after tag changes to keep the render pipeline intact.
+        // Preserve active filters across the rebuild; renderAll calls this so
+        // counts stay fresh after add/remove.
         var el = $('#tag-filter-bar');
         if (!el) return;
+
+        var activeTags = {};
+        el.querySelectorAll('.tag-filter-chip.active').forEach(function (chip) {
+            activeTags[chip.dataset.tag] = true;
+        });
 
         var tagCounts = {};
         deck.cards.forEach(function (card) {
@@ -1129,8 +1191,9 @@
         var html = '';
         entries.forEach(function (tagName) {
             var tag = findTagByName(tagName);
-            var color = tag ? tag.color : '#666';
-            html += '<button class="tag-filter-chip" data-tag="' + escapeAttr(tagName) + '" style="--tag-color:' + color + '">' +
+            var color = safeColor(tag ? tag.color : '#666');
+            var active = activeTags[tagName] ? ' active' : '';
+            html += '<button class="tag-filter-chip' + active + '" data-tag="' + escapeAttr(tagName) + '" style="--tag-color:' + color + '">' +
                 escapeHtml(tagName) + ' ' + tagCounts[tagName] +
             '</button>';
         });
@@ -1165,7 +1228,7 @@
         var html = '';
         entries.forEach(function (tagName, i) {
             var tag = findTagByName(tagName);
-            var color = tag ? tag.color : '#666';
+            var color = safeColor(tag ? tag.color : '#666');
             html += '<span class="tag-stat-badge" style="background:' + color + '20;color:' + color + ';border:1px solid ' + color + '40">' +
                 escapeHtml(tagName) + ' ' + tagCounts[tagName] +
             '</span>';
@@ -1178,6 +1241,7 @@
     function renderAll() {
         renderCommander();
         renderTagStats();
+        renderTagFilterBar();
         renderSections();
         renderCustomSections();
         renderOutline();
@@ -1197,13 +1261,19 @@
         if (!slot) return;
         if (deck.commander) {
             var c = deck.commander;
+            var commanderCI = String(c.colorIdentity || '')
+                .split(',')
+                .map(function (ci) { return ci.trim().toUpperCase(); })
+                .filter(function (ci) { return /^[WUBRG]$/.test(ci); })
+                .map(function (ci) { return '<span class="ms ms-' + ci.toLowerCase() + '"></span>'; })
+                .join('');
             slot.innerHTML =
                 '<div class="commander-slot-filled">' +
-                    '<img src="' + (c.imageUrl || '') + '" alt="' + escapeHtml(c.name) + '" class="commander-card-img">' +
+                    '<img src="' + escapeAttr(c.imageUrl || '') + '" alt="' + escapeAttr(c.name || '') + '" class="commander-card-img">' +
                     '<div class="commander-card-info">' +
-                        '<div class="commander-card-name">' + escapeHtml(c.name) + '</div>' +
+                        '<div class="commander-card-name">' + escapeHtml(c.name || '') + '</div>' +
                         '<div class="commander-card-type">' + escapeHtml(c.type || '') + '</div>' +
-                        '<div class="commander-card-ci">Color Identity: ' + (c.colorIdentity || '').split(',').map(function(ci) { var s = ci.trim(); return s ? '<span class="ms ms-' + s.toLowerCase() + '"></span>' : ''; }).join('') + '</div>' +
+                        '<div class="commander-card-ci">Color Identity: ' + commanderCI + '</div>' +
                     '</div>' +
                     '<button class="commander-clear-btn" title="Remove commander">✕</button>' +
                 '</div>';
@@ -1240,9 +1310,22 @@
         }
         if (emptyState) emptyState.style.display = 'none';
 
+        // Honor the active tag filter chips. Multiple selected tags use OR
+        // (show cards carrying any selected tag).
+        var activeTags = [];
+        $$('#tag-filter-bar .tag-filter-chip.active').forEach(function (chip) {
+            activeTags.push(chip.dataset.tag);
+        });
+        if (activeTags.length) {
+            cardsToRender = cardsToRender.filter(function (card) {
+                var tags = card.tags || [];
+                return tags.some(function (tag) { return activeTags.indexOf(tag) !== -1; });
+            });
+        }
+
         // If all cards are filtered out, show a brief message
         if (cardsToRender.length === 0) {
-            container.innerHTML = '<div class="deck-empty-filtered">No cards in deck.</div>';
+            container.innerHTML = '<div class="deck-empty-filtered">No cards in deck match the active tags.</div>';
             return;
         }
 
@@ -1276,7 +1359,7 @@
                 sortCardsForDisplay(cards);
                 var totalCount = cards.reduce(function (s, c) { return s + c.quantity; }, 0);
                 var tag = findTagByName(tagName);
-                var dot = tag ? '<span class="tag-section-dot" style="background:' + tag.color + '"></span>' : '';
+                var dot = tag ? '<span class="tag-section-dot" style="background:' + safeColor(tag.color) + '"></span>' : '';
 
                 html += '<div class="deck-section" data-section="' + escapeAttr(tagName.toLowerCase()) + '">';
                 html += '<div class="deck-section-header">' +
@@ -1375,7 +1458,8 @@
 
         var html = '';
         sectionNames.forEach(function (sectionName) {
-            var cards = deck.sections[sectionName] || [];
+            var cards = (deck.sections[sectionName] || []).slice();
+            sortCardsForDisplay(cards);
             var totalCount = cards.reduce(function (s, c) { return s + (c.quantity || 1); }, 0);
 
             html += '<div class="deck-section custom-deck-section" data-section-name="' + escapeAttr(sectionName) + '">';
@@ -1419,7 +1503,7 @@
             tagBadges = '<span class="card-tags">';
             cardTags.forEach(function (t) {
                 var tag = findTagByName(t);
-                var color = tag ? tag.color : '#666';
+                var color = safeColor(tag ? tag.color : '#666');
                 tagBadges += '<span class="card-tag-dot" style="background:' + color + '" title="' + escapeAttr(t) + '"></span>';
             });
             tagBadges += '</span>';
@@ -1533,7 +1617,7 @@
             var checked = (card.tags || []).indexOf(tag.name) !== -1 ? ' checked' : '';
             html += '<label class="tag-option">' +
                 '<input type="checkbox" class="tag-cb" data-tag="' + escapeAttr(tag.name) + '"' + checked + '>' +
-                '<span class="tag-option-dot" style="background:' + tag.color + '"></span>' +
+                '<span class="tag-option-dot" style="background:' + safeColor(tag.color) + '"></span>' +
                 '<span class="tag-option-name">' + escapeHtml(tag.name) + '</span>' +
             '</label>';
         });
@@ -1614,7 +1698,7 @@
             tagBadges = '<span class="card-tags">';
             cardTags.forEach(function (t) {
                 var tag = findTagByName(t);
-                var color = tag ? tag.color : '#666';
+                var color = safeColor(tag ? tag.color : '#666');
                 tagBadges += '<span class="card-tag-dot" style="background:' + color + '" title="' + escapeAttr(t) + '"></span>';
             });
             tagBadges += '</span>';
@@ -1677,8 +1761,12 @@
     }
 
     function isOffColorCard(card) {
+        if (!deck.commander) return false;
         var ci = deck.getCommanderCI();
-        if (!ci || !card.colorIdentity) return false;
+        // A colorless commander has an empty CI; that is not the same as "no
+        // commander". Any colored card is then off-color.
+        if (!ci) return !!card.colorIdentity;
+        if (!card.colorIdentity) return false;
         // colorIdentity is comma-separated like "G, R, U" — parse it properly
         var cmdCI = ci.split(',').map(function (c) { return c.trim(); }).filter(Boolean);
         var cardColors = card.colorIdentity.split(',').map(function (c) { return c.trim(); }).filter(Boolean);
@@ -1794,15 +1882,13 @@
         var container = $('#deck-ci-status');
         if (!container) return;
 
-        var ci = deck.getCommanderCI();
-        if (!ci) {
+        if (!deck.commander) {
             container.innerHTML = '<span style="color:var(--text-dim);font-size:0.75rem;">Set a commander to check color identity</span>';
             return;
         }
-
         var offColorCards = deck.cards.filter(isOffColorCard);
         if (offColorCards.length > 0) {
-            var names = offColorCards.map(function (c) { return c.name; }).join(', ');
+            var names = offColorCards.map(function (c) { return escapeHtml(c.name || ''); }).join(', ');
             container.innerHTML = '<span style="color:#f85149;font-size:0.75rem;">⚠ Off-color: ' + names + '</span>';
         } else {
             container.innerHTML = '<span style="color:#3fb950;font-size:0.75rem;">✓ All cards within color identity</span>';
@@ -2126,19 +2212,43 @@
     /* ─── Mana Symbol Rendering ─── */
     function renderManaSymbols(manaCost) {
         if (!manaCost) return '';
-        return manaCost.replace(/\{([^}]+)\}/g, function (match, symbol) {
-            var cls = symbol.toLowerCase();
-            // Handle 2/W, 2/U, 2/B, 2/R, 2/G hybrid
-            if (symbol.indexOf('/') !== -1) {
-                return '<span class="ms ms-' + cls.replace('/', '-') + '"></span>';
+        return String(manaCost).replace(/\{([^}]+)\}/g, function (match, symbol) {
+            var raw = String(symbol).trim();
+            var lower = raw.toLowerCase();
+            var cls = null;
+
+            // mana-font uses compact class names: {W/U} -> ms-wu,
+            // {2/W} -> ms-2w, {W/P} -> ms-wp. Do not leave slashes in the
+            // class or emit the old ms-w-u/ms-w-p names (no glyphs exist).
+            if (lower.indexOf('/') !== -1) {
+                var parts = lower.split('/');
+                if (parts.length === 2) {
+                    var a = parts[0], b = parts[1];
+                    if (/^[wubrgc]$/.test(a) && /^[wubrgc]$/.test(b)) {
+                        cls = a + b;                 // hybrid
+                    } else if (/^\d+$/.test(a) && /^[wubrgc]$/.test(b)) {
+                        cls = a + b;                 // generic/color hybrid
+                    } else if (/^[wubrgc]$/.test(a) && b === 'p') {
+                        cls = a + 'p';               // phyrexian
+                    }
+                }
+            } else {
+                var special = {
+                    't': 'tap', 'q': 'untap', 's': 's', 'e': 'e',
+                    'pw': 'pw', 'x': 'x', 'y': 'y', 'z': 'z',
+                    'p': 'p', 'infinity': 'infinity', '∞': 'infinity'
+                };
+                if (special.hasOwnProperty(lower)) {
+                    cls = special[lower];
+                } else if (/^[wubrgc]$/.test(lower) || /^\d+$/.test(lower)) {
+                    cls = lower;
+                }
             }
-            // Handle tap symbols, X, Y, Z, P
-            if (symbol === 'T' || symbol === 'Q' || symbol === 'S' || symbol === 'E' || symbol === 'PW' || symbol === 'X' || symbol === 'Y' || symbol === 'Z') {
-                return '<span class="ms ms-' + cls + '"></span>';
-            }
-            // Handle P (phyrexian): {W/P} -> ms-wp, {B/P} -> ms-bp
-            if (symbol.indexOf('P') === symbol.length - 1 && symbol.length > 1) {
-                return '<span class="ms ms-' + symbol.charAt(0).toLowerCase() + 'p"></span>';
+
+            if (!cls || !/^[a-z0-9]+$/.test(cls)) {
+                // Unknown symbol: render it as text instead of injecting it
+                // into an HTML class/attribute.
+                return escapeHtml(match);
             }
             return '<span class="ms ms-' + cls + '"></span>';
         });
@@ -2155,6 +2265,7 @@
             if (symbol.indexOf('/') !== -1) {
                 cls = symbol.charAt(0).toLowerCase();
             }
+            if (!/^[a-z0-9]+$/.test(cls)) cls = 'c';
             return '<span class="mc mc-' + cls + '">' + escapeHtml(symbol) + '</span>';
         });
     }
@@ -2207,6 +2318,12 @@
 
     function escapeAttr(str) {
         return String(str).replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    function safeColor(value) {
+        // Tag colors come from user-editable JSON; only allow CSS hex colors.
+        var color = String(value || '');
+        return /^#[0-9a-fA-F]{3,8}$/.test(color) ? color : '#666';
     }
 
     function saveCurrentDeck() {
@@ -2418,7 +2535,7 @@
                         showToast('Commander must be a legendary creature.');
                         return;
                     }
-                    deck.commander = fullCard;
+                    if (!replaceCommander(fullCard)) return;
                     renderAll();
                     saveCurrentDeck();
                     showToast('Commander set: ' + fullCard.name);
@@ -2871,14 +2988,35 @@
         onComplete({ ok: true, cardName: card.name, moved: true, from: fromSection, to: 'commander' });
     }
 
+    function replaceCommander(card) {
+        /* Explicitly confirm replacing an existing commander. The previous
+           code assigned deck.commander directly in two paths, silently
+           dropping the old commander from the deck. */
+        if (!card) return false;
+        if (deck.commander && deck.commander.uuid !== card.uuid) {
+            if (!window.confirm(
+                'Replace commander "' + deck.commander.name + '" with "' +
+                card.name + '"? The old commander will be removed.'
+            )) {
+                return false;
+            }
+            recordHistoryEvent('remove', deck.commander, 'commander');
+        }
+        deck.commander = Object.assign({}, card, { quantity: 1 });
+        recordHistoryEvent('add', card, 'commander');
+        return true;
+    }
+
     function finishCopy(card, targetSection, onComplete) {
         if (targetSection === 'commander') {
             if (!card.isLegendary || !card.isCreature) {
                 onComplete({ error: 'Commander must be a legendary creature.' });
                 return;
             }
-            deck.commander = card;
-            recordHistoryEvent('add', card, 'commander');
+            if (!replaceCommander(card)) {
+                onComplete({ skipped: true });
+                return;
+            }
             renderAll();
             saveCurrentDeck();
             onComplete({ ok: true, cardName: card.name, isCommander: true });
@@ -3063,7 +3201,10 @@
                 }
 
                 function exportText() {
-                    if (deck.getTotalCount() === 0) {
+                    var hasSections = deck.sections && Object.keys(deck.sections).some(function (k) {
+                        return (deck.sections[k] || []).length > 0;
+                    });
+                    if (deck.getTotalCount() === 0 && !hasSections) {
                         showToast('Deck is empty.');
                         return;
                     }
@@ -3153,7 +3294,10 @@
         var clearBtn = $('#deck-clear-btn');
         if (clearBtn) {
             clearBtn.addEventListener('click', function () {
-                if (deck.getTotalCount() === 0 && !deck.commander) {
+                var hasSections = deck.sections && Object.keys(deck.sections).some(function (k) {
+                    return (deck.sections[k] || []).length > 0;
+                });
+                if (deck.getTotalCount() === 0 && !deck.commander && !hasSections) {
                     showToast('Deck is already empty.');
                     return;
                 }
@@ -3192,6 +3336,7 @@
         if (!data) return;
         deck.fromImport(data);
         deck.name = data.name || name;
+        deck._savedName = deck.name;
         updateHistoryBtnVisibility();
 
         // Render deck UI immediately — don't wait for network calls
@@ -3327,7 +3472,10 @@
             btn.addEventListener('click', function () {
                 lookupCardBySetNumber(sc, num, function (card, err) {
                     if (err) { showToast(err); return; }
-                    addCardToDeck(card);
+                    // This button never represents the commander slot; force
+                    // the 99 so a legendary creature does not hit the
+                    // "commander already filled" error.
+                    addCardToDeck(card, true);
                 });
             });
 
@@ -3468,6 +3616,7 @@
         sel.addEventListener('change', function () {
             currentSort = sel.value;
             renderSections();
+            renderCustomSections();
         });
     }
 
@@ -3499,6 +3648,13 @@
         }
 
         addBtn.addEventListener('click', addSelected);
+
+        // Editing the text invalidates a previous autocomplete selection, so
+        // Add cannot silently submit the old card.
+        var quickInput = document.getElementById('deck-quick-add-input');
+        if (quickInput) {
+            quickInput.addEventListener('input', function () { _quickAddSelected = null; });
+        }
 
         initToolAutocomplete('deck-quick-add-input', 'deck-quick-add-autocomplete', {
             keepValue: true,
@@ -4029,6 +4185,17 @@
             showToast('Section added.');
         });
 
+        var exportBtn = $('#outline-export-btn');
+        if (exportBtn) {
+            exportBtn.addEventListener('click', function () {
+                var text = deck.toOutlineTextExport();
+                if (!text.trim()) { showToast('Outline is empty.'); return; }
+                copyTextToClipboard(text, function () {
+                    showToast('Outline copied to clipboard.');
+                });
+            });
+        }
+
         renderOutline();
     }
 
@@ -4154,17 +4321,34 @@
             }
 
             var lines = raw.split('\n').filter(function (l) { return l.trim(); });
-            // Parse lines: "# Card Name" or "Card Name" (default qty 1)
+            // Common one-line formats: "1 Sol Ring", "1x Sol Ring",
+            // "1 Sol Ring (LTC) 123", plus comments/section headers.
+            // Bare names default to quantity 1.
+            var sectionHeaders = {
+                'commander': true, 'deck': true, 'mainboard': true,
+                'main deck': true, 'sideboard': true, 'maybeboard': true,
+                'companion': true
+            };
             var entries = [];
             for (var i = 0; i < lines.length; i++) {
                 var line = lines[i].trim();
-                var m = line.match(/^(\d+)\s+(.+)/);
+                if (!line || line.indexOf('//') === 0) continue;
+                if (sectionHeaders[line.toLowerCase()]) continue;
+
+                var m = line.match(/^(\d+)\s*[xX]?\s+(.+)/);
+                var qty = 1;
+                var cardName = line;
                 if (m) {
-                    entries.push({ qty: parseInt(m[1], 10), name: m[2].trim() });
-                } else {
-                    // No quantity prefix — treat as 1
-                    entries.push({ qty: 1, name: line });
+                    qty = parseInt(m[1], 10);
+                    cardName = m[2].trim();
                 }
+                // Strip a Moxfield/Archidekt suffix: "Name (SET) 123 [*F*]".
+                cardName = cardName.replace(
+                    /\s+\([A-Za-z0-9]{2,8}\)\s+[A-Za-z0-9★-]+\s*(?:\*[^*]*\*)?\s*$/,
+                    ''
+                ).trim();
+                if (!cardName) continue;
+                entries.push({ qty: qty, name: cardName });
             }
 
             if (entries.length === 0) {
@@ -4206,9 +4390,12 @@
                         // All lookups done — add cards
                         goBtn.disabled = false;
 
-                        // Replace mode: clear existing deck first
-                        if (replaceCb.checked) {
-                            deck.clear();
+                        // Replace mode: clear card contents but keep the deck
+                        // name, outline, guideline, and pricing options so the
+                        // import can still autosave and the deck keeps its
+                        // identity. Do not clear when every lookup failed.
+                        if (replaceCb.checked && found.length > 0) {
+                            deck.clearContents();
                         }
 
                         var added = 0;
@@ -4558,9 +4745,10 @@
         // Card hover preview — show card image on mouse hover
         initCardHoverPreview();
 
-        // Flush any pending debounced save when the user navigates away
+        // Flush any pending debounced save when the user navigates away.
+        // Do not clear the timer here: on visibilitychange the page may stay
+        // alive, so the debounced fetch is a fallback if the beacon is rejected.
         window.addEventListener('beforeunload', function () {
-            if (saveTimer) clearTimeout(saveTimer);
             if (needsSave && deck.name) {
                 saveDeckToServer(deck, true);  // fire-and-forget via sendBeacon
             }
@@ -4570,7 +4758,6 @@
         // Also flush on visibility change (tab close / mobile background)
         window.addEventListener('visibilitychange', function () {
             if (document.visibilityState === 'hidden') {
-                if (saveTimer) clearTimeout(saveTimer);
                 if (needsSave && deck.name) {
                     saveDeckToServer(deck, true);
                 }
@@ -4583,7 +4770,9 @@
         var deckName = urlParams.get('deck');
         loadTagCatalog(function () {
             if (deckName) {
-                loadSavedDeckByName(decodeURIComponent(deckName));
+                // URLSearchParams already percent-decodes; a second decode
+                // throws for names containing a literal "%".
+                loadSavedDeckByName(deckName);
             } else {
                 renderAll();
             }

@@ -14,7 +14,12 @@ from mtg.shared import (
     IMAGE_DIR, DEFAULT_PER_PAGE, VALID_FORMATS,
 )
 from mtg.similarity import normalize_dash, wubrg_sort
-from mtg.images import fetch_scryfall_image
+from mtg.images import (
+    VALID_IMAGE_FACES,
+    VALID_IMAGE_SIZES,
+    fetch_scryfall_image,
+    is_scryfall_id,
+)
 
 search_bp = Blueprint("search", __name__)
 
@@ -416,7 +421,12 @@ def card_detail(set_code, number):
     """, [card["uuid"]]).fetchone()
 
     # All printings (from printings field — comma-separated set codes)
-    printing_codes = card["printings"].split(",") if card["printings"] else []
+    # MTGJSON stores this as a comma-space separated list ("2ED, 2X2, …").
+    # Strip each code or only the first one matches the sets table.
+    printing_codes = (
+        [code.strip() for code in card["printings"].split(",") if code.strip()]
+        if card["printings"] else []
+    )
     printings = []
     if printing_codes:
         placeholders = ",".join("?" * len(printing_codes))
@@ -453,6 +463,12 @@ def card_detail(set_code, number):
 @search_bp.route("/img/<size>/<face>/<c1>/<c2>/<scryfall_id>.jpg")
 def serve_image(size, face, c1, c2, scryfall_id):
     """Lazy cache-through proxy. First hit fetches from Scryfall and writes to disk."""
+    if (
+        not is_scryfall_id(scryfall_id)
+        or size not in VALID_IMAGE_SIZES
+        or face not in VALID_IMAGE_FACES
+    ):
+        abort(404)
     image_dir = os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "..", "..", IMAGE_DIR,
     )
@@ -462,7 +478,7 @@ def serve_image(size, face, c1, c2, scryfall_id):
     # app.logger.warning — use print to stderr instead since we don't have app here
     import sys
     print(
-        f"serve_image failed after 3 retries: {size}/{face}/{scryfall_id[0]}/{scryfall_id[1]}/{scryfall_id}.jpg",
+        f"serve_image failed after 3 retries: {size}/{face}/{scryfall_id}.jpg",
         file=sys.stderr,
     )
     abort(404)
@@ -502,19 +518,42 @@ def card_autocomplete():
 
 @search_bp.route("/llm-models")
 def llm_models_proxy():
-    """Proxy to fetch available models from a user-configured LLM backend."""
-    base_url = request.args.get("base_url", "")
+    """Proxy to fetch available models from the saved LLM backend.
+
+    The URL is deliberately not taken from the request: this route is
+    unauthenticated, and accepting an arbitrary URL lets any caller make the
+    server send the configured API key to an attacker-controlled host.
+    """
+    from urllib.parse import urlparse
+
+    # Block cross-site subresource/navigation probes; same-origin config JS and
+    # non-browser clients (no Sec-Fetch-Site) are allowed.
+    fetch_site = request.headers.get("Sec-Fetch-Site")
+    if fetch_site and fetch_site not in ("same-origin", "none"):
+        return jsonify({"models": [], "error": "Cross-origin request rejected."}), 403
+
+    base_url = (session.get("llm_base_url") or os.environ.get("LLM_BASE_URL", "")).strip()
+    if not base_url:
+        return jsonify({
+            "models": [],
+            "error": "Save an LLM base URL in Configuration before testing.",
+        })
+    parsed = urlparse(base_url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return jsonify({"models": [], "error": "Saved base URL must be http(s)."})
+
     api_key = session.get("llm_api_key") or os.environ.get("LLM_API_KEY", "")
     try:
         from mtg.llm import fetch_models
     except ImportError:
         return jsonify({"models": [], "error": "LLM module not available."})
     try:
-        models = fetch_models(base_url, api_key) if base_url else []
+        models = fetch_models(base_url, api_key)
     except Exception as e:
         models = []
         import sys
         import traceback
         print(f"llm_models_proxy error: {e}", file=sys.stderr)
         traceback.print_exc(file=sys.stderr)
+        return jsonify({"models": [], "error": str(e)})
     return jsonify({"models": models})

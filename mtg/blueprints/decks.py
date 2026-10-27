@@ -1,27 +1,23 @@
-import json
 import os
 from datetime import datetime, timezone
 
 from flask import Blueprint, request, render_template, jsonify, session
 
-from mtg.shared import get_db, DECKS_DIR, HISTORY_DIR, card_image, sanitize_filename, _list_json_files
+from mtg.shared import get_db, DECKS_DIR, HISTORY_DIR, card_image, _list_json_files
+from mtg.storage import (
+    StorageError,
+    read_json,
+    read_named_json,
+    resolve_json_path,
+    write_json_atomic,
+)
 
 decks_bp = Blueprint("decks", __name__)
 
-
-def _sanitize_name(name):
-    """Map a display name to a safe on-disk filename.
-
-    The single sanitizer used by deck save/list and history routes. It strips
-    any character outside [a-zA-Z0-9_ -] (including ., /, ..) so path traversal
-    is prevented incidentally. History routes additionally reject `..`/`/`
-    outright with a 400 for a clearer error; both paths agree on the sanitized
-    filename, so a name like "My Deck (v1)" consistently becomes My_Deck_v1.json.
-
-    Delegates to shared.sanitize_filename so decks and card templates sanitize
-    identically.
-    """
-    return sanitize_filename(name)
+# A deck must never be allowed to take over the tag catalog's filename (or the
+# history filename). Sanitization maps a deck literally named "_tags" to
+# "_tags.json", which would otherwise corrupt the global tag store.
+RESERVED_DECK_FILES = ("_tags.json", "_history.json")
 
 
 @decks_bp.route("/deck-builder")
@@ -52,17 +48,31 @@ def api_deck_save():
     rather than a crash.
     """
     body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return jsonify({"error": "Deck body must be a JSON object."}), 400
+    # The client sends its last successfully saved name so a rename can be
+    # distinguished from an accidental collision with another deck.
+    previous_name = (body.pop("previousName", "") or "").strip()
     name = body.get("name", "").strip()
     if not name:
         return jsonify({"error": "Deck name is required."}), 400
-    fname = _sanitize_name(name)
-    fpath = os.path.join(DECKS_DIR, fname)
     try:
-        with open(fpath, 'w') as f:
-            json.dump(body, f, indent=2)
-        return jsonify({"success": True})
+        fpath = resolve_json_path(DECKS_DIR, name, reserved=RESERVED_DECK_FILES)
+        # Refuse to overwrite a different display name that sanitizes to the
+        # same filename (e.g. "Alela, Artful" vs "Alela Artful"), unless the
+        # caller is renaming the deck it last saved under the old name.
+        try:
+            read_named_json(fpath, name)
+        except StorageError:
+            if not previous_name:
+                raise
+            read_named_json(fpath, previous_name)
+        write_json_atomic(fpath, body)
+    except StorageError as e:
+        return jsonify({"error": str(e)}), e.status_code
     except OSError as e:
         return jsonify({"error": str(e)}), 500
+    return jsonify({"success": True})
 
 
 @decks_bp.route("/api/deck/list", methods=["GET"])
@@ -76,14 +86,19 @@ def api_deck_list():
 def api_deck_delete():
     """Delete a saved deck by name."""
     body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return jsonify({"error": "Deck body must be a JSON object."}), 400
     name = body.get("name", "").strip()
     if not name:
         return jsonify({"error": "Deck name is required."}), 400
-    fname = _sanitize_name(name)
-    fpath = os.path.join(DECKS_DIR, fname)
     try:
+        fpath = resolve_json_path(DECKS_DIR, name, reserved=RESERVED_DECK_FILES)
+        if read_named_json(fpath, name) is None:
+            return jsonify({"error": "Deck not found."}), 404
         os.unlink(fpath)
         return jsonify({"success": True})
+    except StorageError as e:
+        return jsonify({"error": str(e)}), e.status_code
     except FileNotFoundError:
         return jsonify({"error": "Deck not found."}), 404
     except OSError as e:
@@ -196,6 +211,8 @@ def api_deck_add_card():
     exists in the target, its quantity is incremented (matching addToSection).
     """
     body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return jsonify({"error": "Request body must be a JSON object."}), 400
     deck_name = body.get("deck", "").strip()
     section = (body.get("section") or "").strip()
     set_code = body.get("setCode", "").strip()
@@ -211,33 +228,60 @@ def api_deck_add_card():
     if not card:
         return jsonify({"error": "Card not found."}), 404
 
-    fname = _sanitize_name(deck_name)
-    fpath = os.path.join(DECKS_DIR, fname)
     try:
-        with open(fpath) as f:
-            deck = json.load(f)
-    except FileNotFoundError:
-        return jsonify({"error": "Deck not found."}), 404
-    except (json.JSONDecodeError, OSError) as e:
-        return jsonify({"error": str(e)}), 500
+        fpath = resolve_json_path(DECKS_DIR, deck_name, reserved=RESERVED_DECK_FILES)
+        deck = read_named_json(fpath, deck_name)
+        if deck is None:
+            return jsonify({"error": "Deck not found."}), 404
+    except StorageError as e:
+        return jsonify({"error": str(e)}), e.status_code
 
     deck_card = _card_to_deck_json(card)
 
     if section:
-        sections = deck.setdefault("sections", {})
-        target = sections.setdefault(section, [])
+        sections = deck.get("sections")
+        if not isinstance(sections, dict):
+            # Older saves may store [] for "no sections"; normalize in place.
+            sections = {}
+            deck["sections"] = sections
+        target = sections.get(section)
+        if not isinstance(target, list):
+            target = []
+            sections[section] = target
     else:
-        target = deck.setdefault("cards", [])
+        target = deck.get("cards")
+        if not isinstance(target, list):
+            target = []
+            deck["cards"] = target
 
-    existing = next((c for c in target if c.get("uuid") == deck_card["uuid"]), None)
+    if not section:
+        def _deck_total():
+            total = 0
+            for c in target:
+                if not isinstance(c, dict):
+                    continue
+                try:
+                    total += int(c.get("quantity") or 1)
+                except (TypeError, ValueError):
+                    total += 1
+            if isinstance(deck.get("commander"), dict):
+                total += 1
+            return total
+
+        if _deck_total() >= 100:
+            return jsonify({"error": "Deck is full (100 cards)."}), 409
+
+    existing = next(
+        (c for c in target if isinstance(c, dict) and c.get("uuid") == deck_card["uuid"]),
+        None,
+    )
     if existing:
         existing["quantity"] = existing.get("quantity", 1) + 1
     else:
         target.append(deck_card)
 
     try:
-        with open(fpath, "w") as f:
-            json.dump(deck, f, indent=2)
+        write_json_atomic(fpath, deck)
     except OSError as e:
         return jsonify({"error": str(e)}), 500
 
@@ -258,11 +302,21 @@ def deck_lookup_by_name():
         FROM cards c
         JOIN cardIdentifiers ci ON c.uuid = ci.uuid
         JOIN sets s ON c.setCode = s.code
-        WHERE LOWER(c.name) = LOWER(?) AND c.language = 'English'
+        WHERE (
+            LOWER(c.name) = LOWER(?)
+            OR LOWER(
+                CASE WHEN instr(c.name, ' // ') > 0
+                     THEN substr(c.name, 1, instr(c.name, ' // ') - 1)
+                     ELSE c.name END
+            ) = LOWER(?)
+        )
+          AND c.language = 'English'
           AND (c.side IS NULL OR c.side = 'a')
-        ORDER BY s.releaseDate DESC
+        ORDER BY
+            CASE WHEN LOWER(c.name) = LOWER(?) THEN 0 ELSE 1 END,
+            s.releaseDate DESC
         LIMIT 1
-    """, [name]).fetchone()
+    """, [name, name, name]).fetchone()
 
     if not card:
         return jsonify({"error": f"Card not found: {name}"}), 404
@@ -373,18 +427,16 @@ def api_deck_history():
     name = request.args.get("deck", "").strip()
     if not name:
         return jsonify({"error": "Deck name is required."}), 400
-    if ".." in name or "/" in name:
-        return jsonify({"error": "Invalid deck name."}), 400
-    fname = _sanitize_name(name)
-    fpath = os.path.join(HISTORY_DIR, fname)
     try:
-        with open(fpath) as f:
-            history = json.load(f)
-        return jsonify({"success": True, "history": history})
-    except FileNotFoundError:
+        fpath = resolve_json_path(HISTORY_DIR, name, reserved=RESERVED_DECK_FILES)
+    except StorageError as e:
+        return jsonify({"error": str(e)}), e.status_code
+    if not os.path.exists(fpath):
         return jsonify({"success": True, "history": []})
-    except (json.JSONDecodeError, OSError) as e:
-        return jsonify({"error": str(e)}), 500
+    history = read_json(fpath, default=None)
+    if not isinstance(history, list):
+        return jsonify({"error": "History file is unreadable."}), 500
+    return jsonify({"success": True, "history": history})
 
 
 @decks_bp.route("/api/deck/history/save", methods=["POST"])
@@ -397,21 +449,21 @@ def api_deck_history_save():
         return jsonify({"error": "Deck name is required."}), 400
     if not isinstance(events, list) or len(events) == 0:
         return jsonify({"error": "events array required."}), 400
-    if ".." in name or "/" in name:
-        return jsonify({"error": "Invalid deck name."}), 400
-    fname = _sanitize_name(name)
-    fpath = os.path.join(HISTORY_DIR, fname)
+    if not all(isinstance(e, dict) for e in events):
+        return jsonify({"error": "Each event must be an object."}), 400
     try:
-        existing = []
-        if os.path.exists(fpath):
-            with open(fpath) as f:
-                existing = json.load(f)
-        existing.extend(events)
-        with open(fpath, "w") as f:
-            json.dump(existing, f, indent=2)
-        return jsonify({"success": True, "count": len(existing)})
+        fpath = resolve_json_path(HISTORY_DIR, name, reserved=RESERVED_DECK_FILES)
+    except StorageError as e:
+        return jsonify({"error": str(e)}), e.status_code
+    existing = read_json(fpath, default=[]) if os.path.exists(fpath) else []
+    if not isinstance(existing, list):
+        return jsonify({"error": "History file is unreadable."}), 500
+    existing.extend(events)
+    try:
+        write_json_atomic(fpath, existing)
     except OSError as e:
         return jsonify({"error": str(e)}), 500
+    return jsonify({"success": True, "count": len(existing)})
 
 
 @decks_bp.route("/api/deck/history/delete", methods=["POST"])
@@ -421,13 +473,12 @@ def api_deck_history_delete():
     name = body.get("name", "").strip()
     if not name:
         return jsonify({"error": "Deck name is required."}), 400
-    if ".." in name or "/" in name:
-        return jsonify({"error": "Invalid deck name."}), 400
-    fname = _sanitize_name(name)
-    fpath = os.path.join(HISTORY_DIR, fname)
     try:
+        fpath = resolve_json_path(HISTORY_DIR, name, reserved=RESERVED_DECK_FILES)
         os.unlink(fpath)
         return jsonify({"success": True})
+    except StorageError as e:
+        return jsonify({"error": str(e)}), e.status_code
     except FileNotFoundError:
         return jsonify({"error": "History not found."}), 404
     except OSError as e:
@@ -455,22 +506,29 @@ def api_deck_history_check():
         if not fname.endswith(".json"):
             continue
         fpath = os.path.join(HISTORY_DIR, fname)
+        history = read_json(fpath, default=None)
+        if not isinstance(history, list) or not history:
+            continue
+        events = [e for e in history if isinstance(e, dict) and e.get("timestamp")]
+        if not events:
+            continue
+        last_event = max(events, key=lambda e: e.get("timestamp", ""))
+        last_ts = last_event.get("timestamp", "")
         try:
-            with open(fpath) as f:
-                history = json.load(f)
-            if not history:
-                continue
-            last_event = max(history, key=lambda e: e.get("timestamp", ""))
-            last_ts = last_event.get("timestamp", "")
-            if not last_ts:
-                continue
-            # ponytail: handle Z suffix compatibly across Python versions
-            last_dt = datetime.fromisoformat(last_ts.replace("Z", "+00:00"))
+            last_dt = datetime.fromisoformat(str(last_ts).replace("Z", "+00:00"))
+            if last_dt.tzinfo is None:
+                last_dt = last_dt.replace(tzinfo=timezone.utc)
             days = (now - last_dt).days
-            if days >= threshold:
-                deck_name = fname.replace("_", " ").replace(".json", "")
-                reminders.append({"deck": deck_name, "days": days})
-        except (json.JSONDecodeError, OSError, ValueError):
-            pass
+        except (TypeError, ValueError):
+            continue
+        if days >= threshold:
+            # Use the deck's real display name, not the sanitized filename.
+            # Sanitizing strips punctuation ("Alela, Artful" -> "Alela_Artful"),
+            # which used to make the client's exact-name comparison fail.
+            deck_data = read_json(os.path.join(DECKS_DIR, fname), default=None)
+            deck_name = deck_data.get("name") if isinstance(deck_data, dict) else ""
+            if not deck_name:
+                deck_name = os.path.splitext(fname)[0].replace("_", " ")
+            reminders.append({"deck": deck_name, "days": days})
 
     return jsonify({"reminders": reminders})

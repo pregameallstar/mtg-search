@@ -210,8 +210,10 @@ def test_q1_card_cell_cursor_pointer():
 # --------------------------------------------------------------------------- #
 
 def test_q2_sanitizer_documented():
-    src = open("mtg/blueprints/decks.py").read()
-    assert "single sanitizer" in src
+    # The sanitizer/path/collision logic is centralized in mtg.storage now.
+    src = open("mtg/storage.py").read()
+    assert "sanitize_filename" in src
+    assert "resolve_json_path" in src
 
 
 # --------------------------------------------------------------------------- #

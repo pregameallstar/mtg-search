@@ -15,6 +15,7 @@
     <div class="eval-config">
         <h2 class="eval-config-heading">LLM Connection</h2>
         <form method="post" class="eval-config-form">
+            <input type="hidden" name="save_llm" value="1">
             <div class="eval-config-row">
                 <label for="llm_backend">Backend</label>
                 <select name="llm_backend" id="llm_backend">
@@ -478,6 +479,9 @@ document.getElementById('reset-verify-prompt').addEventListener('click', functio
     var modelSelect = document.getElementById('llm_model');
     var testBtn = document.getElementById('test-connection');
     var resultEl = document.getElementById('test-result');
+    // The server only tests the saved URL. Capture the saved value so we can
+    // tell the user to save first when they edit the field.
+    var savedBaseUrl = baseUrl.value.trim();
 
     var ANTHROPIC_MODELS = [
         ['claude-sonnet-5', 'Claude Sonnet 5'],
@@ -506,8 +510,9 @@ document.getElementById('reset-verify-prompt').addEventListener('click', functio
     {% if llm_model %}
     (function() {
         var opt = document.createElement('option');
-        opt.value = '{{ llm_model }}';
-        opt.textContent = '{{ llm_model }}';
+        var savedModel = {{ llm_model | tojson }};
+        opt.value = savedModel;
+        opt.textContent = savedModel;
         opt.selected = true;
         modelSelect.innerHTML = '';
         modelSelect.appendChild(opt);
@@ -537,7 +542,11 @@ document.getElementById('reset-verify-prompt').addEventListener('click', functio
 
         var url = baseUrl.value.trim();
         if (!url) {
-            setResult('Enter a Base URL first.', false);
+            setResult('Enter and save a Base URL first.', false);
+            return;
+        }
+        if (url !== savedBaseUrl) {
+            setResult('Save Configuration first, then test the new Base URL.', false);
             return;
         }
 
@@ -545,8 +554,9 @@ document.getElementById('reset-verify-prompt').addEventListener('click', functio
         testBtn.disabled = true;
         setResult('Testing…', true);
 
-        fetch('/llm-models?backend=' + encodeURIComponent(bv) +
-              '&base_url=' + encodeURIComponent(url))
+        // The server tests the saved base URL (not an arbitrary query URL) so
+        // the API key can never be forwarded to an unconfigured host.
+        fetch('/llm-models?backend=' + encodeURIComponent(bv))
             .then(function(r) { return r.json(); })
             .then(function(data) {
                 testBtn.textContent = 'Test Connection';

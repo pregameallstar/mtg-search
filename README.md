@@ -72,6 +72,7 @@ Volume mounts:
 | `./embeddings/` | `/app/embeddings/` | Embedding index (persisted) |
 | `./images/` | `/app/images/` | Lazy image cache (persisted) |
 | `./eval_reports/` | `/app/eval_reports/` | Saved Commander Eval reports |
+| `prompt_store` (named volume) | `/app/prompt_store/` | Server-side custom LLM prompts |
 | `./.secret_key` | `/app/.secret_key` | Flask session secret (writeable) |
 | `./.last_ingest.json` | `/app/.last_ingest.json` | Database ingest metadata (writeable) |
 | `./decks/` | `/app/decks/` | Saved deck files |
@@ -95,7 +96,11 @@ Environment variables for the app container:
 | `FLASK_DEBUG` | (empty) | Set to `1` for debug mode |
 | `MCP_SSE_PORT` | `8765` | MCP SSE server port |
 | `MCPO_PORT` | `8000` | MCPO proxy port |
-| `MCP_HOST` | `0.0.0.0` | MCP server bind address |
+| `MCP_HOST` | `127.0.0.1` local / `0.0.0.0` in Docker | MCP server bind address |
+| `MCP_CORS_ORIGINS` | loopback origins | Comma-separated browser origins allowed to call MCP; set for remote OpenWebUI |
+| `FLASK_HOST` | `127.0.0.1` local / `0.0.0.0` in Docker | Flask bind address |
+| `BIND_ADDR` | `127.0.0.1` | Host-side bind address for published Docker ports; set `0.0.0.0` for LAN access |
+| `MAX_UPLOAD_BYTES` | `2147483648` | Maximum HTTP request body size |
 | `SECRET_KEY` | (auto-generated) | Flask secret key (written to `.secret_key`) |
 | `HOST_UID` | `1000` | Host user UID for file ownership |
 | `HOST_GID` | `1000` | Host group GID for file ownership |
@@ -246,7 +251,7 @@ Default Guideline is auto-created on first use. Templates are saved as JSON in `
 - **Backend**: OpenAI-compatible or Anthropic
 - **Base URL**: API endpoint (auto-populated for OpenAI, not used for Anthropic)
 - **Model**: selected from the dropdown after testing the connection
-- **API Key**: stored in your browser session cookie only — never logged or persisted server-side
+- **API Key**: stored only in the signed session cookie — never logged or written to the server database
 
 **Database** — Manage the card database:
 - Shows current database status (card count, last ingest timestamp)
@@ -269,11 +274,11 @@ Default Guideline is auto-created on first use. Templates are saved as JSON in `
 - **Deep Dive** — system prompt for strategy/build deep-dives
 - **Verification** — system prompt for second-pass factual verification against oracle text
 
-Each prompt has a "Reset to Default" button. Prompts are stored in your session cookie.
+Each prompt has a "Reset to Default" button. Prompts are stored server-side in `prompt_store/`, keyed by a small browser id in the session cookie; this keeps the cookie below the browser's ~4 KB limit.
 
 ## MCP Server
 
-The MCP server exposes three tools to LLM agents:
+The MCP server exposes five tools to LLM agents:
 
 ### `semantic_search`
 Find cards by mechanical description using embedding vectors. Describes what the card **does**, not community slang:
@@ -292,6 +297,14 @@ Parameters: `query`, `color_identity`, `card_type`, `mana_value_min`/`max`, `lim
 
 ### `get_card`
 Get full card details by exact English name — oracle text, rulings, legalities, stats.
+
+### `list_decks`
+List saved decks with commander, main-deck quantity, and per-section quantities.
+Optional `name` substring filter.
+
+### `get_deck`
+Get a saved deck's main-board and section cards by exact deck name. Cached
+Commander Eval data is intentionally excluded.
 
 ### Usage
 

@@ -1,11 +1,19 @@
-import json
 import os
 
 from flask import Blueprint, request, render_template, jsonify
 
-from mtg.shared import TEMPLATES_DIR, sanitize_filename, _list_json_files
+from mtg.shared import TEMPLATES_DIR, _list_json_files
+from mtg.storage import (
+    StorageError,
+    read_named_json,
+    resolve_json_path,
+    write_json_atomic,
+)
 
 templates_bp = Blueprint("templates_bp", __name__)
+
+# No template may claim a reserved helper filename.
+RESERVED_TEMPLATE_FILES = (".json",)
 
 
 @templates_bp.route("/card-templates")
@@ -19,17 +27,37 @@ def card_templates_page():
 def api_template_save():
     """Save a card template to disk."""
     body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return jsonify({"error": "Template body must be a JSON object."}), 400
+    previous_name = (body.pop("previousName", "") or "").strip()
     name = body.get("name", "").strip()
     if not name:
         return jsonify({"error": "Template name is required."}), 400
-    fname = sanitize_filename(name)
-    fpath = os.path.join(TEMPLATES_DIR, fname)
     try:
-        with open(fpath, 'w') as f:
-            json.dump(body, f, indent=2)
-        return jsonify({"success": True})
+        fpath = resolve_json_path(TEMPLATES_DIR, name, reserved=RESERVED_TEMPLATE_FILES)
+        try:
+            read_named_json(fpath, name)
+        except StorageError:
+            if not previous_name:
+                raise
+            read_named_json(fpath, previous_name)
+        write_json_atomic(fpath, body)
+
+        if previous_name and previous_name != name:
+            try:
+                old_path = resolve_json_path(
+                    TEMPLATES_DIR, previous_name, reserved=RESERVED_TEMPLATE_FILES,
+                )
+                if old_path != fpath and os.path.exists(old_path):
+                    if read_named_json(old_path, previous_name) is not None:
+                        os.unlink(old_path)
+            except StorageError:
+                pass
+    except StorageError as e:
+        return jsonify({"error": str(e)}), e.status_code
     except OSError as e:
         return jsonify({"error": str(e)}), 500
+    return jsonify({"success": True})
 
 
 @templates_bp.route("/api/template/list", methods=["GET"])
@@ -46,14 +74,19 @@ def api_template_list():
 def api_template_delete():
     """Delete a card template by name."""
     body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return jsonify({"error": "Template body must be a JSON object."}), 400
     name = body.get("name", "").strip()
     if not name:
         return jsonify({"error": "Template name is required."}), 400
-    fname = sanitize_filename(name)
-    fpath = os.path.join(TEMPLATES_DIR, fname)
     try:
+        fpath = resolve_json_path(TEMPLATES_DIR, name, reserved=RESERVED_TEMPLATE_FILES)
+        if read_named_json(fpath, name) is None:
+            return jsonify({"error": "Template not found."}), 404
         os.unlink(fpath)
         return jsonify({"success": True})
+    except StorageError as e:
+        return jsonify({"error": str(e)}), e.status_code
     except FileNotFoundError:
         return jsonify({"error": "Template not found."}), 404
     except OSError as e:

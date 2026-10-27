@@ -40,6 +40,13 @@ if not _secret_key:
 app.secret_key = _secret_key
 
 app.config["PERMANENT_SESSION_LIFETIME"] = 30 * 24 * 3600  # 30 days
+# Lax keeps the signed session cookie off cross-site form POSTs (config,
+# uploads). Explicit is better than relying on browser defaults.
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+# Bound request bodies (MTGJSON uploads are large, but not unbounded).
+app.config["MAX_CONTENT_LENGTH"] = int(
+    os.environ.get("MAX_UPLOAD_BYTES", str(2 * 1024 ** 3))
+)
 
 
 @app.before_request
@@ -115,4 +122,9 @@ app.register_blueprint(pricing_bp)
 # --- Run ---
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", debug=os.environ.get("FLASK_DEBUG", "").lower() in ("1", "true", "yes"))
+    # Loopback by default. Docker sets FLASK_HOST=0.0.0.0 inside the container;
+    # host-side exposure is controlled by the compose port bindings.
+    app.run(
+        host=os.environ.get("FLASK_HOST", "127.0.0.1"),
+        debug=os.environ.get("FLASK_DEBUG", "").lower() in ("1", "true", "yes"),
+    )

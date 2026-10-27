@@ -3345,6 +3345,27 @@ main:has(.card-templates-page) {
     font-weight: 600;
     white-space: nowrap;
 }
+.tag-filter-bar {
+    display: flex;
+    gap: 0.3rem;
+    flex-wrap: wrap;
+    align-items: center;
+    padding: 0 0.35rem 0.4rem;
+}
+.tag-filter-chip {
+    font-size: 0.7rem;
+    padding: 0.12rem 0.5rem;
+    border-radius: 10px;
+    border: 1px solid var(--tag-color, #666);
+    background: transparent;
+    color: var(--tag-color, var(--text));
+    cursor: pointer;
+    font-weight: 600;
+}
+.tag-filter-chip.active {
+    background: var(--tag-color, #666);
+    color: #fff;
+}
 
 /* Group by toolbar */
 .deck-group-toolbar {

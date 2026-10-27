@@ -47,7 +47,7 @@ modifying nearby code** — they explain non-obvious design choices. Recurring t
   `embed.py`, `llm.py`, `images.py`, `dedup.py`, `ingest.py`, `eval_helpers.py`),
   so they're testable and reusable by the MCP server.
 - **"Server validates nothing"** — deck/template rules are enforced client-side.
-- **Config in the browser session** (signed cookie), not server storage.
+- **Config** — API key/backends in the signed browser session; prompts in a small server-side `prompt_store/`.
 
 ---
 
@@ -167,8 +167,11 @@ by the ingest pipeline.
 
 **Filename sanitization** is centralized in `shared.sanitize_filename(name)`:
 strips everything outside `[a-zA-Z0-9_ -]` (blocks `..`/`/` path traversal
-incidentally), replaces spaces with `_`, appends `.json`. Used by deck, template,
-and history routes so a name like `"My Deck (v1)"` consistently → `My_Deck_v1.json`.
+incidentally), replaces spaces with `_`, appends `.json`. `mtg/storage.py` wraps
+it with reserved-name checks (`_tags.json`) and collision detection, so two
+distinct display names that sanitize to the same file cannot silently overwrite
+each other. `write_json_atomic` is used for deck/template/history/tag/report
+writes.
 
 ### 5.4 Deck object (client-side data model)
 
@@ -302,8 +305,9 @@ predefined tags, stored in `decks/_tags.json`).
 - Load: synchronous XHR to `/api/deck/list`, linear search by name.
 - Card hover preview (250ms delay, 400×560px).
 
-**Known dead/stale JS:** `STORAGE_PREFIX`, `renderTagFilterBar()`, `showTagUI()`,
-`activePopoverCard`. The tag popover is duplicated twice (main deck + custom sections).
+**Known dead/stale JS:** `STORAGE_PREFIX` and `activePopoverCard`. The tag
+popover is duplicated twice (main deck + custom sections); the tag filter bar is
+now wired into `renderSections`/`renderAll`.
 
 ### 6.5 Card Templates — `mtg/blueprints/templates_bp.py` (60 loc)
 
@@ -321,10 +325,12 @@ returns cache count. Pricing store selection (`usd`/`usd_foil`/`eur`) is a sessi
 
 ### 6.7 Configuration — `mtg/blueprints/config.py` (265 loc)
 
-`GET/POST /config` manages (all stored in the signed session cookie — the API key
-never touches server storage):
+`GET/POST /config` manages:
 - **LLM** — backend (`openai`/`anthropic`), base URL, model, API key, and three
-  **custom prompts** (commander, deepdive, verify).
+  **custom prompts** (commander, deepdive, verify). The API key stays in the
+  signed session cookie (it is small); prompts live in `prompt_store/`, keyed by
+  an opaque browser id, because the default prompt is larger than the ~4 KB
+  cookie limit.
 - **Database** — status (card count, last ingest), upload → ingest pipeline.
 - **Embeddings** — status + async rebuild (`/config/embed-build`).
 - **MCP** — status + restart (`/config/mcp-status`, `/config/mcp-restart`).

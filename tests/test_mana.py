@@ -29,7 +29,7 @@ class TestManaSymbols:
 
     def test_generic(self):
         result = mana_symbols("{X}")
-        assert 'ms-X' in result
+        assert 'ms-x' in result
         result = mana_symbols("{10}")
         assert 'ms-10' in result
 

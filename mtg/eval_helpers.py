@@ -4,11 +4,11 @@ ponytail: pure functions that the eval routes delegate to. Takes all state
 as arguments rather than reaching for app globals.
 """
 
-import json
 import os
 import time as _time
 
 from mtg.shared import DEEPDIVE_SUFFIX
+from mtg.storage import read_json, write_json_atomic
 
 
 # --- Placeholder detection ---
@@ -212,15 +212,15 @@ def auto_save_deepdives(set_code, number, new_deepdives, reports_dir):
     os.makedirs(reports_dir, exist_ok=True)
     autosave_path = os.path.join(reports_dir, f"{set_code}_{number}{DEEPDIVE_SUFFIX}")
     try:
-        existing = {}
-        if os.path.exists(autosave_path):
-            with open(autosave_path) as f:
-                existing = json.load(f)
+        existing = read_json(autosave_path, default={})
+        if not isinstance(existing, dict):
+            existing = {}
         merged = existing.get("deepdives", {})
+        if not isinstance(merged, dict):
+            merged = {}
         merged.update(new_deepdives)
-        with open(autosave_path, "w") as f:
-            json.dump({"deepdives": merged}, f, indent=2)
-    except (OSError, json.JSONDecodeError):
+        write_json_atomic(autosave_path, {"deepdives": merged})
+    except (OSError, ValueError):
         pass  # ponytail: fail silently — deepdives still live in cache for this session
 
 
@@ -229,10 +229,9 @@ def load_auto_deepdives(set_code, number, reports_dir):
     autosave_path = os.path.join(
         reports_dir, f"{set_code}_{number}{DEEPDIVE_SUFFIX}",
     )
-    try:
-        if os.path.exists(autosave_path):
-            with open(autosave_path) as f:
-                return json.load(f).get("deepdives", {})
-    except (OSError, json.JSONDecodeError):
-        pass
+    data = read_json(autosave_path, default={})
+    if isinstance(data, dict):
+        deepdives = data.get("deepdives", {})
+        if isinstance(deepdives, dict):
+            return deepdives
     return {}

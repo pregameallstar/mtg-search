@@ -30,6 +30,7 @@ from mtg.shared import (
     _load_card,
     _other_faces,
 )
+from mtg.storage import write_json_atomic
 from mtg.eval_cache import (
     _cache_lock,
     _eval_cache,
@@ -45,6 +46,7 @@ from mtg.eval_helpers import (
     load_auto_deepdives,
 )
 from mtg.websearch import web_search
+from mtg.prompt_store import get_prompt
 from mtg.prompts import COMMANDER_SYSTEM_PROMPT, DEEPDIVE_SYSTEM_PROMPT, VERIFY_SYSTEM_PROMPT
 
 try:
@@ -350,7 +352,7 @@ def commander_eval_analyze(set_code, number):
         _step(4, "Analyzing with LLM…")
 
         api_key = session.get("llm_api_key") or os.environ.get("LLM_API_KEY")
-        commander_prompt = session.get("eval_prompt") or COMMANDER_SYSTEM_PROMPT
+        commander_prompt = get_prompt("eval_prompt") or COMMANDER_SYSTEM_PROMPT
 
         # ponytail: retry once on JSON parse failure — Gemma4 occasionally
         # produces malformed JSON that _parse_json can't repair.
@@ -373,7 +375,7 @@ def commander_eval_analyze(set_code, number):
 
         # Second-pass verification — check for invented abilities, wrong zones, hallucinated card names
         _step(5, "Verifying analysis accuracy…")
-        verify_prompt = session.get("verify_prompt") or VERIFY_SYSTEM_PROMPT
+        verify_prompt = get_prompt("verify_prompt") or VERIFY_SYSTEM_PROMPT
 
         verify_user = json.dumps({
             "card": {
@@ -454,7 +456,7 @@ def commander_eval_deepdive(set_code, number):
 
     type_label = "strategy" if expand_type == "strategy" else "unique build"
 
-    deepdive_prompt = session.get("deepdive_prompt") or DEEPDIVE_SYSTEM_PROMPT
+    deepdive_prompt = get_prompt("deepdive_prompt") or DEEPDIVE_SYSTEM_PROMPT
     system_prompt = deepdive_prompt.replace("{type_label}", type_label)
 
     user_prompt = json.dumps({
@@ -615,7 +617,7 @@ def commander_eval_deepdive(set_code, number):
                     raise
 
         # ponytail: second-pass verification for deepdive results.
-        verify_prompt = session.get("verify_prompt") or VERIFY_SYSTEM_PROMPT
+        verify_prompt = get_prompt("verify_prompt") or VERIFY_SYSTEM_PROMPT
         try:
             verify_user = json.dumps({
                 "card": {
@@ -779,14 +781,13 @@ def commander_eval_save(set_code, number):
     _autosaved.update(deepdives)  # cache wins over disk
     deepdives = _autosaved
 
-    with open(report_path, "w") as f:
-        json.dump({
-            "card": dict(card),
-            "analysis": cached["analysis"],
-            "deepdives": deepdives,
-            "similar": cached.get("similar", []),
-            "saved_at": now_iso,
-        }, f, indent=2)
+    write_json_atomic(report_path, {
+        "card": dict(card),
+        "analysis": cached["analysis"],
+        "deepdives": deepdives,
+        "similar": cached.get("similar", []),
+        "saved_at": now_iso,
+    })
 
     return jsonify({"success": True, "filename": safe_name})
 

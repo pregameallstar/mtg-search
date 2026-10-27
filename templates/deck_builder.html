@@ -262,6 +262,7 @@
                     {# Outline sections rendered by JS #}
                 </div>
                 <button id="outline-add-btn" class="btn-deck-action" style="margin-top:0.5rem;">+ Add Section</button>
+                <button id="outline-export-btn" class="btn-deck-action" style="margin-top:0.5rem;" title="Copy outline text to clipboard">📋 Export Outline</button>
             </div>
         </div>
     </div>
@@ -334,6 +335,9 @@
 
             {# Tag Stats #}
             <div id="tag-stats" class="tag-stats" hidden></div>
+
+            {# Tag filters (rendered by JS) #}
+            <div id="tag-filter-bar" class="tag-filter-bar" hidden></div>
 
             {# Group By Toggle #}
             <div class="deck-group-toolbar" id="deck-group-toolbar" hidden>
@@ -492,7 +496,7 @@
 <script>
     // Config from Flask session — consumed by deck-builder.js
     window._mtgConfig = {
-        pricingStore: "{{ pricing_store }}",
+        pricingStore: {{ pricing_store | tojson }},
         historyWarningDays: {{ history_warning_days|int }}
     };
 </script>

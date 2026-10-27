@@ -7,14 +7,30 @@ Image proxy fetching lives here so serve_image can delegate to it.
 import os
 import re
 import time
+from html import escape as html_escape
 from urllib.request import Request, urlopen
+
+# --- Scryfall identifiers ---
+
+SCRYFALL_ID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+VALID_IMAGE_SIZES = {"small", "normal", "large", "png", "art_crop", "border_crop"}
+VALID_IMAGE_FACES = {"front", "back"}
+
+
+def is_scryfall_id(value):
+    """Return True for a canonical Scryfall UUID."""
+    return isinstance(value, str) and bool(SCRYFALL_ID_RE.fullmatch(value))
+
 
 # --- Image URL builder ---
 
 
 def card_image_url(scryfall_id, face="front", size="normal"):
     """Local image URL — served by proxy route, which caches from Scryfall on first hit."""
-    if not scryfall_id:
+    if not is_scryfall_id(scryfall_id):
         return ""
     c1, c2 = scryfall_id[0], scryfall_id[1]
     return f"/img/{size}/{face}/{c1}/{c2}/{scryfall_id}.jpg"
@@ -31,6 +47,10 @@ def fetch_scryfall_image(image_dir, scryfall_id, size, face):
     bursts 30 concurrent urlopens, which Scryfall drops. Exponential
     backoff gives each one a chance to land.
     """
+    if not is_scryfall_id(scryfall_id):
+        return None
+    if size not in VALID_IMAGE_SIZES or face not in VALID_IMAGE_FACES:
+        return None
     c1, c2 = scryfall_id[0], scryfall_id[1]
     full_path = os.path.join(image_dir, size, face, c1, c2, f"{scryfall_id}.jpg")
 
@@ -72,9 +92,17 @@ def mana_symbols(cost):
         # Generic/color hybrid
         "{2/W}": "2w", "{2/U}": "2u", "{2/B}": "2b", "{2/R}": "2r", "{2/G}": "2g",
     }
-    result = cost
+    # Escape the whole input first so unknown text cannot inject markup when
+    # templates render the result with |safe. Known {symbols} still match
+    # because escaping leaves braces untouched.
+    result = html_escape(str(cost), quote=False)
     for text, cls in SYMBOLS.items():
         result = result.replace(text, f'<i class="ms ms-{cls}"></i>')
-    # Fallback: bare generic/colorless — {X}, {2}, {10}, etc.
-    result = re.sub(r'\{(X|\d+)\}', r'<i class="ms ms-\1"></i>', result)
+    # Fallback: bare generic/colorless — {X}, {2}, {10}, etc. mana-font
+    # classes are lowercase (ms-x), so normalize X as well as digits.
+    result = re.sub(
+        r'\{(X|\d+)\}',
+        lambda m: f'<i class="ms ms-{m.group(1).lower()}"></i>',
+        result,
+    )
     return result

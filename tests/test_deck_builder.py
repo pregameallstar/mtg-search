@@ -825,6 +825,60 @@ def test_deck_toTextExport_empty_deck(js):
 
 
 # --------------------------------------------------------------------------- #
+# Deck model — toOutlineTextExport (copy-pasteable outline)
+# --------------------------------------------------------------------------- #
+
+def test_deck_toOutlineTextExport_sections_and_examples(js):
+    r = js.run("""(function () {
+        var d = new __exposed.Deck();
+        d.outline = [
+            { name: 'Description', text: 'A spellslinger deck.', cards: [
+                %s, %s
+            ] },
+            { name: 'Strategy', text: 'Ramp into a big turn.', cards: [] },
+            { name: 'How to Win', text: '', cards: [] },
+        ];
+        return d.toOutlineTextExport();
+    })()""" % (js_card(card(uuid="u1", name="Sol Ring")),
+               js_card(card(uuid="u2", name="Arcane Signet"))))
+    assert r == (
+        "Description\n"
+        "A spellslinger deck.\n"
+        "Example cards: Sol Ring, Arcane Signet\n"
+        "\n"
+        "Strategy\n"
+        "Ramp into a big turn.\n"
+    )
+
+
+def test_deck_toOutlineTextExport_empty_outline(js):
+    r = js.run("""(function () {
+        var d = new __exposed.Deck();
+        return d.toOutlineTextExport();
+    })()""")
+    assert r == "\n"
+
+
+def test_deck_ensureOutline_seeds_editable_defaults(js):
+    # A fresh deck used to render three default sections without writing them
+    # into deck.outline, so every edit/drop handler found undefined. ensureOutline
+    # must seed the model on first read.
+    r = js.run("""(function () {
+        var d = new __exposed.Deck();
+        var sections = d.ensureOutline();
+        sections[0].text = 'A spellslinger deck.';
+        return {
+            count: d.outline.length,
+            text: d.outline[0].text,
+            names: d.outline.map(function (s) { return s.name; })
+        };
+    })()""")
+    assert r["count"] == 3
+    assert r["text"] == "A spellslinger deck."
+    assert r["names"] == ["Description", "Strategy", "How to Win"]
+
+
+# --------------------------------------------------------------------------- #
 # Deck model — toPresentationHTML (self-contained presentation export)
 # --------------------------------------------------------------------------- #
 
@@ -1029,6 +1083,18 @@ def test_isOffColorCard(js):
     assert r["colorless"] is False
 
 
+def test_isOffColorCard_colorless_commander(js):
+    r = js.run("""(function () {
+        __exposed.deck.commander = { colorIdentity: '' };
+        return {
+            colored: __exposed.isOffColorCard({ colorIdentity: 'W' }),
+            colorless: __exposed.isOffColorCard({ colorIdentity: '' })
+        };
+    })()""")
+    assert r["colored"] is True
+    assert r["colorless"] is False
+
+
 def test_isOffColorCard_no_commander_returns_false(js):
     assert js.run("__exposed.isOffColorCard({ colorIdentity: 'R' })") is False
 
@@ -1128,12 +1194,12 @@ def test_renderManaSymbols_generic_and_colored(js):
 
 
 def test_renderManaSymbols_hybrid_and_phyrexian(js):
-    # Hybrid {W/U} -> "w-u"; phyrexian {W/P} hits the `symbol.indexOf('/')`
-    # branch FIRST (not the "ends with P" branch), so it becomes "w-p".
-    r = js.run("__exposed.renderManaSymbols('{W/U}{W/P}{T}')")
-    assert r == ('<span class="ms ms-w-u"></span>'
-                 '<span class="ms ms-w-p"></span>'
-                 '<span class="ms ms-t"></span>')
+    # mana-font defines compact classes: ms-wu, ms-wp, ms-2w.
+    r = js.run("__exposed.renderManaSymbols('{W/U}{W/P}{2/W}{T}')")
+    assert r == ('<span class="ms ms-wu"></span>'
+                 '<span class="ms ms-wp"></span>'
+                 '<span class="ms ms-2w"></span>'
+                 '<span class="ms ms-tap"></span>')
 
 
 def test_renderManaSymbols_empty(js):

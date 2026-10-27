@@ -6,15 +6,18 @@ services:
         - UID=${HOST_UID:-1000}
         - GID=${HOST_GID:-1000}
     container_name: mtg-search
+    # Host-side bind address. Loopback by default; set BIND_ADDR=0.0.0.0 to
+    # deliberately expose the services on the LAN.
     ports:
-      - "${PORT:-5000}:5000"
-      - "${MCP_SSE_PORT:-8765}:8765"
-      - "${MCPO_PORT:-8000}:8000"
+      - "${BIND_ADDR:-127.0.0.1}:${PORT:-5000}:5000"
+      - "${BIND_ADDR:-127.0.0.1}:${MCP_SSE_PORT:-8765}:8765"
+      - "${BIND_ADDR:-127.0.0.1}:${MCPO_PORT:-8000}:8000"
     volumes:
       - ./AllPrintings.sqlite:/app/AllPrintings.sqlite
       - ./embeddings:/app/embeddings
       - ./images:/app/images
       - ./eval_reports:/app/eval_reports
+      - prompt_store:/app/prompt_store
       - ./.secret_key:/app/.secret_key
       - ./.last_ingest.json:/app/.last_ingest.json
       # ponytail: dev overlays — edit code on host, reflected live in container
@@ -33,8 +36,13 @@ services:
       - LLM_MODEL=${LLM_MODEL:-}
       - LLM_API_KEY=${LLM_API_KEY:-}
       - MCP_SSE_PORT=${MCP_SSE_PORT:-8765}
+      # Inside the container the services must bind all interfaces so Docker's
+      # port mapping can reach them; the host-side bind is controlled above.
       - MCP_HOST=${MCP_HOST:-0.0.0.0}
       - MCPO_PORT=${MCPO_PORT:-8000}
+      - MCP_CORS_ORIGINS=${MCP_CORS_ORIGINS:-}
+      - FLASK_HOST=${FLASK_HOST:-0.0.0.0}
+      - MAX_UPLOAD_BYTES=${MAX_UPLOAD_BYTES:-2147483648}
     restart: unless-stopped
     depends_on:
       - searxng
@@ -49,3 +57,6 @@ services:
     environment:
       - SEARXNG_SECRET=${SEARXNG_SECRET?SEARXNG_SECRET is required}
     restart: unless-stopped
+
+volumes:
+  prompt_store:

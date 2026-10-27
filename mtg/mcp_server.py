@@ -11,6 +11,7 @@ Usage:
 """
 
 import argparse
+import json
 import os
 import re
 import sqlite3
@@ -18,7 +19,7 @@ import sys
 
 from mcp.server.fastmcp import FastMCP
 
-from mtg.shared import db_path, color_identity_subset
+from mtg.shared import db_path, color_identity_subset, sanitize_filename, DECKS_DIR, _list_json_files
 
 DATABASE = os.environ.get("MTG_DATABASE", "AllPrintings.sqlite")
 
@@ -27,7 +28,8 @@ DATABASE = os.environ.get("MTG_DATABASE", "AllPrintings.sqlite")
 
 mcp = FastMCP(
     "mtg-search",
-    instructions="""Magic: The Gathering card search engine with three tools.
+    instructions="""Magic: The Gathering card search engine with five tools:
+semantic_search, keyword_search, get_card, list_decks, and get_deck.
 
 CRITICAL — NO HALLUCINATION:
 - Every card name, mana value, color identity, type, and oracle text you
@@ -351,6 +353,147 @@ def get_card(name: str) -> dict:
         db.close()
 
 
+# ── decks ────────────────────────────────────────────────────────────────
+
+
+def _load_decks():
+    """Return parsed deck objects from DECKS_DIR, skipping the tag catalog.
+
+    Reuses shared._list_json_files so the MCP server and the Flask decks
+    blueprint agree on what counts as a deck (every *.json except _tags.json).
+    """
+    return _list_json_files(DECKS_DIR, skip_names=("_tags.json",))
+
+
+def _card_list(value):
+    """Return a list of card objects, tolerating older/empty section shapes."""
+    if not isinstance(value, list):
+        return []
+    return [c for c in value if isinstance(c, dict)]
+
+
+def _quantity(cards):
+    """Sum quantities for a list of saved deck cards."""
+    total = 0
+    for card in _card_list(cards):
+        try:
+            qty = int(card.get("quantity") or 1)
+        except (TypeError, ValueError):
+            qty = 1
+        total += max(qty, 1)
+    return total
+
+
+def _card_summary(card):
+    """Reduce a saved deck card to the fields an LLM needs.
+
+    The saved card shape (15 fields, from deck-builder.js cardMapper) already
+    carries the meaningful data; this just drops imageUrl and empty tags to
+    keep responses compact. Never includes evalData.
+    """
+    return {
+        "name": card.get("name", ""),
+        "quantity": card.get("quantity", 1),
+        "manaCost": card.get("manaCost", ""),
+        "manaValue": card.get("manaValue"),
+        "types": card.get("types", ""),
+        "supertypes": card.get("supertypes", ""),
+        "colors": card.get("colors", ""),
+        "colorIdentity": card.get("colorIdentity", ""),
+        "text": card.get("text", ""),
+        "setCode": card.get("setCode", ""),
+        "number": card.get("number", ""),
+    }
+
+
+@mcp.tool()
+def list_decks(name: str = "") -> list[dict]:
+    """List saved decks with a one-line summary each, optionally filtered.
+
+    Returns the deck name, commander name, and card counts (main board + each
+    named section). No card text. Use this to see what decks exist, then call
+    get_deck(name) for a deck's full card list.
+
+    name: optional case-insensitive substring to filter decks by. Empty
+          (default) returns all decks.
+    """
+    decks = []
+    for deck in _load_decks():
+        deck_name = deck.get("name", "")
+        if name and name.lower() not in deck_name.lower():
+            continue
+        commander = deck.get("commander")
+        if not isinstance(commander, dict):
+            commander = {}
+        sections = deck.get("sections") or {}
+        # ponytail: sections is a dict of name→cards, but older saves store []
+        # when empty — treat either as "no sections".
+        section_counts = (
+            {
+                sname: _quantity(cards)
+                for sname, cards in sections.items()
+                if isinstance(cards, list)
+            }
+            if isinstance(sections, dict)
+            else {}
+        )
+        main_count = _quantity(deck.get("cards"))
+        decks.append({
+            "name": deck_name,
+            "commander": commander.get("name", ""),
+            "card_count": main_count,
+            "total_count": main_count + (1 if commander.get("name") else 0),
+            "sections": section_counts,
+        })
+    return decks
+
+
+@mcp.tool()
+def get_deck(name: str) -> dict:
+    """Get a saved deck's full card list by exact deck name.
+
+    Returns the deck name, commander (name + color identity), main-board cards
+    (name, quantity, manaCost, manaValue, types, supertypes, colors,
+    colorIdentity, oracle text, setCode, number), and each named section's
+    cards in the same shape. The cached Commander Eval analysis (evalData) is
+    intentionally excluded — it can be very large and is not card data.
+
+    name: exact deck name as shown by list_decks (e.g. "Cloud, Ex-Soldier").
+    """
+    fname = sanitize_filename(name)
+    fpath = os.path.join(DECKS_DIR, fname)
+    try:
+        with open(fpath) as f:
+            deck = json.load(f)
+    except FileNotFoundError:
+        return {"error": f"Deck '{name}' not found."}
+    except (json.JSONDecodeError, OSError) as e:
+        return {"error": str(e)}
+
+    if not isinstance(deck, dict):
+        return {"error": f"Deck '{name}' is not a valid deck object."}
+
+    commander = deck.get("commander")
+    if not isinstance(commander, dict):
+        commander = {}
+    sections = deck.get("sections") or {}
+
+    result = {
+        "name": deck.get("name", name),
+        "commander": {
+            "name": commander.get("name", ""),
+            "colorIdentity": commander.get("colorIdentity", ""),
+        },
+        "cards": [_card_summary(c) for c in _card_list(deck.get("cards"))],
+    }
+    if isinstance(sections, dict):
+        result["sections"] = {
+            sname: [_card_summary(c) for c in _card_list(cards)]
+            for sname, cards in sections.items()
+        }
+    return result
+
+
 # ── entry ────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -365,8 +508,8 @@ if __name__ == "__main__":
         help="Port for HTTP transports (default: 8765)",
     )
     parser.add_argument(
-        "--host", default="0.0.0.0",
-        help="Host to bind HTTP transports (default: 0.0.0.0)",
+        "--host", default="127.0.0.1",
+        help="Host to bind HTTP transports (default: 127.0.0.1)",
     )
     args = parser.parse_args()
 
@@ -382,18 +525,31 @@ if __name__ == "__main__":
         import uvicorn
         from starlette.middleware.cors import CORSMiddleware
 
-        # ponytail: CORS — OpenWebUI browser client needs OPTIONS preflight
+        # CORS — OpenWebUI browser clients need OPTIONS preflight. Default to
+        # loopback origins instead of "*", otherwise any website can read deck
+        # data from a locally-running MCP/MCPO port. Set MCP_CORS_ORIGINS to a
+        # comma-separated list for a remote UI.
         app = (
             mcp.streamable_http_app()
             if args.transport == "streamable-http"
             else mcp.sse_app()
         )
-        app = CORSMiddleware(
-            app,
-            allow_origins=["*"],
-            allow_methods=["*"],
-            allow_headers=["*"],
-        )
+        configured_origins = [
+            o.strip() for o in os.environ.get("MCP_CORS_ORIGINS", "").split(",")
+            if o.strip()
+        ]
+        cors_kwargs = {
+            "allow_methods": ["*"],
+            "allow_headers": ["*"],
+        }
+        if configured_origins:
+            cors_kwargs["allow_origins"] = configured_origins
+        else:
+            cors_kwargs["allow_origins"] = []
+            cors_kwargs["allow_origin_regex"] = (
+                r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$"
+            )
+        app = CORSMiddleware(app, **cors_kwargs)
         print(
             f"MCP server starting on http://{args.host}:{args.port} ({args.transport})",
             file=sys.stderr,

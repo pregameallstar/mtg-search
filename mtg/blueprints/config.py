@@ -8,10 +8,13 @@ import subprocess
 import time
 import traceback
 
-from flask import Blueprint, render_template, request, session, redirect, url_for, jsonify
+from urllib.parse import urlparse
+
+from flask import Blueprint, render_template, request, session, redirect, url_for, jsonify, abort
 
 from mtg.shared import get_db, resolve_bind_path, DATABASE, db_path
 from mtg.prompts import COMMANDER_SYSTEM_PROMPT, DEEPDIVE_SYSTEM_PROMPT, VERIFY_SYSTEM_PROMPT
+from mtg.prompt_store import get_prompts, save_prompt
 from mtg.mcp_control import (
     MCP_SSE_PORT, MCPO_PORT, MCP_HOST, MCP_DISPLAY_HOST,
     port_alive, restart_mcp,
@@ -20,38 +23,53 @@ from mtg.mcp_control import (
 config_bp = Blueprint("config", __name__, url_prefix="/config")
 
 
+def _same_origin_request():
+    """Reject cross-site browser form/multipart requests.
+
+    Curl and other non-browser clients send neither Origin nor Referer and are
+    allowed. Modern browsers attach Origin to cross-site POSTs, which this
+    check uses without requiring a CSRF token in every form.
+    """
+    origin = request.headers.get("Origin") or request.headers.get("Referer")
+    if not origin:
+        return True
+    parsed = urlparse(origin)
+    return parsed.scheme in ("http", "https") and parsed.netloc == request.host
+
+
 @config_bp.route("/", methods=["GET", "POST"])
 def config_page():
     """LLM configuration — shared across tools that use the LLM."""
     import mtg.embed as embed
 
     if request.method == "POST":
-        api_key = request.form.get("llm_api_key", "").strip()
-        if api_key:
-            session["llm_api_key"] = api_key
-        elif api_key == "" and "llm_api_key" in session:
-            session.pop("llm_api_key", None)
-        session["llm_backend"] = request.form.get("llm_backend", "").strip()
-        session["llm_base_url"] = request.form.get("llm_base_url", "").strip()
-        session["llm_model"] = request.form.get("llm_model", "").strip()
+        if not _same_origin_request():
+            abort(403)
+        # Migrate any prompts left in the old oversized session cookie before
+        # writing new values; otherwise the legacy value would win on next read.
+        get_prompts()
+
+        # Only the main LLM form is allowed to change/clear the API key. The
+        # prompt/history/pricing/search forms intentionally omit the key field,
+        # and must not wipe it as a side effect.
+        if request.form.get("save_llm") == "1":
+            api_key = request.form.get("llm_api_key", "").strip()
+            if api_key:
+                session["llm_api_key"] = api_key
+            elif "llm_api_key" in session:
+                session.pop("llm_api_key", None)
+        if "llm_backend" in request.form:
+            session["llm_backend"] = request.form.get("llm_backend", "").strip()
+        if "llm_base_url" in request.form:
+            session["llm_base_url"] = request.form.get("llm_base_url", "").strip()
+        if "llm_model" in request.form:
+            session["llm_model"] = request.form.get("llm_model", "").strip()
         if request.form.get("save_prompt") == "1":
-            eval_prompt = request.form.get("eval_prompt", "").strip()
-            if eval_prompt:
-                session["eval_prompt"] = eval_prompt
-            elif "eval_prompt" in session:
-                session.pop("eval_prompt", None)
+            save_prompt("eval_prompt", request.form.get("eval_prompt", ""))
         if request.form.get("save_deepdive_prompt") == "1":
-            deepdive_prompt = request.form.get("deepdive_prompt", "").strip()
-            if deepdive_prompt:
-                session["deepdive_prompt"] = deepdive_prompt
-            elif "deepdive_prompt" in session:
-                session.pop("deepdive_prompt", None)
+            save_prompt("deepdive_prompt", request.form.get("deepdive_prompt", ""))
         if request.form.get("save_verify_prompt") == "1":
-            verify_prompt = request.form.get("verify_prompt", "").strip()
-            if verify_prompt:
-                session["verify_prompt"] = verify_prompt
-            elif "verify_prompt" in session:
-                session.pop("verify_prompt", None)
+            save_prompt("verify_prompt", request.form.get("verify_prompt", ""))
         # Search Logic config
         if request.form.get("save_search_logic") == "1":
             similar_method = request.form.get("similar_method", "").strip()
@@ -85,9 +103,10 @@ def config_page():
     llm_base_url = (session.get("llm_base_url") or os.environ.get("LLM_BASE_URL", ""))
     llm_model = (session.get("llm_model") or os.environ.get("LLM_MODEL", ""))
     llm_has_key = bool(session.get("llm_api_key") or os.environ.get("LLM_API_KEY"))
-    eval_prompt = session.get("eval_prompt", "")
-    deepdive_prompt = session.get("deepdive_prompt", "")
-    verify_prompt = session.get("verify_prompt", "")
+    prompts = get_prompts()
+    eval_prompt = prompts.get("eval_prompt", "")
+    deepdive_prompt = prompts.get("deepdive_prompt", "")
+    verify_prompt = prompts.get("verify_prompt", "")
     similar_method = session.get("similar_method", "embed")
     eval_similar_method = session.get("eval_similar_method", "embed")
     pricing_store = session.get("pricing_store") or os.environ.get("PRICING_STORE", "usd")
@@ -151,6 +170,8 @@ def embed_build():
     """Trigger an embedding index rebuild. Returns immediately; build runs async."""
     import mtg.embed as embed
 
+    if not _same_origin_request():
+        abort(403)
     status_info = embed.status()
     if status_info["building"]:
         return jsonify({"success": False, "error": "Build already in progress."}), 409
@@ -189,6 +210,8 @@ def mcp_restart():
     """Restart MCP SSE server + MCPO proxy."""
     import shutil as _shutil
 
+    if not _same_origin_request():
+        abort(403)
     try:
         script_dir = os.path.dirname(os.path.abspath(__file__))  # mtg/blueprints/
         script_dir = os.path.join(script_dir, "..", "..")        # back to project root
@@ -242,6 +265,8 @@ def ingest_database():
     """
     from mtg.ingest import IngestError, process_upload
 
+    if not _same_origin_request():
+        abort(403)
     if "database" not in request.files:
         return jsonify({"error": "No file uploaded."}), 400
 

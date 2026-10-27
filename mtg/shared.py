@@ -197,9 +197,13 @@ def _list_json_files(directory, skip_names=None):
         if not fname.endswith(".json") or fname in skip_names:
             continue
         try:
-            with open(os.path.join(directory, fname)) as f:
-                out.append(json.load(f))
-        except (json.JSONDecodeError, OSError):
+            with open(os.path.join(directory, fname), encoding="utf-8") as f:
+                data = json.load(f)
+            # Deck/template stores are objects. A malformed array/string should
+            # not be returned to pages or MCP tools that assume object access.
+            if isinstance(data, dict):
+                out.append(data)
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
             pass
     return out
 

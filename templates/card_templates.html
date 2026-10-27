@@ -713,31 +713,30 @@
         if (!name) { showToast('Please enter a template name.'); return; }
         if (templateCards.length === 0) { showToast('Please add at least one card.'); return; }
 
+        var oldName = editingName;
         var doSave = function() {
             fetch('/api/template/save', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: name, cards: templateCards }),
+                body: JSON.stringify({
+                    name: name,
+                    cards: templateCards,
+                    previousName: oldName || ''
+                }),
             }).then(function(r) { return r.json(); }).then(function(data) {
-                if (data.success) {
-                    hideEditor();
-                    refreshGrid();
-                    showToast('Saved: ' + name);
-                } else {
+                if (!data.success) {
                     showToast(data.error || 'Failed to save template.');
+                    return;
                 }
+                // The server removes the old file when previousName is supplied,
+                // but only after the new file has been written successfully.
+                hideEditor();
+                refreshGrid();
+                showToast('Saved: ' + name);
             }).catch(function() { showToast('Failed to save template.'); });
         };
 
-        if (editingName && safeName(editingName) !== safeName(name)) {
-            fetch('/api/template/delete', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: editingName }),
-            }).then(function() { doSave(); }).catch(function() { doSave(); });
-        } else {
-            doSave();
-        }
+        doSave();
     });
 
     btnCancel.addEventListener('click', function() {
@@ -946,9 +945,12 @@
 
     function hideGuidelineEditor() {
         guidelineEditor.hidden = true;
+        gridsGuidelines.hidden = false;
         btnNewEl.hidden = false;
         editingGuidelineName = null;
-        switchMode(currentMode); // re-shows correct grid
+        // Refresh explicitly. switchMode(currentMode) returns early, which used
+        // to leave the guideline grid hidden after Save/Cancel.
+        refreshGuidelineGrid();
     }
 
     gSaveBtn.addEventListener('click', function() {
@@ -961,30 +963,30 @@
             cats[cat] = el ? (parseInt(el.value, 10) || 0) : 0;
         });
 
+        var oldName = editingGuidelineName;
         var doSave = function() {
             fetch('/api/template/save', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ type: 'guideline', name: name, categories: cats }),
+                body: JSON.stringify({
+                    type: 'guideline',
+                    name: name,
+                    categories: cats,
+                    previousName: oldName || ''
+                }),
             }).then(function(r) { return r.json(); }).then(function(data) {
-                if (data.success) {
-                    hideGuidelineEditor();
-                    showToast('Saved: ' + name);
-                } else {
+                if (!data.success) {
                     showToast(data.error || 'Failed to save guideline.');
+                    return;
                 }
+                // The server removes the old file when previousName is supplied,
+                // but only after the new file has been written successfully.
+                hideGuidelineEditor();
+                showToast('Saved: ' + name);
             }).catch(function() { showToast('Failed to save guideline.'); });
         };
 
-        if (editingGuidelineName && safeName(editingGuidelineName) !== safeName(name)) {
-            fetch('/api/template/delete', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: editingGuidelineName }),
-            }).then(function() { doSave(); }).catch(function() { doSave(); });
-        } else {
-            doSave();
-        }
+        doSave();
     });
 
     gCancelBtn.addEventListener('click', function() {

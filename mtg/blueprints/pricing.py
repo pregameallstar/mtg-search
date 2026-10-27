@@ -10,6 +10,8 @@ from urllib.error import URLError
 from flask import Blueprint, request, jsonify
 
 from mtg.shared import PRICES_DIR
+from mtg.images import is_scryfall_id
+from mtg.storage import write_json_atomic
 
 pricing_bp = Blueprint("pricing", __name__)
 
@@ -18,6 +20,8 @@ SCRYFALL_API = "https://api.scryfall.com"
 
 
 def _cache_path(scryfall_id):
+    if not is_scryfall_id(scryfall_id):
+        return None
     return os.path.join(PRICES_DIR, f"{scryfall_id}.json")
 
 
@@ -26,6 +30,8 @@ def _fetch_scryfall_prices(scryfall_id):
 
     Returns price dict on success, None on failure.
     """
+    if not is_scryfall_id(scryfall_id):
+        return None
     url = f"{SCRYFALL_API}/cards/{scryfall_id}"
     last_err = None
     for attempt in range(3):
@@ -49,6 +55,8 @@ def _get_prices(scryfall_id):
     Returns (prices_dict, is_cached).
     """
     fpath = _cache_path(scryfall_id)
+    if fpath is None:
+        return None, False
     now = datetime.now(timezone.utc)
 
     # Check cache
@@ -56,13 +64,17 @@ def _get_prices(scryfall_id):
         try:
             with open(fpath) as f:
                 cached = json.load(f)
+            if not isinstance(cached, dict):
+                raise ValueError("cache entry is not an object")
             fetched_at = cached.get("fetched_at", "")
             if fetched_at:
                 fetched_dt = datetime.fromisoformat(fetched_at)
+                if fetched_dt.tzinfo is None:
+                    fetched_dt = fetched_dt.replace(tzinfo=timezone.utc)
                 age = (now - fetched_dt).total_seconds()
                 if age < CACHE_TTL_SECONDS:
                     return cached["prices"], True
-        except (json.JSONDecodeError, KeyError, ValueError):
+        except (json.JSONDecodeError, KeyError, ValueError, TypeError):
             pass
 
     # Cache miss or stale — fetch fresh
@@ -74,8 +86,7 @@ def _get_prices(scryfall_id):
             "fetched_at": now.isoformat(),
         }
         try:
-            with open(fpath, "w") as f:
-                json.dump(cache_entry, f, indent=2)
+            write_json_atomic(fpath, cache_entry)
         except OSError:
             pass
         return prices, False
@@ -85,8 +96,9 @@ def _get_prices(scryfall_id):
         try:
             with open(fpath) as f:
                 cached = json.load(f)
-            return cached["prices"], True  # stale cache
-        except (json.JSONDecodeError, KeyError):
+            if isinstance(cached, dict):
+                return cached["prices"], True  # stale cache
+        except (json.JSONDecodeError, KeyError, TypeError, OSError):
             pass
 
     return None, False
@@ -109,7 +121,7 @@ def api_pricing_fetch():
 
     result = {}
     for sid in ids:
-        if not sid or not isinstance(sid, str):
+        if not is_scryfall_id(sid):
             continue
         prices, _ = _get_prices(sid)
         if prices is not None:

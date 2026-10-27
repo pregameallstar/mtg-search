@@ -46,6 +46,9 @@ QA*.md
 # Saved eval reports
 eval_reports/*.json
 
+# Server-side prompt overrides (keyed by browser id; not source)
+prompt_store/
+
 # Test reports (generated artifacts)
 test_reports/
 test_scripts/

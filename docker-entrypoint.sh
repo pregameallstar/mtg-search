@@ -13,7 +13,7 @@ cleanup() {
 trap cleanup TERM INT
 
 echo "Starting MCP SSE server on :${MCP_SSE_PORT:-8765}…"
-python -m mtg.mcp_server --transport sse --port "${MCP_SSE_PORT:-8765}" --host "${MCP_HOST:-0.0.0.0}" &
+python -m mtg.mcp_server --transport sse --port "${MCP_SSE_PORT:-8765}" --host "${MCP_HOST:-127.0.0.1}" &
 mcp_pid=$!
 
 echo "Starting MCPO proxy on :${MCPO_PORT:-8000}…"
@@ -27,15 +27,16 @@ flask_pid=$!
 # ponytail: wait for all three; restart any that die.
 # Flask is the primary — if it exits, shut everything down.
 while true; do
-    wait -n $mcp_pid $mcpo_pid $flask_pid
-    dead=$?
+    # A child exiting nonzero is expected (that is why we are here). Without
+    # `|| true`, `set -e` would terminate the script before the restart checks.
+    wait -n $mcp_pid $mcpo_pid $flask_pid || true
     if ! kill -0 $flask_pid 2>/dev/null; then
         echo "Flask died — shutting down."
         cleanup
     fi
     if ! kill -0 $mcp_pid 2>/dev/null; then
         echo "MCP SSE died — restarting…"
-        python -m mtg.mcp_server --transport sse --port "${MCP_SSE_PORT:-8765}" --host "${MCP_HOST:-0.0.0.0}" &
+        python -m mtg.mcp_server --transport sse --port "${MCP_SSE_PORT:-8765}" --host "${MCP_HOST:-127.0.0.1}" &
         mcp_pid=$!
     fi
     if ! kill -0 $mcpo_pid 2>/dev/null; then

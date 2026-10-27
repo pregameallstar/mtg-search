@@ -302,6 +302,24 @@
 </div>
 
 <script>
+    // Shared escaping helpers. LLM output, imported evalData, and web-search
+    // snippets must be treated as text, never as markup.
+    function __mtgEsc(value) {
+        return String(value == null ? '' : value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+    function __mtgEscAttr(value) {
+        return __mtgEsc(value)
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+    function __mtgScryfallId(value) {
+        var s = String(value || '');
+        return /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(s) ? s : '';
+    }
+
     // ——— Card flip toggle for DFC cards ———
     (function() {
         var btn = document.getElementById('card-flip-btn');
@@ -318,7 +336,7 @@
         var flipped = false;
 
         function formatOracle(text) {
-            return text.replace(/\n/g, '<br>');
+            return __mtgEsc(text).replace(/\n/g, '<br>');
         }
 
         btn.addEventListener('click', function() {
@@ -489,17 +507,18 @@
             var section = document.getElementById('similar-commanders');
             var html = '';
             results.forEach(function(c) {
-                var imgSrc = c.scryfallId
-                    ? '/img/normal/front/' + c.scryfallId[0] + '/' + c.scryfallId[1] + '/' + c.scryfallId + '.jpg'
+                var sid = __mtgScryfallId(c.scryfallId);
+                var imgSrc = sid
+                    ? '/img/normal/front/' + sid[0] + '/' + sid[1] + '/' + sid + '.jpg'
                     : '';
-                var imgHtml = c.scryfallId
-                    ? '<img src="' + imgSrc + '" alt="' + c.name + '" loading="lazy" width="244" height="340">'
-                    : '<div class="card-placeholder">' + c.name + '</div>';
-                html += '<div class="card-cell" data-set-code="' + c.setCode + '" data-number="' + c.number + '">'
+                var imgHtml = sid
+                    ? '<img src="' + imgSrc + '" alt="' + __mtgEscAttr(c.name) + '" loading="lazy" width="244" height="340">'
+                    : '<div class="card-placeholder">' + __mtgEsc(c.name) + '</div>';
+                html += '<div class="card-cell" data-set-code="' + __mtgEscAttr(c.setCode) + '" data-number="' + __mtgEscAttr(c.number) + '">'
                     + imgHtml
                     + '<div class="cell-footer">'
-                    + '<div class="cell-name" title="' + c.name + '">' + c.name + '</div>'
-                    + '<div class="cell-actions"><span class="similarity-score">' + c.score + '%</span></div>'
+                    + '<div class="cell-name" title="' + __mtgEscAttr(c.name) + '">' + __mtgEsc(c.name) + '</div>'
+                    + '<div class="cell-actions"><span class="similarity-score">' + __mtgEsc(c.score) + '%</span></div>'
                     + '</div></div>';
             });
             grid.innerHTML = html;
@@ -547,47 +566,6 @@
     (function() {
         var exportBtn = document.getElementById('export-report');
         if (!exportBtn) return;
-
-        function buildExportHTML(data, type, name) {
-            var label = type === 'unique_build' ? 'Unique Build' : 'Strategy';
-            var html = '<h3 style="font-size:0.9rem; margin-bottom:0.5rem;">' + label + ': ' + name + '</h3>';
-            html += '<div class="eval-columns" style="margin:0 0 1rem 0;">';
-            html += '<div class="eval-column"><h2 style="font-size:0.85rem;">Strengths</h2><ul class="eval-list strengths">';
-            (data.strengths || []).forEach(function(s) { html += '<li>' + s + '</li>'; });
-            html += '</ul></div>';
-            html += '<div class="eval-column"><h2 style="font-size:0.85rem;">Weaknesses</h2><ul class="eval-list weaknesses">';
-            (data.weaknesses || []).forEach(function(w) { html += '<li>' + w + '</li>'; });
-            html += '</ul></div></div>';
-            if (data.priorities && data.priorities.length) {
-                html += '<h2 style="font-size:0.85rem; margin-bottom:0.5rem;">Deck-Building Priorities</h2><div class="eval-strategies" style="margin-bottom:1rem;">';
-                data.priorities.forEach(function(p, i) {
-                    html += '<div class="eval-strategy" style="padding:0.5rem 0.75rem;"><h3 style="font-size:0.78rem;">' + (i+1) + '. ' + (p.category || '') + '</h3><p style="font-size:0.75rem;">' + (p.reason || '') + '</p></div>';
-                });
-                html += '</div>';
-            }
-            if (data.win_conditions && data.win_conditions.length) {
-                html += '<h2 style="font-size:0.85rem; margin-bottom:0.5rem;">Primary Win Conditions</h2><div class="eval-strategies">';
-                data.win_conditions.forEach(function(wc) {
-                    html += '<div class="eval-strategy" style="padding:0.5rem 0.75rem;"><h3 style="font-size:0.78rem;">' + (wc.name || '') + '</h3><p style="font-size:0.75rem;">' + (wc.description || '') + '</p></div>';
-                });
-                html += '</div>';
-            }
-            if (data.example_cards && data.example_cards.length) {
-                html += '<h2 style="font-size:0.85rem; margin-bottom:0.5rem;">Example Cards</h2><div style="display:flex; flex-wrap:wrap; gap:0.75rem; margin-bottom:1rem;">';
-                data.example_cards.forEach(function(rc) {
-                    var imgTag = rc.scryfallId
-                        ? '<img src="/img/normal/front/' + rc.scryfallId[0] + '/' + rc.scryfallId[1] + '/' + rc.scryfallId + '.jpg" alt="' + rc.name + '" loading="lazy" class="card-zoom" style="width:244px; height:340px; border-radius:10px; display:block; margin-bottom:0.3rem; cursor:pointer;">'
-                        : '<div class="card-placeholder" style="width:244px; height:340px;">' + rc.name + '</div>';
-                    var cellClass = rc.setCode && rc.number ? 'card-cell' : '';
-                    var cellAttrs = rc.setCode && rc.number ? ' data-set-code="' + rc.setCode + '" data-number="' + rc.number + '"' : '';
-                    html += '<div class="' + cellClass + '"' + cellAttrs + ' style="text-align:center;">' + imgTag
-                        + '<div style="font-size:0.78rem; font-weight:600; margin-bottom:0.15rem;">' + rc.name + '</div>'
-                        + '<div style="font-size:1rem; color:var(--text-dim); line-height:1.3;">' + (rc.reason || '') + '</div></div>';
-                });
-                html += '</div>';
-            }
-            return html;
-        }
 
         exportBtn.addEventListener('click', function() {
             var page = document.querySelector('.similar-page');
@@ -656,7 +634,9 @@
             Promise.all([Promise.all(cssPromises), ddCacheReady]).then(function(results) {
                 var styles = results[0];
                 var ddCache = results[1];
-                var cacheJSON = JSON.stringify(ddCache);
+                // Prevent a model/card string containing a closing script tag
+                // from breaking out of the embedded script in the exported file.
+                var cacheJSON = JSON.stringify(ddCache).replace(/</g, '\\u003c');
 
                 // Inline all card images as base64 data URIs so the export works offline.
                 var imgs = clone.querySelectorAll('img[src^="/img/"]');
@@ -692,7 +672,7 @@
                     });
 
                     var html = '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width, initial-scale=1.0">\n<title>'
-                        + document.title + '</title>\n'
+                        + __mtgEsc(document.title) + '</title>\n'
                         + styles.join('\n')
                     + '</head>\n<body style="max-width:900px; margin:2rem auto; padding:0 1rem; height:auto; overflow:visible; color:var(--text); background:var(--bg); font-family:sans-serif;">\n'
                     + bodyHTML
@@ -707,43 +687,45 @@
                     + '</div></div>\n'
                     + '<script>'
                     + 'var _deepDiveCache = ' + cacheJSON + ';\n'
+                    + 'function esc(v){return String(v==null?"":v).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/\'/g,"&#39;");}\n'
+                    + 'function sid(v){var s=String(v||"");return /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(s)?s:"";}\n'
                     + 'function buildPanelHTML(data,type,name){'
                     + 'var label=type==="unique_build"?"Unique Build":"Strategy";'
                     + 'var h=\'<button class="panel-close">&times;</button>\';'
-                    + 'h+=\'<h2 style="font-size:1.1rem;margin-bottom:0.25rem;">\'+label+\': \'+name+\'</h2>\';'
+                    + 'h+=\'<h2 style="font-size:1.1rem;margin-bottom:0.25rem;">\'+label+\': \'+esc(name)+\'</h2>\';'
                     + 'h+=\'<p style="color:var(--text-dim);font-size:0.85rem;margin-bottom:1.5rem;">Detailed analysis generated by LLM</p>\';'
                     + 'h+=\'<div class="eval-columns" style="margin:0 0 1rem 0;">\';'
                     + 'h+=\'<div class="eval-column"><h2 style="font-size:0.9rem;">Strengths</h2><ul class="eval-list strengths">\';'
-                    + '(data.strengths||[]).forEach(function(s){h+=\'<li>\'+s+\'</li>\';});'
+                    + '(data.strengths||[]).forEach(function(s){h+=\'<li>\'+esc(s)+\'</li>\';});'
                     + 'h+=\'</ul></div>\';'
                     + 'h+=\'<div class="eval-column"><h2 style="font-size:0.9rem;">Weaknesses</h2><ul class="eval-list weaknesses">\';'
-                    + '(data.weaknesses||[]).forEach(function(w){h+=\'<li>\'+w+\'</li>\';});'
+                    + '(data.weaknesses||[]).forEach(function(w){h+=\'<li>\'+esc(w)+\'</li>\';});'
                     + 'h+=\'</ul></div></div>\';'
                     + 'if(data.priorities&&data.priorities.length){'
                     + 'h+=\'<h2 style="font-size:0.9rem;margin-bottom:0.5rem;">Deck-Building Priorities</h2><div class="eval-strategies" style="margin-bottom:1rem;">\';'
                     + 'data.priorities.forEach(function(p,i){'
-                    + 'h+=\'<div class="eval-strategy" style="padding:0.5rem 0.75rem;"><h3 style="font-size:0.8rem;">\'+(i+1)+\'. \'+(p.category||"")+\'</h3><p style="font-size:0.78rem;">\'+(p.reason||"")+\'</p></div>\';'
+                    + 'h+=\'<div class="eval-strategy" style="padding:0.5rem 0.75rem;"><h3 style="font-size:0.8rem;">\'+(i+1)+\'. \'+esc(p.category||"")+\'</h3><p style="font-size:0.78rem;">\'+esc(p.reason||"")+\'</p></div>\';'
                     + '});'
                     + 'h+=\'</div>\';}'
                     + 'if(data.win_conditions&&data.win_conditions.length){'
                     + 'h+=\'<h2 style="font-size:0.9rem;margin-bottom:0.5rem;">Primary Win Conditions</h2><div class="eval-strategies">\';'
                     + 'data.win_conditions.forEach(function(wc){'
-                    + 'h+=\'<div class="eval-strategy" style="padding:0.5rem 0.75rem;"><h3 style="font-size:0.8rem;">\'+(wc.name||"")+\'</h3><p style="font-size:0.78rem;">\'+(wc.description||"")+\'</p></div>\';'
+                    + 'h+=\'<div class="eval-strategy" style="padding:0.5rem 0.75rem;"><h3 style="font-size:0.8rem;">\'+esc(wc.name||"")+\'</h3><p style="font-size:0.78rem;">\'+esc(wc.description||"")+\'</p></div>\';'
                     + '});'
                     + 'h+=\'</div>\';}'
                     + 'if(data.example_cards&&data.example_cards.length){'
                     + 'h+=\'<h2 style="font-size:0.9rem;margin-bottom:0.5rem;">Example Cards</h2><div style="display:flex;flex-wrap:wrap;gap:0.75rem;margin-bottom:1rem;">\';'
-                    + 'data.example_cards.forEach(function(rc){'
-                    + 'var img=rc._imgData?\'<img src="\'+rc._imgData+\'" alt="\'+rc.name+\'" loading=lazy class=card-zoom style="width:244px;height:340px;border-radius:10px;display:block;margin-bottom:0.3rem;cursor:pointer">\''
-                    + ':rc.scryfallId?"<img src=/img/normal/front/"+rc.scryfallId[0]+"/"+rc.scryfallId[1]+"/"+rc.scryfallId+".jpg alt="+rc.name+" loading=lazy class=card-zoom style=width:244px;height:340px;border-radius:10px;display:block;margin-bottom:0.3rem;cursor:pointer>"'
-                    + ':"<div class=card-placeholder style=width:244px;height:340px>"+rc.name+"</div>";'
+                    + 'data.example_cards.forEach(function(rc){var sidv=sid(rc.scryfallId);'
+                    + 'var img=rc._imgData?\'<img src="\'+rc._imgData+\'" alt="\'+esc(rc.name)+\'" loading=lazy class=card-zoom style="width:244px;height:340px;border-radius:10px;display:block;margin-bottom:0.3rem;cursor:pointer">\''
+                    + ':sidv?"<img src=/img/normal/front/"+sidv[0]+"/"+sidv[1]+"/"+sidv+".jpg alt="+esc(rc.name)+" loading=lazy class=card-zoom style=width:244px;height:340px;border-radius:10px;display:block;margin-bottom:0.3rem;cursor:pointer>"'
+                    + ':"<div class=card-placeholder style=width:244px;height:340px>"+esc(rc.name)+"</div>";'
                     + 'if(rc.setCode&&rc.number){'
-                    + 'h+=\'<div class="card-cell" data-set-code="\'+rc.setCode+\'" data-number="\'+rc.number+\'" style="text-align:center;">\'+img'
+                    + 'h+=\'<div class="card-cell" data-set-code="\'+esc(rc.setCode)+\'" data-number="\'+esc(rc.number)+\'" style="text-align:center;">\'+img'
                     + '}else{'
                     + 'h+=\'<div style="text-align:center;">\'+img'
                     + '}'
-                    + 'h+=\'<div style="font-size:0.72rem;font-weight:600;margin-bottom:0.15rem;">\'+(rc.name||"")+\'</div>\''
-                    + '+\'<div style="font-size:1rem;color:var(--text-dim);line-height:1.3;">\'+(rc.reason||"")+\'</div></div>\';'
+                    + 'h+=\'<div style="font-size:0.72rem;font-weight:600;margin-bottom:0.15rem;">\'+esc(rc.name||"")+\'</div>\''
+                    + '+\'<div style="font-size:1rem;color:var(--text-dim);line-height:1.3;">\'+esc(rc.reason||"")+\'</div></div>\';'
                     + '});'
                     + 'h+=\'</div>\';}'
                     + 'return h;}'
@@ -958,16 +940,16 @@
         function buildPanelHTML(data, type, name) {
             var label = type === 'unique_build' ? 'Unique Build' : 'Strategy';
             var html = '<button class="panel-close" onclick="document.getElementById(\'deep-dive-panel\').classList.remove(\'open\')">&times;</button>';
-            html += '<h2 style="font-size:1.1rem; margin-bottom:0.25rem;">' + label + ': ' + name + '</h2>';
+            html += '<h2 style="font-size:1.1rem; margin-bottom:0.25rem;">' + label + ': ' + __mtgEsc(name) + '</h2>';
             html += '<p style="color:var(--text-dim); font-size:0.85rem; margin-bottom:1.5rem;">Detailed analysis generated by LLM</p>';
 
             // Strengths & Weaknesses
             html += '<div class="eval-columns" style="margin:0 0 1rem 0;">';
             html += '<div class="eval-column"><h2 style="font-size:0.9rem;">Strengths</h2><ul class="eval-list strengths">';
-            (data.strengths || []).forEach(function(s) { html += '<li>' + s + '</li>'; });
+            (data.strengths || []).forEach(function(s) { html += '<li>' + __mtgEsc(s) + '</li>'; });
             html += '</ul></div>';
             html += '<div class="eval-column"><h2 style="font-size:0.9rem;">Weaknesses</h2><ul class="eval-list weaknesses">';
-            (data.weaknesses || []).forEach(function(w) { html += '<li>' + w + '</li>'; });
+            (data.weaknesses || []).forEach(function(w) { html += '<li>' + __mtgEsc(w) + '</li>'; });
             html += '</ul></div></div>';
 
             // Priorities
@@ -975,7 +957,7 @@
                 html += '<h2 style="font-size:0.9rem; margin-bottom:0.5rem;">Deck-Building Priorities</h2>';
                 html += '<div class="eval-strategies" style="margin-bottom:1rem;">';
                 data.priorities.forEach(function(p, i) {
-                    html += '<div class="eval-strategy" style="padding:0.5rem 0.75rem;"><h3 style="font-size:0.8rem;">' + (i+1) + '. ' + (p.category || '') + '</h3><p style="font-size:0.78rem;">' + (p.reason || '') + '</p></div>';
+                    html += '<div class="eval-strategy" style="padding:0.5rem 0.75rem;"><h3 style="font-size:0.8rem;">' + (i+1) + '. ' + __mtgEsc(p.category || '') + '</h3><p style="font-size:0.78rem;">' + __mtgEsc(p.reason || '') + '</p></div>';
                 });
                 html += '</div>';
             }
@@ -985,7 +967,7 @@
                 html += '<h2 style="font-size:0.9rem; margin-bottom:0.5rem;">Primary Win Conditions</h2>';
                 html += '<div class="eval-strategies">';
                 data.win_conditions.forEach(function(wc) {
-                    html += '<div class="eval-strategy" style="padding:0.5rem 0.75rem;"><h3 style="font-size:0.8rem;">' + (wc.name || '') + '</h3><p style="font-size:0.78rem;">' + (wc.description || '') + '</p></div>';
+                    html += '<div class="eval-strategy" style="padding:0.5rem 0.75rem;"><h3 style="font-size:0.8rem;">' + __mtgEsc(wc.name || '') + '</h3><p style="font-size:0.78rem;">' + __mtgEsc(wc.description || '') + '</p></div>';
                 });
                 html += '</div>';
             }
@@ -995,14 +977,17 @@
                 html += '<h2 style="font-size:0.9rem; margin-bottom:0.5rem;">Example Cards</h2>';
                 html += '<div style="display:flex; flex-wrap:wrap; gap:0.75rem; margin-bottom:1rem;">';
                 data.example_cards.forEach(function(rc) {
-                    var imgTag = rc.scryfallId
-                        ? '<img src="/img/normal/front/' + rc.scryfallId[0] + '/' + rc.scryfallId[1] + '/' + rc.scryfallId + '.jpg" alt="' + rc.name + '" loading="lazy" class="card-zoom" style="width:244px; height:340px; border-radius:10px; display:block; margin-bottom:0.3rem; cursor:pointer;">'
-                        : '<div class="card-placeholder" style="width:244px; height:340px;">' + rc.name + '</div>';
+                    var sid = __mtgScryfallId(rc.scryfallId);
+                    var imgTag = sid
+                        ? '<img src="/img/normal/front/' + sid[0] + '/' + sid[1] + '/' + sid + '.jpg" alt="' + __mtgEscAttr(rc.name) + '" loading="lazy" class="card-zoom" style="width:244px; height:340px; border-radius:10px; display:block; margin-bottom:0.3rem; cursor:pointer;">'
+                        : '<div class="card-placeholder" style="width:244px; height:340px;">' + __mtgEsc(rc.name) + '</div>';
                     var cellCls = rc.setCode && rc.number ? 'card-cell' : '';
-                    var cellAttr = rc.setCode && rc.number ? ' data-set-code="' + rc.setCode + '" data-number="' + rc.number + '"' : '';
+                    var cellAttr = rc.setCode && rc.number
+                        ? ' data-set-code="' + __mtgEscAttr(rc.setCode) + '" data-number="' + __mtgEscAttr(rc.number) + '"'
+                        : '';
                     html += '<div class="' + cellCls + '"' + cellAttr + ' style="text-align:center;">' + imgTag
-                        + '<div style="font-size:0.78rem; font-weight:600; margin-bottom:0.15rem;">' + rc.name + '</div>'
-                        + '<div style="font-size:1rem; color:var(--text-dim); line-height:1.3;">' + (rc.reason || '') + '</div></div>';
+                        + '<div style="font-size:0.78rem; font-weight:600; margin-bottom:0.15rem;">' + __mtgEsc(rc.name) + '</div>'
+                        + '<div style="font-size:1rem; color:var(--text-dim); line-height:1.3;">' + __mtgEsc(rc.reason || '') + '</div></div>';
                 });
                 html += '</div>';
             }
@@ -1050,7 +1035,7 @@
                     btn.textContent = 'Deep Dive';
                     btn.disabled = false;
                     if (data.error) {
-                        sheet.innerHTML = '<div class="panel-loading" style="color:#f85149;">Error: ' + data.error + '</div>';
+                        sheet.innerHTML = '<div class="panel-loading" style="color:#f85149;">Error: ' + __mtgEsc(data.error) + '</div>';
                     } else {
                         window._deepDiveCache[loadKey] = data.data;
                         btn.setAttribute('data-done', '1');
@@ -1061,7 +1046,7 @@
                 .catch(function(err) {
                     btn.textContent = 'Deep Dive';
                     btn.disabled = false;
-                    sheet.innerHTML = '<div class="panel-loading" style="color:#f85149;">Network error: ' + err.message + '</div>';
+                    sheet.innerHTML = '<div class="panel-loading" style="color:#f85149;">Network error: ' + __mtgEsc(err && err.message) + '</div>';
                 });
         });
     })();
