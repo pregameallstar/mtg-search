@@ -2873,35 +2873,7 @@
             })
             .then(renderDeckSearchResults)
             .catch(function () {
-                // One-release fallback for the old HTML search path.
-                runDeckSearchLegacy(params);
-            });
-    }
-
-    function runDeckSearchLegacy(params) {
-        var grid = $('#deck-search-results');
-        var count = $('#deck-search-count');
-        var pagination = $('#deck-search-pagination');
-        fetch('/search?' + params.toString())
-            .then(function (r) { return r.text(); })
-            .then(function (html) {
-                var doc = new DOMParser().parseFromString(html, 'text/html');
-                var results = doc.querySelector('.card-grid');
-                var resultCount = doc.querySelector('.result-count');
-                var pageCount = doc.querySelector('.pagination .page-indicator');
-                if (grid) {
-                    grid.innerHTML = results ? results.innerHTML : '<div>No cards found.</div>';
-                    if (results) makeCardsDraggable(grid);
-                }
-                if (count) count.textContent = resultCount ? resultCount.textContent : '';
-                var m = pageCount ? pageCount.textContent.match(/of\s+(\d+)/) : null;
-                searchTotalPages = m ? parseInt(m[1], 10) : 0;
-                searchPage = 1;
-                renderSearchPagination();
-            })
-            .catch(function () {
                 if (grid) grid.innerHTML = '<div>Search failed. Try again.</div>';
-                if (pagination) pagination.innerHTML = '';
             });
     }
 

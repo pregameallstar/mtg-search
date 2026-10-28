@@ -144,3 +144,65 @@ def test_deck_review_page_lists_saved_decks(client, tmp_path, monkeypatch):
     assert b'<select id="review-deck-name"' in response.data
     assert b"Review Test" in response.data
     assert b"Alela, Artful Provocateur" in response.data
+
+
+def test_saved_review_stale_when_deck_changes(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(review_bp, "DECKS_DIR", str(tmp_path))
+    write_json_atomic(tmp_path / "Review_Test.json", _deck())
+    response = client.post("/api/deck/review/run", json={
+        "deck": _deck(), "options": {"use_llm": False},
+    })
+    job_id = response.get_json()["jobId"]
+    _wait_for_job(client, job_id)
+    saved = client.post("/api/deck/review/save", json={"jobId": job_id})
+    filename = saved.get_json()["filename"]
+    fresh = client.get(f"/api/deck/review/report?filename={filename}").get_json()
+    assert fresh["stale"] is False
+
+    changed = _deck()
+    changed["cards"].append({"name": "Cultivate", "quantity": 1})
+    write_json_atomic(tmp_path / "Review_Test.json", changed)
+    stale = client.get(f"/api/deck/review/report?filename={filename}").get_json()
+    assert stale["stale"] is True
+    reports = client.get("/api/deck/review/reports?deck=Review Test").get_json()["reports"]
+    assert any(report["filename"] == filename and report["stale"] for report in reports)
+
+
+def test_review_export_markdown_and_html(client):
+    response = client.post("/api/deck/review/run", json={
+        "deck": _deck(), "options": {"use_llm": False},
+    })
+    job_id = response.get_json()["jobId"]
+    _wait_for_job(client, job_id)
+    saved = client.post("/api/deck/review/save", json={"jobId": job_id})
+    filename = saved.get_json()["filename"]
+
+    md = client.get(f"/api/deck/review/export?format=markdown&filename={filename}")
+    assert md.status_code == 200
+    assert b"# Deck Doctor" in md.data
+    assert b"Review Test" in md.data
+    assert "attachment" in md.headers.get("Content-Disposition", "")
+
+    html = client.get(f"/api/deck/review/export?format=html&filename={filename}")
+    assert html.status_code == 200
+    assert b"<html" in html.data
+    assert b"Review Test" in html.data
+
+    job_export = client.get(f"/api/deck/review/export?format=markdown&jobId={job_id}")
+    assert job_export.status_code == 200
+
+    assert client.get("/api/deck/review/export").status_code == 400
+    assert client.get("/api/deck/review/export?format=pdf&jobId=x").status_code == 400
+
+
+def test_mcp_review_deck_deterministic(search_db_path, tmp_path, monkeypatch):
+    from mtg import mcp_server
+    from mtg.storage import write_json_atomic
+
+    monkeypatch.setattr(mcp_server, "db_path", lambda *args, **kwargs: str(search_db_path))
+    monkeypatch.setattr(mcp_server, "DECKS_DIR", str(tmp_path))
+    write_json_atomic(tmp_path / "Review_Test.json", _deck())
+    result = mcp_server.review_deck("Review Test")
+    assert "audit" in result
+    assert result["audit"]["counts"]["total"] == 4
+    assert "candidates" not in result

@@ -19,6 +19,7 @@ from mtg.prompts import (
     COMMANDER_SYSTEM_PROMPT,
     DEEPDIVE_SYSTEM_PROMPT,
     DECK_REVIEW_SYSTEM_PROMPT,
+    DECK_REVIEW_VERIFY_SYSTEM_PROMPT,
     VERIFY_SYSTEM_PROMPT,
 )
 from mtg.shared import PROJECT_ROOT
@@ -31,6 +32,7 @@ DEFAULT_PROMPTS = {
     "deepdive_prompt": DEEPDIVE_SYSTEM_PROMPT,
     "verify_prompt": VERIFY_SYSTEM_PROMPT,
     "review_prompt": DECK_REVIEW_SYSTEM_PROMPT,
+    "review_verify_prompt": DECK_REVIEW_VERIFY_SYSTEM_PROMPT,
 }
 
 PROMPT_KEYS = tuple(DEFAULT_PROMPTS)

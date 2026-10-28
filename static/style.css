@@ -4142,3 +4142,20 @@ main:has(.card-templates-page) {
 }
 .review-apply-add:hover { color: #3fb950; border-color: #3fb950; }
 .review-apply-cut:hover { color: #f85149; border-color: #f85149; }
+
+.review-stale-banner {
+    padding: 0.7rem 0.9rem;
+    margin-bottom: 1rem;
+    border: 1px solid #d29922;
+    border-radius: 8px;
+    background: #2a2314;
+    color: #e3b341;
+    font-size: 0.8rem;
+}
+.review-apply-add:disabled, .review-apply-cut:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.review-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.review-actions .btn-secondary { padding: 0.4rem 0.7rem; }

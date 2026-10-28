@@ -30,7 +30,7 @@ A self-hosted Magic: The Gathering card search engine, deck builder, and Command
   - **Card templates** — pre-built card lists you can load into the Deck Builder
   - **Guideline templates** — category targets (Ramp, Removal, Card Draw, etc.) with expected counts, used to score decks against deck-building standards
 - **Commander Finder** — browse commander-eligible cards by color identity, EDHREC popularity, partner/background status, or a strategy description (semantic when embeddings are available, text fallback otherwise).
-- **Deck Doctor** — review a specific 100-card deck. A deterministic audit covers legality, curve, roles, health, and bracket/salt; embeddings retrieve real candidate cards grouped by role gap; an optional LLM writes a coaching report; every recommendation is validated against the deck and DB. Reports are saved in `deck_reviews/` and keyed by a deck fingerprint.
+- **Deck Doctor** — review a specific 100-card deck. A deterministic audit covers legality, curve, roles, health, and bracket/salt; embeddings retrieve real candidate cards grouped by role gap; an optional LLM writes a coaching report; every recommendation is validated against the deck and DB. Reports are saved in `deck_reviews/`, keyed by a deck fingerprint, and flagged stale when the deck changes. Reviews export as Markdown or HTML. An optional second LLM pass verifies the report.
 - **MCP server** — expose `semantic_search`, `keyword_search`, `search_cards`, `get_card`, `list_decks`, and `get_deck` tools to LLM agents (Claude Code, OpenWebUI, etc.) via SSE + MCPO proxy.
 - **Database ingest** — drag-and-drop upload of MTGJSON `AllPrintings.sqlite` (or `.tar.gz`/`.zip` archives). Deduplication, validation, and embedding rebuild run automatically.
 - **Lazy image cache** — first card view fetches from Scryfall and caches locally. Subsequent views serve from disk.
@@ -162,7 +162,7 @@ The pipeline runs five steps:
 4. **LLM review** — optional. The model chooses only from the candidate list and writes cuts, adds, mana-base notes, win conditions, bracket fit, and next steps.
 5. **Validate** — invalid adds/cuts are rejected; only real cards in the right deck/color identity survive.
 
-The page shows scorecards, cuts, adds with apply buttons, saved reviews, and validation notes. Nothing is applied automatically. Review reports live in `deck_reviews/` and are fingerprinted.
+The page shows scorecards, cuts, adds with apply buttons, saved reviews, stale warnings, and validation notes. Nothing is applied automatically. Review reports live in `deck_reviews/` and are fingerprinted; export them as Markdown or HTML. An optional second LLM pass checks the report against the candidate list and deck.
 
 ### Card Detail
 
@@ -305,7 +305,7 @@ Each prompt has a "Reset to Default" button. Prompts are stored server-side in `
 
 ## MCP Server
 
-The MCP server exposes six tools to LLM agents:
+The MCP server exposes seven tools to LLM agents:
 
 ### `semantic_search`
 Find cards by mechanical description using embedding vectors. Describes what the card **does**, not community slang:
@@ -335,6 +335,9 @@ Optional `name` substring filter.
 ### `get_deck`
 Get a saved deck's main-board and section cards by exact deck name. Cached
 Commander Eval data is intentionally excluded.
+
+### `review_deck`
+Run a deterministic Deck Doctor audit on a saved deck. Returns counts, curve, roles, role gaps, legality, health, and bracket/salt. Set `include_candidates=true` for real candidate adds and cut suggestions. Does not call an LLM and does not modify the deck.
 
 ### Usage
 
@@ -373,7 +376,7 @@ mtg/                # Application package
 │   ├── decks.py           #  /deck-builder, /saved-decks, /api/deck/*
 │   ├── templates_bp.py    #  /card-templates, /api/template/*
 │   ├── deck_analysis.py    #  /api/cards/roles, /api/deck/analyze
-│   ├── deck_review.py      #  /deck-review, /api/deck/review/*
+│   ├── deck_review.py      #  /deck-review, /api/deck/review/* (jobs, reports, export)
 │   └── tags.py            #  /api/tags/*
 ├── shared.py        #  db_path, get_db, constants, Jinja helpers
 ├── card_query.py    #  Canonical search query builder (SQL, no Flask)
@@ -383,7 +386,7 @@ mtg/                # Application package
 ├── deck_rules.py    #  Commander count/singleton/color-identity rules
 ├── deck_stats.py    #  Deterministic deck audit + health score
 ├── deck_enrich.py   #  Saved-deck card → DB row enrichment
-├── deck_review.py   #  Deck Doctor pipeline (audit, candidates, LLM, validation)
+├── deck_review.py   #  Deck Doctor pipeline (audit, candidates, LLM, validation, export)
 ├── review_cache.py  #  In-memory background review jobs
 ├── eval_cache.py    #  Server-side in-memory cache for eval analysis
 ├── similarity.py    #  TF-IDF + factor-gate scoring engine

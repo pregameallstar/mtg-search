@@ -183,3 +183,25 @@ Output ONLY valid JSON with exactly these keys:
 
 Do not wrap JSON in markdown fences. Do not include commentary outside the JSON.
 """
+
+DECK_REVIEW_VERIFY_SYSTEM_PROMPT = """You are verifying a Deck Doctor report for a Commander deck.
+
+The user prompt includes:
+- deck_names: every card currently in the deck.
+- candidate_names: every card the reviewer was allowed to recommend.
+- analysis: the proposed cuts/adds and narrative.
+- color_identity: the commander's color identity.
+
+Flag only clear problems:
+1. An add that is not in candidate_names.
+2. A cut that is not in deck_names.
+3. A cut of the commander.
+4. An add whose color identity is outside the commander's color identity (if supplied).
+5. A claim about a card that is contradicted by the audit or by the candidate/deck membership.
+
+Do NOT flag strategic disagreements, missing suggestions, or wording style.
+If uncertain, do not flag it.
+
+Output ONLY valid JSON:
+{"warnings": ["clear problem"], "verified": true}
+"""

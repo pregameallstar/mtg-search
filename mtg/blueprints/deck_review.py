@@ -9,14 +9,23 @@ from datetime import datetime, timezone
 from flask import (
     Blueprint,
     jsonify,
+    make_response,
     render_template,
     request,
     session,
 )
 import mtg.review_cache as review_cache
 from mtg import deck_review
+from mtg.deck_enrich import enrich_deck
+from mtg.deck_stats import deck_fingerprint
 from mtg.prompt_store import get_prompt
-from mtg.shared import DECKS_DIR, REVIEWS_PATH, _list_json_files, sanitize_filename
+from mtg.shared import (
+    DECKS_DIR,
+    REVIEWS_PATH,
+    _list_json_files,
+    get_db,
+    sanitize_filename,
+)
 from mtg.storage import (
     StorageError,
     clean_name,
@@ -41,6 +50,30 @@ def _report_path(filename: str) -> str | None:
     if "/" in filename or "\\" in filename or ".." in filename or not filename.endswith(".json"):
         return None
     return os.path.join(REVIEWS_PATH, filename)
+
+
+def _report_stale(data: dict) -> tuple[bool, str]:
+    """Compare a saved review fingerprint with the current saved deck."""
+    deck_name = clean_name(data.get("deck", ""))
+    if not deck_name:
+        return True, "Deck name is missing."
+    try:
+        deck = _load_deck(deck_name)
+    except (StorageError, OSError):
+        deck = None
+    if deck is None:
+        return True, "The reviewed deck no longer exists."
+    options = data.get("options") if isinstance(data.get("options"), dict) else {}
+    try:
+        current = deck_fingerprint(
+            enrich_deck(get_db(), deck),
+            deck_review.fingerprint_options(options),
+        )
+    except Exception:
+        return True, "The reviewed deck could not be re-read."
+    if current != data.get("fingerprint"):
+        return True, "The deck changed since this review."
+    return False, ""
 
 
 def _llm_options() -> dict:
@@ -106,6 +139,13 @@ def api_review_run():
     options = body.get("options") if isinstance(body.get("options"), dict) else {}
     llm = _llm_options()
     use_llm = bool(options.get("use_llm", True)) and bool(llm["api_key"])
+    verify_llm = bool(options.get("verify_llm", False)) and use_llm
+    try:
+        target_bracket = int(options.get("target_bracket"))
+        if target_bracket not in (1, 2, 3, 4, 5):
+            target_bracket = None
+    except (TypeError, ValueError):
+        target_bracket = None
     try:
         max_adds = min(max(int(options.get("max_adds", 10)), 0), 20)
     except (TypeError, ValueError):
@@ -117,9 +157,11 @@ def api_review_run():
     options = {
         **options,
         "use_llm": use_llm,
+        "verify_llm": verify_llm,
         "llm": llm,
         "review_prompt": get_prompt("review_prompt"),
         "guideline": options.get("guideline") or deck.get("guideline") or "",
+        "target_bracket": target_bracket,
         "max_adds": max_adds,
         "max_cuts": max_cuts,
     }
@@ -159,7 +201,7 @@ def api_review_result():
         return jsonify({"error": job.get("error") or "Review failed."}), 500
     if job["status"] != "done" or not job.get("result"):
         return jsonify({"error": "Job is still running."}), 409
-    return jsonify({"success": True, "jobId": job_id, **job["result"]})
+    return jsonify({"success": True, "jobId": job_id, "stale": False, **job["result"]})
 
 
 def _report_summaries(deck_name: str = "") -> list[dict]:
@@ -184,6 +226,7 @@ def _report_summaries(deck_name: str = "") -> list[dict]:
         audit = data.get("audit") if isinstance(data.get("audit"), dict) else {}
         health = audit.get("health") if isinstance(audit.get("health"), dict) else {}
         bracket = audit.get("bracket") if isinstance(audit.get("bracket"), dict) else {}
+        stale, stale_reason = _report_stale(data)
         reports.append({
             "filename": filename,
             "deck": name,
@@ -192,6 +235,8 @@ def _report_summaries(deck_name: str = "") -> list[dict]:
             "verdict": analysis.get("verdict", ""),
             "health": health.get("score"),
             "bracket": bracket.get("estimate"),
+            "stale": stale,
+            "staleReason": stale_reason,
         })
     return reports
 
@@ -245,7 +290,52 @@ def api_review_report():
     data = read_json(path, default=None)
     if not isinstance(data, dict):
         return jsonify({"error": "Report not found."}), 404
-    return jsonify(data)
+    stale, stale_reason = _report_stale(data)
+    return jsonify({**data, "stale": stale, "staleReason": stale_reason})
+
+
+@deck_review_bp.route("/api/deck/review/export")
+def api_review_export():
+    """Download a saved review or completed job as Markdown/HTML."""
+    fmt = str(request.args.get("format", "markdown")).lower()
+    if fmt not in ("markdown", "md", "html"):
+        return jsonify({"error": "format must be markdown or html."}), 400
+    filename = str(request.args.get("filename", "")).strip()
+    job_id = str(request.args.get("jobId", "")).strip()
+    report = None
+    if filename:
+        path = _report_path(filename)
+        if not path:
+            return jsonify({"error": "Invalid report filename."}), 400
+        report = read_json(path, default=None)
+        if not isinstance(report, dict):
+            return jsonify({"error": "Report not found."}), 404
+    elif job_id:
+        job = review_cache.get(job_id)
+        if job is None:
+            return jsonify({"error": "Job not found."}), 404
+        if job["status"] != "done" or not job.get("result"):
+            return jsonify({"error": "Job is not finished."}), 409
+        report = job["result"]
+    else:
+        return jsonify({"error": "Provide a filename or jobId."}), 400
+
+    if fmt in ("markdown", "md"):
+        content = deck_review.review_to_markdown(report)
+        mimetype = "text/markdown; charset=utf-8"
+        extension = "md"
+    else:
+        content = deck_review.review_to_html(report)
+        mimetype = "text/html; charset=utf-8"
+        extension = "html"
+    safe_name = sanitize_filename(deck_review._report_deck_name(report) or "deck-review")
+    safe_name = safe_name.replace(".json", "")
+    response = make_response(content)
+    response.headers["Content-Type"] = mimetype
+    response.headers["Content-Disposition"] = (
+        f'attachment; filename="{safe_name}-review.{extension}"'
+    )
+    return response
 
 
 @deck_review_bp.route("/api/deck/review/delete", methods=["POST"])

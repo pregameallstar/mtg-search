@@ -18,7 +18,7 @@ import mtg.embed as embed
 import mtg.review_cache as review_cache
 from mtg.deck_enrich import enrich_deck
 from mtg.deck_stats import analyze_deck, deck_fingerprint
-from mtg.prompts import DECK_REVIEW_SYSTEM_PROMPT
+from mtg.prompts import DECK_REVIEW_SYSTEM_PROMPT, DECK_REVIEW_VERIFY_SYSTEM_PROMPT
 from mtg.roles import classify_roles
 from mtg.shared import (
     DATABASE,
@@ -482,6 +482,56 @@ def _run_llm(
     return None, last_error
 
 
+def _verify_llm(
+    deck: Mapping[str, Any],
+    analysis: Mapping[str, Any] | None,
+    candidates: Mapping[str, list[dict[str, Any]]],
+    options: Mapping[str, Any],
+) -> tuple[dict | None, str | None]:
+    if not analysis:
+        return None, None
+    if llm_generate is None:
+        return None, "LLM dependencies are not installed."
+    llm = options.get("llm") if isinstance(options.get("llm"), Mapping) else {}
+    api_key = llm.get("api_key")
+    if not api_key:
+        return None, "No LLM API key configured."
+    dtdeck = deck.get("commander") if isinstance(deck.get("commander"), Mapping) else {}
+    deck_names = [
+        str(card.get("name") or "")
+        for card in (deck.get("cards") or [])
+        if isinstance(card, Mapping)
+    ]
+    candidate_names = [
+        str(card.get("name") or "")
+        for bucket in candidates.values()
+        for card in bucket
+        if isinstance(card, Mapping)
+    ]
+    user = json.dumps({
+        "commander": {
+            "name": dtdeck.get("name"),
+            "color_identity": dtdeck.get("colorIdentity"),
+        },
+        "deck_names": deck_names,
+        "candidate_names": candidate_names,
+        "analysis": analysis,
+    }, indent=2)
+    try:
+        data = llm_generate(
+            DECK_REVIEW_VERIFY_SYSTEM_PROMPT, user,
+            backend=llm.get("backend") or None,
+            api_key=api_key,
+            base_url=llm.get("base_url") or None,
+            model=llm.get("model") or None,
+        )
+        if not isinstance(data, dict):
+            return None, "Verifier returned a non-object response."
+        return data, None
+    except Exception as exc:
+        return None, str(exc)
+
+
 def validate_analysis(
     analysis: Mapping[str, Any] | None,
     deck: Mapping[str, Any],
@@ -591,6 +641,13 @@ def run_review_job(job_id: str, deck: Mapping[str, Any], options: Mapping[str, A
             max_adds=int(options.get("max_adds") or 10),
             max_cuts=int(options.get("max_cuts") or 10),
         )
+        verification = None
+        verify_error = None
+        if options.get("verify_llm") and analysis:
+            review_cache.update(job_id, step=5, label="Second-pass LLM verification…")
+            verification, verify_error = _verify_llm(
+                enriched, analysis, candidates, options
+            )
 
         result = {
             "schemaVersion": 1,
@@ -605,12 +662,14 @@ def run_review_job(job_id: str, deck: Mapping[str, Any], options: Mapping[str, A
             "audit": audit,
             "candidates": {"adds": candidates, "cuts": cuts},
             "analysis": analysis,
+            "verification": verification,
             "validation": validation,
             "options": {
                 "target_bracket": options.get("target_bracket"),
                 "budget": options.get("budget"),
                 "currency": options.get("currency"),
                 "use_llm": bool(options.get("use_llm")),
+                "verify_llm": bool(options.get("verify_llm")),
                 "max_adds": options.get("max_adds"),
                 "max_cuts": options.get("max_cuts"),
                 "guideline": options.get("guideline"),
@@ -619,6 +678,8 @@ def run_review_job(job_id: str, deck: Mapping[str, Any], options: Mapping[str, A
                 "embed": sum(len(bucket) for bucket in candidates.values()),
                 "llm": analysis is not None,
                 "llm_error": llm_error,
+                "llm_verify": verification is not None,
+                "llm_verify_error": verify_error,
                 "prices": "cached",
                 "duration_ms": round((time.time() - started) * 1000),
             },
@@ -630,3 +691,137 @@ def run_review_job(job_id: str, deck: Mapping[str, Any], options: Mapping[str, A
     finally:
         if db is not None:
             db.close()
+
+
+def _report_deck_name(report: Mapping[str, Any]) -> str:
+    deck = report.get("deck")
+    if isinstance(deck, Mapping):
+        return str(deck.get("name") or "")
+    return str(deck or "")
+
+
+def review_to_markdown(report: Mapping[str, Any]) -> str:
+    """Render a saved review or job result as Markdown."""
+    import html as _html
+
+    audit = report.get("audit") if isinstance(report.get("audit"), Mapping) else {}
+    analysis = report.get("analysis") if isinstance(report.get("analysis"), Mapping) else {}
+    bracket = audit.get("bracket") if isinstance(audit.get("bracket"), Mapping) else {}
+    salt = bracket.get("salt") if isinstance(bracket.get("salt"), Mapping) else {}
+    health = audit.get("health") if isinstance(audit.get("health"), Mapping) else {}
+    candidates = report.get("candidates") if isinstance(report.get("candidates"), Mapping) else {}
+    adds = candidates.get("adds") if isinstance(candidates.get("adds"), Mapping) else {}
+    cuts = analysis.get("cuts") or candidates.get("cuts") or []
+    if not isinstance(cuts, list):
+        cuts = []
+
+    lines = [
+        f"# Deck Doctor — {_report_deck_name(report) or 'Untitled deck'}",
+        "",
+        f"**Health:** {health.get('score', '—')}/100  ",
+        f"**Bracket:** {bracket.get('estimate', '—')}"
+        + (f" · Salt {salt.get('score')}" if salt.get("score") is not None else ""),
+        "",
+    ]
+    if analysis.get("verdict"):
+        lines += [f"**Verdict:** {analysis['verdict']}", ""]
+    if analysis.get("summary"):
+        lines += [str(analysis["summary"]), ""]
+
+    for key, title in (
+        ("strengths", "Strengths"),
+        ("weaknesses", "Weaknesses"),
+        ("next_steps", "Next steps"),
+    ):
+        values = analysis.get(key) or []
+        if not isinstance(values, list):
+            values = []
+        if values:
+            lines += [f"## {title}", ""]
+            lines += [f"- {value}" for value in values]
+            lines.append("")
+
+    lines += ["## Cuts", ""]
+    if cuts:
+        for item in cuts:
+            if isinstance(item, Mapping):
+                lines.append(
+                    f"- **{item.get('name', '')}** — "
+                    f"{item.get('reason') or item.get('reasonHint') or ''}"
+                )
+    else:
+        lines.append("- None recommended.")
+    lines.append("")
+
+    lines += ["## Adds", ""]
+    add_items = analysis.get("adds") if isinstance(analysis.get("adds"), list) else []
+    if add_items:
+        for item in add_items:
+            if isinstance(item, Mapping):
+                lines.append(
+                    f"- **{item.get('name', '')}** — "
+                    f"{item.get('reason', '')}"
+                    + (f" ({item.get('role')})" if item.get("role") else "")
+                )
+    elif isinstance(adds, Mapping) and adds:
+        for role, bucket in adds.items():
+            for card in bucket or []:
+                lines.append(
+                    f"- **{card.get('name', '')}** — {card.get('reasonHint', '')} ({role})"
+                )
+    else:
+        lines.append("- None recommended.")
+    lines.append("")
+
+    if analysis.get("mana_base"):
+        lines += ["## Mana base", "", str(analysis["mana_base"]), ""]
+    if analysis.get("win_conditions"):
+        lines += ["## Win conditions", "", str(analysis["win_conditions"]), ""]
+    if analysis.get("bracket_fit"):
+        lines += ["## Bracket fit", "", str(analysis["bracket_fit"]), ""]
+
+    rejected = (report.get("validation") or {}).get("rejected") or []
+    if rejected:
+        lines += ["## Rejected suggestions", ""]
+        for item in rejected:
+            if isinstance(item, Mapping):
+                lines.append(f"- {item.get('name', '')} — {item.get('reason', '')}")
+        lines.append("")
+
+    return "\n".join(lines).strip() + "\n"
+
+
+def review_to_html(report: Mapping[str, Any]) -> str:
+    """Render a saved review as a small self-contained HTML document."""
+    import html as _html
+
+    md = review_to_markdown(report)
+    body_parts = []
+    for block in md.split("\n\n"):
+        block = block.strip()
+        if not block:
+            continue
+        if block.startswith("# "):
+            body_parts.append(f"<h1>{_html.escape(block[2:].strip())}</h1>")
+        elif block.startswith("## "):
+            body_parts.append(f"<h2>{_html.escape(block[3:].strip())}</h2>")
+        elif block.startswith("- "):
+            items = [
+                line[2:].strip() for line in block.splitlines()
+                if line.startswith("- ")
+            ]
+            body_parts.append("<ul>" + "".join(
+                f"<li>{_html.escape(item)}</li>" for item in items
+            ) + "</ul>")
+        else:
+            body_parts.append(f"<p>{_html.escape(block)}</p>")
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Deck Doctor — {_html.escape(_report_deck_name(report) or 'Deck')}</title>
+<style>
+body{{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;max-width:900px;margin:2rem auto;padding:0 1rem;line-height:1.55;color:#1f2328}}
+h1{{border-bottom:1px solid #d0d7de;padding-bottom:.4rem}} h2{{margin-top:1.6rem;font-size:1.1rem}}
+li{{margin:.3rem 0}} code{{background:#f6f8fa;padding:.1rem .25rem;border-radius:3px}}
+</style></head><body>
+{''.join(body_parts)}
+</body></html>"""

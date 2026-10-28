@@ -28,8 +28,9 @@ DATABASE = os.environ.get("MTG_DATABASE", "AllPrintings.sqlite")
 
 mcp = FastMCP(
     "mtg-search",
-    instructions="""Magic: The Gathering card search engine with six tools:
-semantic_search, keyword_search, search_cards, get_card, list_decks, and get_deck.
+    instructions="""Magic: The Gathering card search engine with seven tools:
+semantic_search, keyword_search, search_cards, get_card, list_decks, get_deck,
+and review_deck.
 
 CRITICAL — NO HALLUCINATION:
 - Every card name, mana value, color identity, type, and oracle text you
@@ -584,6 +585,49 @@ def get_deck(name: str) -> dict:
             for sname, cards in sections.items()
         }
     return result
+
+
+@mcp.tool()
+def review_deck(name: str, include_candidates: bool = False) -> dict:
+    """Run a deterministic Deck Doctor audit on a saved deck.
+
+    Returns the structural audit (counts, curve, roles, role gaps, legality,
+    health, bracket/salt). With include_candidates=True it also returns real
+    candidate adds grouped by role gap and a deterministic cut shortlist. This
+    tool never calls an LLM and never modifies the deck.
+
+    name: exact saved deck name as shown by list_decks.
+    include_candidates: include embedding-retrieved adds and cut candidates.
+    """
+    from mtg.deck_enrich import enrich_deck
+    from mtg.deck_review import candidate_adds, cut_candidates
+    from mtg.deck_stats import analyze_deck
+
+    fname = sanitize_filename(name)
+    fpath = os.path.join(DECKS_DIR, fname)
+    try:
+        with open(fpath, encoding="utf-8") as f:
+            deck = json.load(f)
+    except FileNotFoundError:
+        return {"error": f"Deck '{name}' not found."}
+    except (json.JSONDecodeError, OSError) as exc:
+        return {"error": str(exc)}
+    if not isinstance(deck, dict):
+        return {"error": f"Deck '{name}' is not a valid deck object."}
+
+    db = _get_db()
+    try:
+        enriched = enrich_deck(db, deck)
+        audit = analyze_deck(enriched)
+        result = {"name": deck.get("name", name), "audit": audit}
+        if include_candidates:
+            result["candidates"] = {
+                "adds": candidate_adds(db, enriched, audit, {}),
+                "cuts": cut_candidates(enriched, audit),
+            }
+        return result
+    finally:
+        db.close()
 
 
 # ── entry ────────────────────────────────────────────────────────────────

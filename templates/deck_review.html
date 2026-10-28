@@ -39,6 +39,9 @@
         <label class="chip">
             <input type="checkbox" id="review-use-llm" checked> Use LLM
         </label>
+        <label class="chip">
+            <input type="checkbox" id="review-verify-llm"> Verify with LLM
+        </label>
         <button type="button" id="review-run-btn" class="eval-config-save">Review deck</button>
     </div>
 
@@ -57,7 +60,7 @@
             <ul>
                 {% for report in reports %}
                 <li>
-                    <button type="button" class="review-load-report" data-filename="{{ report.filename }}">{{ report.deck }} · {{ report.verdict or 'Review' }}</button>
+                    <button type="button" class="review-load-report" data-filename="{{ report.filename }}">{{ report.deck }} · {{ report.verdict or 'Review' }}{% if report.stale %} · stale{% endif %}</button>
                     <span>{{ report.createdAt }}</span>
                     <button type="button" class="review-delete-report" data-filename="{{ report.filename }}">Delete</button>
                 </li>
@@ -82,6 +85,7 @@
     var resultEl = document.getElementById('review-result');
     var reportsEl = document.getElementById('review-reports-list');
     var currentJob = null;
+    var currentFilename = null;
 
     function esc(s) {
         return String(s === null || s === undefined ? '' : s)
@@ -122,6 +126,7 @@
         if (!name) { setStatus('Enter a saved deck name first.', 'error'); return; }
         runBtn.disabled = true;
         resultEl.hidden = true;
+        currentFilename = null;
         progressEl.hidden = false;
         progressFill.style.width = '5%';
         progressLabel.textContent = 'Starting…';
@@ -129,6 +134,7 @@
 
         var options = {
             use_llm: document.getElementById('review-use-llm').checked,
+            verify_llm: document.getElementById('review-verify-llm').checked,
             target_bracket: document.getElementById('review-target-bracket').value || null,
             budget: document.getElementById('review-budget').value || null
         };
@@ -180,7 +186,7 @@
             .then(function (r) { return r.json(); })
             .then(function (data) {
                 if (data.error) throw new Error(data.error);
-                renderResult(data);
+                renderResult(data, !!data.stale);
                 runBtn.disabled = false;
                 progressEl.hidden = true;
                 loadReports();
@@ -188,7 +194,7 @@
             .catch(function (err) { setStatus(err.message, 'error'); runBtn.disabled = false; });
     }
 
-    function renderResult(data) {
+    function renderResult(data, stale) {
         var audit = data.audit || {};
         var analysis = data.analysis;
         var bracket = audit.bracket || {};
@@ -205,6 +211,11 @@
             });
         });
         var html = '';
+        if (stale) {
+            html += '<div class="review-stale-banner">⚠ This review is stale: ' +
+                esc(data.staleReason || 'the deck changed since this review.') +
+                ' Re-run Deck Doctor before applying recommendations.</div>';
+        }
 
         html += '<div class="review-hero">';
         html += '<div><div class="review-kicker">Verdict</div><h2>' +
@@ -232,7 +243,8 @@
             html += '<ul class="review-list">';
             cutItems.forEach(function (cut) {
                 html += '<li><div class="review-item-line"><strong>' + esc(cut.name) + '</strong>' +
-                    '<button type="button" class="review-apply-cut" data-name="' + esc(cut.name) + '">Cut</button></div>' +
+                    '<button type="button" class="review-apply-cut" data-name="' + esc(cut.name) + '"' +
+                    (stale ? ' disabled title="Re-run the review first"' : '') + '>Cut</button></div>' +
                     '<span>' + esc(cut.reason || cut.reasonHint || '') + '</span></li>';
             });
             html += '</ul>';
@@ -253,7 +265,8 @@
                 var candidate = candidateIndex[String(add.name || '').toLowerCase()];
                 var button = candidate
                     ? '<button type="button" class="review-apply-add" data-set-code="' +
-                      esc(candidate.setCode) + '" data-number="' + esc(candidate.number) + '">Add</button>'
+                      esc(candidate.setCode) + '" data-number="' + esc(candidate.number) + '"' +
+                      (stale ? ' disabled title="Re-run the review first"' : '') + '>Add</button>'
                     : '';
                 html += '<li><div class="review-item-line"><strong>' + esc(add.name) + '</strong>' + button + '</div>' +
                     '<span>' + esc(add.reason || '') + (add.role ? ' · ' + esc(add.role) : '') + '</span></li>';
@@ -269,17 +282,32 @@
             html += '<section><h3>Next steps</h3>' + list(analysis.next_steps) + '</section>';
         }
 
+        var verification = data.verification || {};
+        var verifyWarnings = Array.isArray(verification.warnings) ? verification.warnings : [];
+        if (verifyWarnings.length) {
+            html += '<section class="review-warning"><h3>Verifier notes</h3><ul class="review-list">';
+            verifyWarnings.forEach(function (warning) {
+                html += '<li><span>' + esc(warning) + '</span></li>';
+            });
+            html += '</ul></section>';
+        }
+
         var rejected = (data.validation && data.validation.rejected) || [];
         if (rejected.length) {
             html += '<section class="review-warning"><h3>Rejected suggestions</h3><ul class="review-list">';
             rejected.forEach(function (item) { html += '<li><strong>' + esc(item.name) + '</strong><span>' + esc(item.reason) + '</span></li>'; });
             html += '</ul></section>';
         }
-        html += '<div class="review-actions"><button type="button" id="review-save-btn" class="btn-secondary">Save review</button></div>';
+        html += '<div class="review-actions"><button type="button" id="review-save-btn" class="btn-secondary">Save review</button>' +
+            '<button type="button" class="review-export-btn btn-secondary" data-format="markdown">Export Markdown</button>' +
+            '<button type="button" class="review-export-btn btn-secondary" data-format="html">Export HTML</button></div>';
         resultEl.innerHTML = html;
         resultEl.hidden = false;
         var saveBtn = document.getElementById('review-save-btn');
         if (saveBtn) saveBtn.addEventListener('click', saveReview);
+        resultEl.querySelectorAll('.review-export-btn').forEach(function (btn) {
+            btn.addEventListener('click', function () { exportReview(btn.dataset.format); });
+        });
         resultEl.querySelectorAll('.review-apply-add').forEach(function (btn) {
             btn.addEventListener('click', function () {
                 applyCard('add', {setCode: btn.dataset.setCode, number: btn.dataset.number});
@@ -329,10 +357,20 @@
         .then(function (r) { return r.json(); })
         .then(function (data) {
             if (data.error) throw new Error(data.error);
+            currentFilename = data.filename || null;
             setStatus('Review saved.', 'ok');
             loadReports();
         })
         .catch(function (err) { setStatus(err.message, 'error'); });
+    }
+
+    function exportReview(format) {
+        var params = new URLSearchParams();
+        params.set('format', format || 'markdown');
+        if (currentFilename) params.set('filename', currentFilename);
+        else if (currentJob) params.set('jobId', currentJob);
+        else { setStatus('Save the review before exporting.', 'error'); return; }
+        window.location.href = '/api/deck/review/export?' + params.toString();
     }
 
     function loadReports() {
@@ -348,6 +386,7 @@
                 reportsEl.innerHTML = '<ul>' + reports.map(function (report) {
                     return '<li><button type="button" class="review-load-report" data-filename="' +
                         esc(report.filename) + '">' + esc(report.deck) + ' · ' + esc(report.verdict || 'Review') +
+                        (report.stale ? ' · stale' : '') +
                         '</button><span>' + esc(report.createdAt) + '</span></li>';
                 }).join('') + '</ul>';
                 reportsEl.querySelectorAll('.review-load-report').forEach(function (btn) {
@@ -366,8 +405,10 @@
                     setDeckValue(data.deck);
                     refreshOpenDeck();
                 }
-                renderResult(data);
-                setStatus('Loaded saved review.', 'ok');
+                currentFilename = filename;
+                renderResult(data, !!data.stale);
+                setStatus(data.stale ? 'Loaded stale review. Re-run before applying.' : 'Loaded saved review.',
+                    data.stale ? 'error' : 'ok');
             })
             .catch(function (err) { setStatus(err.message, 'error'); });
     }

@@ -86,7 +86,7 @@ mtg/
   llm.py                generate() + JSON repair, openai/anthropic (pure)
   images.py             card_image_url(), fetch_scryfall_image(), mana_symbols() (pure)
   websearch.py          SearXNG web_search() (pure)
-  prompts.py            four LLM system prompt string constants (pure)
+  prompts.py            five LLM system prompt string constants (pure)
   eval_cache.py         in-memory OrderedDict caches for eval analysis
   eval_helpers.py       eval similarity backends, placeholder detection, deepdive autosave
   ingest.py             DB upload → validate → dedup → replace → rebuild embeddings (pure)
@@ -261,7 +261,10 @@ its role panel, guideline bars, and bracket badge.
 
 `GET /deck-review?deck=<name>` is the page. `POST /api/deck/review/run` starts a
 background job; `GET /progress` and `GET /result` poll it. Reports are saved to
-`deck_reviews/` and listed by `/api/deck/review/reports`. The pipeline enriches
+`deck_reviews/` and listed by `/api/deck/review/reports`. Saved reviews are
+checked against the current deck fingerprint and marked stale after edits.
+`/api/deck/review/export` downloads Markdown or HTML. An optional second LLM
+pass verifies the report against the candidate/deck lists. The pipeline enriches
 the deck, runs `analyze_deck()`, retrieves real candidate adds with embeddings,
 optionally calls the LLM with `DECK_REVIEW_SYSTEM_PROMPT`, and rejects any
 recommendation that is not a real card in the candidate list or not in the deck
@@ -435,7 +438,7 @@ These are where changes in one tool silently break another:
 | `embed.py` | `build()`, `find()`, `status()` — thread-safe, model cached per process | similar, eval, config, mcp_server |
 | `llm.py` | `generate()` (openai/anthropic), `_parse_json()` JSON repair, `fetch_models()` | eval, config |
 | `images.py` | `card_image_url()`, `fetch_scryfall_image()` (3-retry backoff), `mana_symbols()` | search, shared |
-| `prompts.py` | `COMMANDER_SYSTEM_PROMPT`, `DEEPDIVE_SYSTEM_PROMPT`, `VERIFY_SYSTEM_PROMPT`, `DECK_REVIEW_SYSTEM_PROMPT` | eval, deck review, config |
+| `prompts.py` | `COMMANDER_SYSTEM_PROMPT`, `DEEPDIVE_SYSTEM_PROMPT`, `VERIFY_SYSTEM_PROMPT`, `DECK_REVIEW_SYSTEM_PROMPT`, `DECK_REVIEW_VERIFY_SYSTEM_PROMPT` | eval, deck review, config |
 | `websearch.py` | `web_search(query, max)` → SearXNG, `None` on failure | eval |
 | `eval_cache.py` | in-memory FIFO caches + lock | eval |
 | `eval_helpers.py` | `eval_similar_embed/legacy`, `get_commander_filter_sets()` (10-min TTL), `is_placeholder_name()`, deepdive autosave | eval |
@@ -447,7 +450,7 @@ These are where changes in one tool silently break another:
 
 ## 9. MCP server (`mtg/mcp_server.py`, 403 loc)
 
-Standalone FastMCP server exposing six tools to LLM agents, backed by
+Standalone FastMCP server exposing seven tools to LLM agents, backed by
 `embed.find()` and raw SQL. **No Flask, no auth, read-only for cards; deck tools
 are read-only.** Long `instructions` string encodes the tool-selection
 heuristics: `semantic_search` for "what a card does" (mechanics),
@@ -461,6 +464,8 @@ and `list_decks`/`get_deck` for saved-deck inspection.
 - `keyword_search(...)` — literal LIKE over name/type/oracle, deduped by name via
   `ROW_NUMBER()` picking the latest printing.
 - `get_card(name)` — full detail incl. rulings + legalities.
+- `review_deck(name, include_candidates)` — deterministic Deck Doctor audit;
+  optional candidates/cuts; no LLM, no writes.
 
 Runs `stdio` (default) or `--transport sse --port 8765` (LAN, CORS `*`, DNS-rebinding
 protection off). MCPO (`mcpo`) fronts the SSE endpoint as an OpenAPI proxy on `:8000`

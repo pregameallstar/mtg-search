@@ -142,3 +142,20 @@ def test_run_llm_without_key_returns_error():
     data, err = review._run_llm(_deck(), {}, {}, [], {"llm": {"api_key": ""}})
     assert data is None
     assert "API key" in err
+
+
+def test_verify_llm_returns_warnings(monkeypatch):
+    monkeypatch.setattr(review, "llm_generate", lambda *a, **k: {
+        "warnings": ["Imaginary Card is not in the candidate list."],
+        "verified": True,
+    })
+    result, err = review._verify_llm(
+        {"commander": {"name": "Cmdr", "colorIdentity": "W"},
+         "cards": [{"name": "Sol Ring"}]},
+        {"adds": [{"name": "Imaginary Card"}]},
+        {"Ramp": [{"name": "Sol Ring"}]},
+        {"llm": {"api_key": "test"}},
+    )
+    assert err is None
+    assert result["warnings"]
+    assert "Imaginary Card" in result["warnings"][0]

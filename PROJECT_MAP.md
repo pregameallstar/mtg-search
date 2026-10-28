@@ -144,7 +144,7 @@ Bump `_idf_version` when `extract_terms()` logic changes.
 | `mtg/eval_cache.py` | Server-side OrderedDict cache (FIFO 100); Flask sessions cap at 4KB |
 | `mtg/eval_helpers.py` | Similarity search (embed + legacy), placeholder detection, deepdive auto-save |
 | `mtg/websearch.py` | SearXNG query function — returns `None` when unreachable |
-| `mtg/prompts.py` | Four LLM system prompts: commander, deepdive, verify, deck review |
+| `mtg/prompts.py` | Five LLM system prompts: commander, deepdive, verify, deck review, deck verify |
 | `mtg/llm.py` | `generate()` — OpenAI/Anthropic backends with JSON repair |
 | `mtg/embed.py` | Embedding index (shared with Similarity) |
 | `templates/commander_eval.html` | Analysis display (1,069 lines): tabs for strengths, strategies, brackets, deepdives |
@@ -228,7 +228,8 @@ Split-panel drag-and-drop Commander deck builder. The most JS-heavy tool.
 | `/api/deck/review/result` | GET | Review result |
 | `/api/deck/review/reports` | GET | Saved review summaries |
 | `/api/deck/review/save` | POST | Persist a review report |
-| `/api/deck/review/report` | GET | Load a saved review |
+| `/api/deck/review/report` | GET | Load a saved review (with stale flag) |
+| `/api/deck/review/export` | GET | Download Markdown/HTML review |
 | `/api/deck/review/delete` | POST | Delete a saved review |
 | `/api/tags/list` | GET | Tag catalog (auto-seeds 8 predefined tags) |
 | `/api/tags/save` | POST | Save tag catalog |
@@ -428,13 +429,13 @@ These are not tied to a single tool but used by several.
 | `mtg/embed.py` | 232 | `build(db_path)`, `find(db_path, text, top_k=200)`, `status()` | Similarity tool, Eval pipeline, Config page |
 | `mtg/llm.py` | 163 | `generate()`, `_parse_json()` (JSON repair), `fetch_models()` | Commander Eval, Config page |
 | `mtg/images.py` | 81 | `card_image_url()`, `fetch_scryfall_image()`, `mana_symbols()` | Search routes, shared helpers |
-| `mtg/prompts.py` | 142 | Four system prompt constants | Commander Eval, Deck Doctor |
+| `mtg/prompts.py` | 142 | Five system prompt constants | Commander Eval, Deck Doctor |
 | `mtg/websearch.py` | 42 | `web_search(query, max_results)` → SearXNG | Commander Eval pipeline |
 | `mtg/eval_cache.py` | 42 | `_eval_cache` (OrderedDict, FIFO 100), `cache_put/get/update` | Commander Eval routes |
 | `mtg/eval_helpers.py` | 237 | `eval_similar_embed/legacy`, `get_commander_filter_sets()`, `is_placeholder_name()`, `auto_save_deepdives()` | Commander Eval routes |
 | `mtg/ingest.py` | 240 | `process_upload()` — validate, dedup, replace DB | Config page |
 | `mtg/dedup.py` | 171 | `dedup_db()`, `dedup_in_place()` | Config page (ingest) |
-| `mtg/mcp_server.py` | 404 | FastMCP server: `semantic_search`, `keyword_search`, `search_cards`, `get_card` | Standalone process (managed by `mcp_control.py`) |
+| `mtg/mcp_server.py` | 404 | FastMCP server: `semantic_search`, `keyword_search`, `search_cards`, `get_card`, `review_deck` | Standalone process (managed by `mcp_control.py`) |
 | `mtg/mcp_control.py` | 61 | `restart_mcp()`, `port_alive()` | Config page, docker-entrypoint |
 | `app.py` | 116 | Flask app factory: secret key, security headers, Jinja globals, blueprint registration | All web routes |
 
