@@ -72,12 +72,33 @@ def api_deck_save():
             # Refuse to overwrite a different display name that sanitizes to
             # the same filename (e.g. "Alela, Artful" vs "Alela Artful"),
             # unless the caller is renaming the deck it last saved.
+            existing = None
             try:
-                read_named_json(fpath, name)
+                existing = read_named_json(fpath, name)
             except StorageError:
                 if not previous_name:
                     raise
-                read_named_json(fpath, previous_name)
+                existing = read_named_json(fpath, previous_name)
+            if existing is None and previous_name:
+                # A rename writes a new filename; carry the brief over from the
+                # previous file if the new one does not exist yet.
+                try:
+                    old_path = resolve_json_path(
+                        DECKS_DIR, previous_name, reserved=RESERVED_DECK_FILES
+                    )
+                    existing = read_named_json(old_path, previous_name)
+                except (StorageError, OSError):
+                    existing = None
+            # The Deck Brief is edited by Deck Doctor, not the Deck Builder.
+            # A builder tab opened before the brief was written would otherwise
+            # send its stale empty copy and erase it. Only Deck Doctor writes
+            # these two fields; preserve the on-disk values across deck saves.
+            if isinstance(existing, dict):
+                for key in ("reviewNotes", "reviewNotesUpdatedAt"):
+                    if key in existing:
+                        body[key] = existing[key]
+                    else:
+                        body.pop(key, None)
             write_json_atomic(fpath, body)
             # Baseline/first snapshot, then at most one automatic snapshot per
             # 10 minutes. The History tab can force an explicit snapshot.

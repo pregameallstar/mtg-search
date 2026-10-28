@@ -62,11 +62,25 @@ def _parse_json(text):
         raise
 
 
+def _timeout_seconds(timeout=None):
+    """Return a bounded request timeout so a hung endpoint cannot wedge a job."""
+    if timeout is not None:
+        try:
+            return max(1.0, float(timeout))
+        except (TypeError, ValueError):
+            pass
+    try:
+        return max(1.0, float(os.environ.get("LLM_TIMEOUT_SECONDS", "120")))
+    except (TypeError, ValueError):
+        return 120.0
+
+
 def generate(system_prompt, user_prompt, backend=None, api_key=None,
-             base_url=None, model=None):
+             base_url=None, model=None, timeout=None):
     """Send prompt to configured LLM, return parsed JSON dict.
 
     Args override env vars when provided. Falls back to env vars otherwise.
+    ``timeout`` bounds the HTTP request (default 120s, or LLM_TIMEOUT_SECONDS).
     """
     backend = backend or os.environ.get("LLM_BACKEND", "openai")
     api_key = api_key or os.environ.get("LLM_API_KEY")
@@ -75,23 +89,26 @@ def generate(system_prompt, user_prompt, backend=None, api_key=None,
             "No API key configured. Set LLM_API_KEY in the config form below "
             "or as an environment variable."
         )
+    timeout = _timeout_seconds(timeout)
 
     if backend == "anthropic":
         model = model or os.environ.get("LLM_MODEL", "claude-sonnet-5")
-        return _anthropic(api_key, model, system_prompt, user_prompt)
+        return _anthropic(api_key, model, system_prompt, user_prompt, timeout)
     else:
         base_url = base_url or os.environ.get("LLM_BASE_URL", "https://api.openai.com/v1")
         model = model or os.environ.get("LLM_MODEL", "gpt-4o")
-        return _openai(api_key, base_url, model, system_prompt, user_prompt)
+        return _openai(api_key, base_url, model, system_prompt, user_prompt, timeout)
 
 
-def _openai(api_key, base_url, model, system_prompt, user_prompt):
+def _openai(api_key, base_url, model, system_prompt, user_prompt, timeout=120.0):
     try:
         from openai import OpenAI
     except ImportError:
         raise RuntimeError("Missing 'openai' package. Run: pip install openai") from None
 
-    client = OpenAI(base_url=base_url, api_key=api_key)
+    # max_retries=0: a review already retries malformed JSON once, and silently
+    # retrying timeouts/auth errors multiplies the time a stuck job runs.
+    client = OpenAI(base_url=base_url, api_key=api_key, timeout=timeout, max_retries=0)
     resp = client.chat.completions.create(
         model=model,
         messages=[
@@ -104,13 +121,13 @@ def _openai(api_key, base_url, model, system_prompt, user_prompt):
     return _parse_json(text)
 
 
-def _anthropic(api_key, model, system_prompt, user_prompt):
+def _anthropic(api_key, model, system_prompt, user_prompt, timeout=120.0):
     try:
         import anthropic
     except ImportError:
         raise RuntimeError("Missing 'anthropic' package. Run: pip install anthropic") from None
 
-    client = anthropic.Anthropic(api_key=api_key)
+    client = anthropic.Anthropic(api_key=api_key, timeout=timeout, max_retries=0)
     resp = client.messages.create(
         model=model,
         max_tokens=8192,

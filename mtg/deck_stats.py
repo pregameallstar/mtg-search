@@ -61,11 +61,18 @@ def _is_land(card: Mapping[str, Any]) -> bool:
     return "land" in text
 
 
-def _role_counts(cards: list[Mapping[str, Any]]) -> tuple[dict[str, int], dict[str, list[dict[str, Any]]]]:
+ClassifiedCard = tuple[Mapping[str, Any], dict[str, Any]]
+
+
+def _classify_cards(cards: list[Mapping[str, Any]]) -> list[ClassifiedCard]:
+    """Classify each card once; every audit section reuses the result."""
+    return [(card, classify_roles(card)) for card in cards]
+
+
+def _role_counts(classified: list[ClassifiedCard]) -> tuple[dict[str, int], dict[str, list[dict[str, Any]]]]:
     counts: dict[str, int] = {}
     members: dict[str, list[dict[str, Any]]] = {}
-    for card in cards:
-        info = classify_roles(card)
+    for card, info in classified:
         for role in info["roles"]:
             counts[role] = counts.get(role, 0) + _qty(card)
             members.setdefault(role, []).append({
@@ -87,16 +94,20 @@ def _health(
     avg_mv: float | None,
     legal: bool,
     error_count: int,
+    role_targets: Mapping[str, int] | None = None,
 ) -> dict[str, Any]:
+    targets = role_targets or DEFAULT_ROLE_TARGETS
     coverage_values = []
-    for role, target in DEFAULT_ROLE_TARGETS.items():
+    for role, target in targets.items():
         if target <= 0:
             continue
         coverage_values.append(_clamp(role_counts.get(role, 0) / target))
     roles_score = round(sum(coverage_values) / len(coverage_values) * HEALTH_WEIGHTS["roles"]) if coverage_values else 0
 
-    land_score = _clamp(land_count / 37)
-    ramp_score = _clamp(ramp_count / 10)
+    land_target = max(1, int(targets.get("Lands", 37) or 37))
+    ramp_target = max(1, int(targets.get("Ramp", 10) or 10))
+    land_score = _clamp(land_count / land_target)
+    ramp_score = _clamp(ramp_count / ramp_target)
     curve_score = 1.0
     if avg_mv is not None:
         # A curve between 2.8 and 3.6 is comfortable for most Commander decks.
@@ -126,18 +137,67 @@ def _health(
     return {"score": sum(components.values()), "components": components}
 
 
+def _card_tags(card: Mapping[str, Any]) -> list[str]:
+    raw = card.get("tags")
+    if not isinstance(raw, (list, tuple, set)):
+        return []
+    return sorted(str(tag).strip() for tag in raw if str(tag).strip())
+
+
+def _eval_fingerprint(eval_data: Any) -> dict[str, Any]:
+    """Only the eval fields that influence retrieval and the review prompt."""
+    if not isinstance(eval_data, Mapping):
+        return {}
+    out: dict[str, Any] = {}
+    for key in ("strategies", "priorities", "unique_builds"):
+        values = eval_data.get(key)
+        if not isinstance(values, list):
+            continue
+        normalised = []
+        for item in values:
+            if isinstance(item, Mapping):
+                normalised.append({
+                    str(field): item.get(field)
+                    for field in sorted(item)
+                })
+            else:
+                normalised.append(item)
+        out[key] = normalised
+    return out
+
+
 def deck_fingerprint(deck: Mapping[str, Any], options: Mapping[str, Any] | None = None) -> str:
-    """Stable fingerprint of the parts that affect analysis."""
+    """Stable fingerprint of every input that can change the analysis.
+
+    Card tags are included because they override role classification; evalData
+    is included because it feeds candidate retrieval and the LLM prompt. The
+    audit engine version and role targets are included so a code or rule update
+    invalidates old reviews instead of silently presenting them as current.
+    """
     commander = deck.get("commander") if isinstance(deck.get("commander"), Mapping) else {}
     cards = deck.get("cards") if isinstance(deck.get("cards"), list) else []
 
-    def key(card: Mapping[str, Any]) -> tuple[str, int]:
+    def key(card: Mapping[str, Any]) -> dict[str, Any]:
         ident = card.get("uuid") or f"{card.get('setCode', '')}/{card.get('number', '')}"
-        return str(ident), _qty(card)
+        return {
+            "id": str(ident),
+            "name": str(card.get("name") or "").strip().lower(),
+            "quantity": _qty(card),
+            "tags": _card_tags(card),
+        }
 
     canonical = {
-        "commander": commander.get("uuid") or commander.get("name") or "",
-        "cards": sorted(key(card) for card in cards if isinstance(card, Mapping)),
+        "commander": {
+            "id": str(commander.get("uuid") or ""),
+            "name": str(commander.get("name") or "").strip().lower(),
+            "tags": _card_tags(commander),
+        },
+        "cards": sorted(
+            (key(card) for card in cards if isinstance(card, Mapping)),
+            key=lambda item: (
+                item["id"], item["name"], item["quantity"], tuple(item["tags"]),
+            ),
+        ),
         "guideline": deck.get("guideline") or "",
         "reviewNotes": deck.get("reviewNotes") or "",
         "outline": [
@@ -145,6 +205,12 @@ def deck_fingerprint(deck: Mapping[str, Any], options: Mapping[str, Any] | None 
             for section in (deck.get("outline") or [])
             if isinstance(section, Mapping)
         ],
+        "evalData": _eval_fingerprint(deck.get("evalData")),
+        "analysis": {
+            "schema": AUDIT_SCHEMA_VERSION,
+            "roles": ROLES_VERSION,
+            "targets": DEFAULT_ROLE_TARGETS,
+        },
         "options": dict(options or {}),
     }
     return hashlib.sha256(
@@ -158,18 +224,25 @@ def analyze_deck(
     guideline: Mapping[str, Any] | None = None,
     target_bracket: int | None = None,
     combo_count: int | None = None,
+    brief_caps: Mapping[str, int] | None = None,
 ) -> dict[str, Any]:
-    """Return the deterministic audit for a Commander deck."""
+    """Return the deterministic audit for a Commander deck.
+
+    ``brief_caps`` are maximum counts extracted from the Deck Brief (for example
+    "Rule 0: max 2 board wipes"). They lower the matching role targets so the
+    audit and health score do not push the deck past an explicit limit.
+    """
     commander = deck.get("commander") if isinstance(deck.get("commander"), Mapping) else None
     raw_cards = deck.get("cards") if isinstance(deck.get("cards"), list) else []
     cards = [card for card in raw_cards if isinstance(card, Mapping)]
 
     legality = validate_deck(deck)
-    role_counts, role_members = _role_counts(cards)
+    classified = _classify_cards(cards)
+    role_counts, role_members = _role_counts(classified)
 
     primary_counts = {role: 0 for role in ("Lands", "Ramp", "Draw", "Removal", "Core")}
-    for card in cards:
-        primary = classify_roles(card)["primary"]
+    for card, info in classified:
+        primary = info["primary"]
         if primary in primary_counts:
             primary_counts[primary] += _qty(card)
 
@@ -207,6 +280,17 @@ def analyze_deck(
             except (TypeError, ValueError):
                 continue
 
+    brief_constraints: dict[str, int] = {}
+    for role, cap in (brief_caps or {}).items():
+        try:
+            cap = max(0, int(cap))
+        except (TypeError, ValueError):
+            continue
+        if role not in target_map:
+            continue
+        target_map[role] = min(target_map[role], cap)
+        brief_constraints[str(role)] = cap
+
     role_gaps = []
     for role, target in target_map.items():
         actual = primary_counts.get(role) if role in primary_counts else role_counts.get(role, 0)
@@ -233,6 +317,7 @@ def analyze_deck(
         avg_mv=average_mv,
         legal=legality["legal"],
         error_count=len(legality["errors"]),
+        role_targets=target_map,
     )
 
     guideline_progress = None
@@ -253,8 +338,7 @@ def analyze_deck(
         }
 
     card_roles = []
-    for card in cards:
-        info = classify_roles(card)
+    for card, info in classified:
         card_roles.append({
             "uuid": card.get("uuid") or "",
             "name": str(card.get("name") or ""),
@@ -265,6 +349,15 @@ def analyze_deck(
     warnings = list(legality.get("warnings", []))
     if average_mv is None:
         warnings.append({"code": "no_mana_values", "message": "No nonland mana values found."})
+    if role_counts.get("Win Condition", 0) == 0:
+        warnings.append({
+            "code": "no_explicit_wincon",
+            "message": (
+                "No explicit 'win the game' effect detected. Combat damage, "
+                "commander damage, and combo finishes are not counted by this "
+                "heuristic, so the win-condition score may read low."
+            ),
+        })
 
     return {
         "schemaVersion": AUDIT_SCHEMA_VERSION,
@@ -291,6 +384,7 @@ def analyze_deck(
             for role in primary_counts
         },
         "roleGaps": role_gaps,
+        "briefConstraints": brief_constraints,
         "colorIdentity": legality["colorIdentity"],
         "bracket": bracket,
         "guideline": guideline_progress,

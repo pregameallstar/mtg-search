@@ -7,12 +7,14 @@ list this module builds. Everything is reusable without Flask for tests.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import sqlite3
 import time
 import traceback
-from typing import Any, Callable, Mapping
+from typing import Any, Mapping
 
 import mtg.embed as embed
 import mtg.review_cache as review_cache
@@ -36,6 +38,7 @@ except ImportError:  # pragma: no cover - optional dependency path
 
 
 ROLE_QUERIES = {
+    "Lands": "land, dual land, fetch land, mana fixing, land enters tapped",
     "Ramp": "mana ramp, mana rock, mana dork, put lands onto the battlefield",
     "Card Draw": "draw cards, repeatable card advantage",
     "Card Selection": "scry, surveil, look at the top cards",
@@ -48,6 +51,117 @@ ROLE_QUERIES = {
     "Win Condition": "win the game, alternate win condition",
 }
 
+# Per-role retrieval cap before per-card database work. Only four cards per
+# role survive, so a larger shortlist only wastes queries.
+MAX_ROLE_HITS = 30
+MAX_ADDS_PER_ROLE = 4
+
+
+BRIEF_CONSTRAINTS_VERSION = 1
+
+# Conservative mapping from words that appear in a Deck Brief to role names.
+# Longer phrases are matched first so "card draw" wins over "draw".
+_BRIEF_ROLE_WORDS = {
+    "counterspell": "Counterspell",
+    "counter": "Counterspell",
+    "board wipe": "Board Wipe",
+    "boardwipe": "Board Wipe",
+    "wipe": "Board Wipe",
+    "targeted removal": "Targeted Removal",
+    "spot removal": "Targeted Removal",
+    "removal": "Targeted Removal",
+    "tutor": "Tutor",
+    "mana rock": "Ramp",
+    "ramp": "Ramp",
+    # Plural only: "no land denial" must not be read as "no lands".
+    "lands": "Lands",
+    "card draw": "Card Draw",
+    "draw": "Card Draw",
+    "protection": "Protection",
+    "recursion": "Recursion",
+    "win condition": "Win Condition",
+    "wincon": "Win Condition",
+}
+
+_BRIEF_ROLE_RE = re.compile(
+    r"\b(?:" + "|".join(
+        re.escape(word) for word in sorted(_BRIEF_ROLE_WORDS, key=len, reverse=True)
+    ) + r")s?\b",
+    re.IGNORECASE,
+)
+# A bare "2 counterspells" is only treated as a cap inside a sentence that
+# looks like a Rule 0 / playgroup constraint, to avoid reading description
+# ("the deck has two counterspells") as a limit.
+_BRIEF_CAP_CONTEXT_RE = re.compile(
+    r"rule\s*0|constrain|constraint|restrict|limit|maximum|\bmax\b|"
+    r"at most|no more than|only|cap(?:ped)?|playgroup",
+    re.IGNORECASE,
+)
+
+
+def _brief_role(phrase: str) -> str | None:
+    lowered = phrase.lower().strip()
+    if lowered in _BRIEF_ROLE_WORDS:
+        return _BRIEF_ROLE_WORDS[lowered]
+    if lowered.endswith("s"):
+        return _BRIEF_ROLE_WORDS.get(lowered[:-1])
+    return None
+
+
+def _brief_role_in(text: str) -> str | None:
+    match = _BRIEF_ROLE_RE.search(text)
+    return _brief_role(match.group(0)) if match else None
+
+
+def brief_role_caps(brief: str | None) -> dict[str, int]:
+    """Extract explicit maximum role counts from a free-form Deck Brief.
+
+    Returns ``{role: max_count}`` for sentences that look like constraints.
+    This is intentionally conservative: it understands patterns such as
+    "Rule 0: max 2 board wipes", "no more than 2 counterspells", "no tutors",
+    and "2 boardwipes" inside a Rule 0 / playgroup clause.
+    """
+    text = str(brief or "")
+    if not text.strip():
+        return {}
+    caps: dict[str, int] = {}
+    for sentence in re.split(r"(?<=[.!?;])\s+|\n+", text):
+        if not _BRIEF_CAP_CONTEXT_RE.search(sentence):
+            continue
+        for match in re.finditer(
+            r"\bno\s+" + _BRIEF_ROLE_RE.pattern, sentence, re.IGNORECASE
+        ):
+            role = _brief_role_in(match.group(0))
+            if role:
+                caps[role] = 0
+        for match in re.finditer(
+            r"(\d{1,2})\s+" + _BRIEF_ROLE_RE.pattern, sentence, re.IGNORECASE
+        ):
+            role = _brief_role_in(match.group(0))
+            if not role:
+                continue
+            count = max(0, int(match.group(1)))
+            caps[role] = min(caps.get(role, count), count)
+    return caps
+
+
+def review_fingerprint(
+    deck: Mapping[str, Any],
+    options: Mapping[str, Any],
+    guideline: Mapping[str, Any] | None = None,
+) -> str:
+    """Fingerprint everything the review pipeline reads, not just the deck list."""
+    base = deck_fingerprint(deck, fingerprint_options(options))
+    payload = {
+        "base": base,
+        "guideline": dict(guideline) if isinstance(guideline, Mapping) else None,
+        "briefCaps": brief_role_caps(options.get("brief")),
+        "briefCapsVersion": BRIEF_CONSTRAINTS_VERSION,
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
 
 def fingerprint_options(options: Mapping[str, Any]) -> dict[str, Any]:
     """Only the options that affect the deck analysis/report fingerprint."""
@@ -58,11 +172,9 @@ def fingerprint_options(options: Mapping[str, Any]) -> dict[str, Any]:
         "use_llm": bool(options.get("use_llm")),
         "max_adds": options.get("max_adds"),
         "max_cuts": options.get("max_cuts"),
+        "max_mana_value": options.get("max_mana_value"),
+        "combo_count": options.get("combo_count"),
         "guideline": options.get("guideline"),
-        # Legacy fields remain in the fingerprint so old saved reviews keep
-        # matching until they are re-run.
-        "budget": options.get("budget"),
-        "strategy": options.get("strategy"),
     }
 
 
@@ -212,44 +324,62 @@ def candidate_adds(
         for gap in (audit.get("roleGaps") or [])
         if isinstance(gap, Mapping) and (gap.get("deficit") or 0) > 0
     ]
-    # Prefer core roles first, but keep the audit's order.
-    gaps = [gap for gap in gaps if gap in ROLE_QUERIES][:8]
+    # Keep the audit's order. Lands are included now that they have a query.
+    gaps = [gap for gap in gaps if gap in ROLE_QUERIES]
     if not gaps:
         return {}
-
-    profile = _deck_profile(deck, audit, options)
-    found: dict[str, dict[str, Any]] = {}
-    gap_roles_by_name: dict[str, set[str]] = {}
-
-    for result in _find(db, profile, 600):
-        key = result.get("uuid") or _front_name(result.get("name"))
-        if key:
-            found[key] = result
 
     outline = " ".join(
         str(section.get("text") or "")
         for section in (deck.get("outline") or [])
         if isinstance(section, Mapping)
     )[:1200]
+
+    # Only cards that matched a role query can be recommended. The deck-profile
+    # query is used to refine their scores, but we never do DB/role work for the
+    # hundreds of profile-only hits that would be discarded anyway.
+    found: dict[str, dict[str, Any]] = {}
+    gap_roles_by_name: dict[str, set[str]] = {}
     for role in gaps:
         query = f"{commander.get('name', '')} {outline} {ROLE_QUERIES[role]}"
-        for result in _find(db, query, 150):
+        hits = _find(db, query, 150)
+        hits.sort(key=lambda item: item.get("score") or 0, reverse=True)
+        kept = 0
+        for result in hits:
             key = result.get("uuid") or _front_name(result.get("name"))
             if not key:
                 continue
+            # Bound the expensive per-card DB work; only the top few can ever
+            # survive the 4-per-role bucket below.
+            if key not in gap_roles_by_name:
+                kept += 1
+                if kept > MAX_ROLE_HITS:
+                    break
+            gap_roles_by_name.setdefault(key, set()).add(role)
             old = found.get(key)
             if old is None or (result.get("score") or 0) > (old.get("score") or 0):
                 found[key] = result
-            gap_roles_by_name.setdefault(key, set()).add(role)
+
+    if not found:
+        return {}
+    profile_scores = {
+        (result.get("uuid") or _front_name(result.get("name"))): (result.get("score") or 0)
+        for result in _find(db, _deck_profile(deck, audit, options), 600)
+        if result.get("uuid") or result.get("name")
+    }
+    for key, result in found.items():
+        score = profile_scores.get(key)
+        if score is not None and score > (result.get("score") or 0):
+            found[key] = {**result, "score": score}
 
     target_bracket = options.get("target_bracket")
     try:
         target_bracket = int(target_bracket) if target_bracket is not None else None
     except (TypeError, ValueError):
         target_bracket = None
-    store = str(options.get("currency") or "usd")
     max_mv = _number(options.get("max_mana_value")) or 7
     grouped: dict[str, list[dict[str, Any]]] = {role: [] for role in gaps}
+    seen_names: set[str] = set()
 
     for key, result in found.items():
         uuid = result.get("uuid")
@@ -259,7 +389,7 @@ def candidate_adds(
         if not row:
             continue
         name = str(row["name"] or "")
-        if _front_name(name) in deck_names:
+        if _front_name(name) in deck_names or name.lower() in seen_names:
             continue
         if not color_identity_subset(row.get("colorIdentity") or "", commander_ci):
             continue
@@ -278,7 +408,6 @@ def candidate_adds(
         if target_bracket is not None and target_bracket <= 2:
             if row.get("isGameChanger") or "Mass Land Denial" in roles:
                 continue
-        price = _cached_price(str(row.get("scryfallId") or ""), store)
         rank = _number(row.get("edhrecRank"))
         popularity = 0.5 if rank is None else max(0.0, 1.0 - min(rank, 100000) / 100000)
         score = 0.65 * float(result.get("score") or 0) + 0.20 + 0.15 * popularity
@@ -295,23 +424,23 @@ def candidate_adds(
             "reasonHint": f"fills the {role} gap",
             "score": round(score, 4),
             "edhrecRank": row.get("edhrecRank"),
-            "price": price,
-            "priceUnknown": price is None,
+            "price": None,
+            "priceUnknown": True,
             "oracleExcerpt": str(row.get("text") or "")[:240],
         }
         # Avoid the same card landing in several role buckets.
-        already = any(
-            existing["name"].lower() == name.lower()
-            for bucket in grouped.values()
-            for existing in bucket
-        )
-        if already:
-            continue
+        seen_names.add(name.lower())
         grouped.setdefault(role, []).append(candidate)
 
+    store = str(options.get("currency") or "usd")
     for role, bucket in grouped.items():
         bucket.sort(key=lambda item: item["score"], reverse=True)
-        del bucket[4:]
+        del bucket[MAX_ADDS_PER_ROLE:]
+        # Prices are only needed for the four cards that survive the bucket.
+        for candidate in bucket:
+            price = _cached_price(str(candidate.get("scryfallId") or ""), store)
+            candidate["price"] = price
+            candidate["priceUnknown"] = price is None
 
     return {role: bucket for role, bucket in grouped.items() if bucket}
 
@@ -334,7 +463,7 @@ def cut_candidates(deck: Mapping[str, Any], audit: Mapping[str, Any],
         if _front_name(name) == commander_name:
             continue
         info = classify_roles(card)
-        if "Lands" in info["roles"] and "Basic" in str(card.get("supertypes") or ""):
+        if "Lands" in info["roles"] and "basic" in str(card.get("supertypes") or "").lower():
             continue
         score = 0.0
         reasons = []
@@ -363,6 +492,8 @@ def cut_candidates(deck: Mapping[str, Any], audit: Mapping[str, Any],
             continue
         cuts.append({
             "name": name,
+            "uuid": card.get("uuid") or "",
+            "quantity": _qty(card),
             "roles": info["roles"],
             "reasonHint": ", ".join(reasons) or "low structural contribution",
             "score": round(score, 3),
@@ -472,14 +603,20 @@ def _run_llm(
                 api_key=api_key,
                 base_url=llm.get("base_url") or None,
                 model=llm.get("model") or None,
+                timeout=llm.get("timeout") or None,
             )
             if not isinstance(data, dict):
                 raise ValueError("LLM returned a non-object response.")
             return data, None
-        except Exception as exc:
+        except ValueError as exc:
+            # Only malformed JSON / non-object responses benefit from the
+            # "return ONLY valid JSON" retry. Retrying auth, timeout, or network
+            # failures just doubles the time a broken run stays in progress.
             last_error = str(exc)
             if attempt == 0:
                 user += "\n\nYour previous response was not valid JSON. Return ONLY valid JSON."
+        except Exception as exc:
+            return None, str(exc)
     return None, last_error
 
 
@@ -488,6 +625,7 @@ def _verify_llm(
     analysis: Mapping[str, Any] | None,
     candidates: Mapping[str, list[dict[str, Any]]],
     options: Mapping[str, Any],
+    audit: Mapping[str, Any] | None = None,
 ) -> tuple[dict | None, str | None]:
     if not analysis:
         return None, None
@@ -503,8 +641,14 @@ def _verify_llm(
         for card in (deck.get("cards") or [])
         if isinstance(card, Mapping)
     ]
-    candidate_names = [
-        str(card.get("name") or "")
+    candidate_details = [
+        {
+            "name": str(card.get("name") or ""),
+            "colorIdentity": str(card.get("colorIdentity") or ""),
+            "manaValue": card.get("manaValue"),
+            "type": str(card.get("type") or ""),
+            "roles": card.get("roles") or [],
+        }
         for bucket in candidates.values()
         for card in bucket
         if isinstance(card, Mapping)
@@ -515,7 +659,9 @@ def _verify_llm(
             "color_identity": dtdeck.get("colorIdentity"),
         },
         "deck_names": deck_names,
-        "candidate_names": candidate_names,
+        "candidate_names": [card["name"] for card in candidate_details],
+        "candidate_details": candidate_details,
+        "audit": _audit_for_prompt(audit or {}),
         "deck_brief": options.get("brief") or "",
         "analysis": analysis,
     }, indent=2)
@@ -526,6 +672,7 @@ def _verify_llm(
             api_key=api_key,
             base_url=llm.get("base_url") or None,
             model=llm.get("model") or None,
+            timeout=llm.get("timeout") or None,
         )
         if not isinstance(data, dict):
             return None, "Verifier returned a non-object response."
@@ -564,7 +711,11 @@ def validate_analysis(
     cuts = []
 
     raw_adds = analysis.get("adds")
-    for item in (raw_adds if isinstance(raw_adds, list) else [])[:max_adds]:
+    for item in (raw_adds if isinstance(raw_adds, list) else []):
+        # Count only accepted adds, so invalid early suggestions cannot crowd
+        # out valid later ones.
+        if len(adds) >= max_adds:
+            break
         if not isinstance(item, Mapping):
             continue
         name = str(item.get("name") or "").strip()
@@ -585,7 +736,9 @@ def validate_analysis(
         adds.append(item)
 
     raw_cuts = analysis.get("cuts")
-    for item in (raw_cuts if isinstance(raw_cuts, list) else [])[:max_cuts]:
+    for item in (raw_cuts if isinstance(raw_cuts, list) else []):
+        if len(cuts) >= max_cuts:
+            break
         if not isinstance(item, Mapping):
             continue
         name = str(item.get("name") or "").strip()
@@ -606,6 +759,17 @@ def validate_analysis(
     return result, {"warnings": warnings, "rejected": rejected}
 
 
+def _limit(value: Any, default: int = 10, maximum: int = 20) -> int:
+    """Clamp a user-supplied count without treating 0 as 'use the default'."""
+    if value is None or value == "":
+        return default
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(0, min(number, maximum))
+
+
 def run_review_job(job_id: str, deck: Mapping[str, Any], options: Mapping[str, Any]) -> None:
     """Run one review job; updates the review cache as it progresses."""
     started = time.time()
@@ -623,6 +787,7 @@ def run_review_job(job_id: str, deck: Mapping[str, Any], options: Mapping[str, A
             guideline=guideline,
             target_bracket=options.get("target_bracket"),
             combo_count=options.get("combo_count"),
+            brief_caps=brief_role_caps(options.get("brief")),
         )
 
         review_cache.update(job_id, step=3, label="Finding candidate cards…")
@@ -640,22 +805,22 @@ def run_review_job(job_id: str, deck: Mapping[str, Any], options: Mapping[str, A
         review_cache.update(job_id, step=5, label="Validating recommendations…")
         analysis, validation = validate_analysis(
             analysis, enriched, candidates,
-            max_adds=int(options.get("max_adds") or 10),
-            max_cuts=int(options.get("max_cuts") or 10),
+            max_adds=_limit(options.get("max_adds")),
+            max_cuts=_limit(options.get("max_cuts")),
         )
         verification = None
         verify_error = None
         if options.get("verify_llm") and analysis:
             review_cache.update(job_id, step=5, label="Second-pass LLM verification…")
             verification, verify_error = _verify_llm(
-                enriched, analysis, candidates, options
+                enriched, analysis, candidates, options, audit=audit
             )
 
         result = {
             "schemaVersion": 1,
             "deck": {
                 "name": deck.get("name", ""),
-                "fingerprint": deck_fingerprint(enriched, fingerprint_options(options)),
+                "fingerprint": review_fingerprint(enriched, options, guideline),
                 "commander": {
                     "name": (enriched.get("commander") or {}).get("name", ""),
                     "colorIdentity": (enriched.get("commander") or {}).get("colorIdentity", ""),
@@ -672,8 +837,12 @@ def run_review_job(job_id: str, deck: Mapping[str, Any], options: Mapping[str, A
                 "currency": options.get("currency"),
                 "use_llm": bool(options.get("use_llm")),
                 "verify_llm": bool(options.get("verify_llm")),
+                "requested_use_llm": bool(options.get("requested_use_llm", options.get("use_llm"))),
+                "requested_verify_llm": bool(options.get("requested_verify_llm", options.get("verify_llm"))),
                 "max_adds": options.get("max_adds"),
                 "max_cuts": options.get("max_cuts"),
+                "max_mana_value": options.get("max_mana_value"),
+                "combo_count": options.get("combo_count"),
                 "guideline": options.get("guideline"),
             },
             "pipeline": {
@@ -682,6 +851,8 @@ def run_review_job(job_id: str, deck: Mapping[str, Any], options: Mapping[str, A
                 "llm_error": llm_error,
                 "llm_verify": verification is not None,
                 "llm_verify_error": verify_error,
+                "llm_backend": (options.get("llm") or {}).get("backend"),
+                "llm_model": (options.get("llm") or {}).get("model"),
                 "prices": "cached",
                 "duration_ms": round((time.time() - started) * 1000),
             },
@@ -702,33 +873,189 @@ def _report_deck_name(report: Mapping[str, Any]) -> str:
     return str(deck or "")
 
 
+def _report_list(value: Any) -> list:
+    return value if isinstance(value, list) else []
+
+
+def _message_list(values: Any, key: str = "message") -> list[str]:
+    out = []
+    for item in _report_list(values):
+        if isinstance(item, Mapping):
+            text = str(item.get(key) or item.get("name") or "").strip()
+        else:
+            text = str(item or "").strip()
+        if text:
+            out.append(text)
+    return out
+
+
 def review_to_markdown(report: Mapping[str, Any]) -> str:
     """Render a saved review or job result as Markdown."""
-    import html as _html
-
     audit = report.get("audit") if isinstance(report.get("audit"), Mapping) else {}
     analysis = report.get("analysis") if isinstance(report.get("analysis"), Mapping) else {}
     bracket = audit.get("bracket") if isinstance(audit.get("bracket"), Mapping) else {}
     salt = bracket.get("salt") if isinstance(bracket.get("salt"), Mapping) else {}
     health = audit.get("health") if isinstance(audit.get("health"), Mapping) else {}
+    components = health.get("components") if isinstance(health.get("components"), Mapping) else {}
+    counts = audit.get("counts") if isinstance(audit.get("counts"), Mapping) else {}
+    curve = audit.get("curve") if isinstance(audit.get("curve"), Mapping) else {}
+    legality = audit.get("legality") if isinstance(audit.get("legality"), Mapping) else {}
+    role_gaps = _report_list(audit.get("roleGaps"))
     candidates = report.get("candidates") if isinstance(report.get("candidates"), Mapping) else {}
     adds = candidates.get("adds") if isinstance(candidates.get("adds"), Mapping) else {}
-    cuts = analysis.get("cuts") or candidates.get("cuts") or []
-    if not isinstance(cuts, list):
-        cuts = []
+    validation = report.get("validation") if isinstance(report.get("validation"), Mapping) else {}
+    verification = report.get("verification") if isinstance(report.get("verification"), Mapping) else {}
+    pipeline = report.get("pipeline") if isinstance(report.get("pipeline"), Mapping) else {}
+    options = report.get("options") if isinstance(report.get("options"), Mapping) else {}
 
-    lines = [
-        f"# Deck Doctor — {_report_deck_name(report) or 'Untitled deck'}",
-        "",
-        f"**Health:** {health.get('score', '—')}/100  ",
-        f"**Bracket:** {bracket.get('estimate', '—')}"
-        + (f" · Salt {salt.get('score')}" if salt.get("score") is not None else ""),
-        "",
-    ]
+    deck = report.get("deck") if isinstance(report.get("deck"), Mapping) else {}
+    commander = deck.get("commander") if isinstance(deck.get("commander"), Mapping) else {}
+    if not commander and isinstance(report.get("commander"), Mapping):
+        commander = report["commander"]
+
+    # The UI treats an explicitly empty LLM cuts/adds list as "none",
+    # so exports must do the same instead of falling back to candidates.
+    if isinstance(analysis.get("cuts"), list):
+        cuts = analysis["cuts"]
+    else:
+        cuts = candidates.get("cuts") if isinstance(candidates.get("cuts"), list) else []
+    add_items = analysis.get("adds") if isinstance(analysis.get("adds"), list) else []
+
+    lines = [f"# Deck Doctor — {_report_deck_name(report) or 'Untitled deck'}", ""]
+    meta = [f"**Health:** {health.get('score', '—')}/100"]
+    bracket_text = f"**Bracket:** {bracket.get('estimate', '—')}"
+    bracket_range = bracket.get("range")
+    if isinstance(bracket_range, list) and len(bracket_range) == 2:
+        bracket_text += f" (range {bracket_range[0]}–{bracket_range[1]})"
+    meta.append(bracket_text)
+    if salt.get("score") is not None:
+        meta.append(f"**Salt:** {salt.get('score')}")
+    lines += [" · ".join(meta), ""]
+    if commander.get("name"):
+        lines += [f"**Commander:** {commander.get('name')}", ""]
     if analysis.get("verdict"):
         lines += [f"**Verdict:** {analysis['verdict']}", ""]
     if analysis.get("summary"):
         lines += [str(analysis["summary"]), ""]
+    if not analysis:
+        if pipeline.get("llm_error"):
+            note = f"No LLM narrative was generated: {pipeline['llm_error']}"
+        elif options.get("requested_use_llm") is False:
+            note = "No LLM narrative was generated (LLM review was turned off)."
+        elif options.get("use_llm") is False:
+            note = "No LLM narrative was generated (no LLM API key configured)."
+        else:
+            note = "No LLM narrative was generated."
+        lines += [f"**Note:** {note}", ""]
+    if options.get("brief"):
+        lines += ["## Deck brief", "", str(options["brief"]), ""]
+
+    lines += ["## Audit", ""]
+    if counts:
+        lines.append(
+            f"- **Cards:** {counts.get('total', '—')} total "
+            f"({counts.get('main', '—')} main + {counts.get('commander', 0)} commander)"
+        )
+    if curve:
+        lines.append(
+            f"- **Curve:** average mana value {curve.get('averageMv', '—')}, "
+            f"{curve.get('landCount', '—')} lands, {curve.get('rampCount', '—')} ramp"
+        )
+        buckets = curve.get("buckets")
+        if isinstance(buckets, Mapping) and buckets:
+            lines.append("- **Mana curve:** " + ", ".join(
+                f"{bucket}: {buckets[bucket]}" for bucket in sorted(buckets, key=str)
+            ))
+    legal = legality.get("legal")
+    if legal is not None:
+        lines.append(f"- **Legality:** {'legal' if legal else 'illegal'}")
+    lines.append("")
+
+    if legality.get("errors"):
+        lines += ["### Legality errors", ""]
+        lines += [f"- {message}" for message in _message_list(legality["errors"])]
+        lines.append("")
+    if legality.get("warnings"):
+        lines += ["### Legality warnings", ""]
+        lines += [f"- {message}" for message in _message_list(legality["warnings"])]
+        lines.append("")
+    legality_warning_keys = {
+        (str(item.get("code") or ""), str(item.get("message") or ""))
+        for item in _report_list(legality.get("warnings"))
+        if isinstance(item, Mapping)
+    }
+    audit_warnings = [
+        item.get("message") if isinstance(item, Mapping) else str(item)
+        for item in _report_list(audit.get("warnings"))
+        if not (
+            isinstance(item, Mapping)
+            and (str(item.get("code") or ""), str(item.get("message") or ""))
+            in legality_warning_keys
+        )
+    ]
+    if audit_warnings:
+        lines += ["### Audit notes", ""]
+        lines += [f"- {message}" for message in audit_warnings if message]
+        lines.append("")
+
+    if components:
+        labels = (
+            ("roles", "Roles"),
+            ("mana", "Mana"),
+            ("interaction", "Interaction"),
+            ("draw", "Card draw"),
+            ("wincons", "Win conditions"),
+            ("legality", "Legality"),
+        )
+        lines += ["### Health components", ""]
+        lines += [
+            f"- **{label}:** {components.get(key, '—')}"
+            for key, label in labels
+        ]
+        lines.append("")
+
+    if role_gaps:
+        lines += ["### Role coverage", ""]
+        for gap in role_gaps:
+            if not isinstance(gap, Mapping):
+                continue
+            role = gap.get("role", "")
+            actual, target = gap.get("actual", "—"), gap.get("target", "—")
+            deficit, surplus = gap.get("deficit") or 0, gap.get("surplus") or 0
+            if deficit:
+                suffix = f"needs {deficit}"
+            elif surplus:
+                suffix = f"{surplus} over target"
+            else:
+                suffix = "on target"
+            lines.append(f"- **{role}:** {actual} / {target} ({suffix})")
+        lines.append("")
+
+    brief_constraints = audit.get("briefConstraints")
+    if isinstance(brief_constraints, Mapping) and brief_constraints:
+        lines += ["### Brief constraints", ""]
+        lines += [
+            f"- **{role}:** max {count}"
+            for role, count in brief_constraints.items()
+        ]
+        lines.append("")
+
+    signals = _report_list(bracket.get("signals"))
+    signal_lines = []
+    for signal in signals:
+        if not isinstance(signal, Mapping):
+            continue
+        count = signal.get("count") or 0
+        if not count:
+            continue
+        label = signal.get("label") or signal.get("key") or "Signal"
+        cards = signal.get("cards") if isinstance(signal.get("cards"), list) else []
+        text = f"- **{label}:** {count}"
+        if cards:
+            text += f" ({', '.join(str(card) for card in cards)})"
+        signal_lines.append(text)
+    if signal_lines:
+        lines += ["### Bracket signals", ""] + signal_lines + [""]
 
     for key, title in (
         ("strengths", "Strengths"),
@@ -756,22 +1083,31 @@ def review_to_markdown(report: Mapping[str, Any]) -> str:
     lines.append("")
 
     lines += ["## Adds", ""]
-    add_items = analysis.get("adds") if isinstance(analysis.get("adds"), list) else []
-    if add_items:
-        for item in add_items:
-            if isinstance(item, Mapping):
-                lines.append(
-                    f"- **{item.get('name', '')}** — "
-                    f"{item.get('reason', '')}"
-                    + (f" ({item.get('role')})" if item.get("role") else "")
-                )
-    elif isinstance(adds, Mapping) and adds:
+    shown_adds = False
+    for item in add_items:
+        if not isinstance(item, Mapping):
+            continue
+        shown_adds = True
+        text = (
+            f"- **{item.get('name', '')}** — {item.get('reason', '')}"
+            + (f" ({item.get('role')})" if item.get("role") else "")
+        )
+        if item.get("replaces"):
+            text += f" — replaces **{item['replaces']}**"
+        lines.append(text)
+    if not shown_adds and isinstance(adds, Mapping):
         for role, bucket in adds.items():
-            for card in bucket or []:
+            for card in (bucket if isinstance(bucket, list) else []):
+                if not isinstance(card, Mapping):
+                    continue
+                shown_adds = True
+                price = _number(card.get("price"))
+                suffix = f" · ${price:.2f}" if price is not None else ""
                 lines.append(
-                    f"- **{card.get('name', '')}** — {card.get('reasonHint', '')} ({role})"
+                    f"- **{card.get('name', '')}** — {card.get('reasonHint', '')} "
+                    f"({role}){suffix}"
                 )
-    else:
+    if not shown_adds:
         lines.append("- None recommended.")
     lines.append("")
 
@@ -782,12 +1118,32 @@ def review_to_markdown(report: Mapping[str, Any]) -> str:
     if analysis.get("bracket_fit"):
         lines += ["## Bracket fit", "", str(analysis["bracket_fit"]), ""]
 
-    rejected = (report.get("validation") or {}).get("rejected") or []
+    verify_warnings = _message_list(verification.get("warnings"))
+    if verify_warnings:
+        lines += ["## Verifier notes", ""] + [f"- {item}" for item in verify_warnings] + [""]
+    elif verification.get("verified") is False:
+        lines += ["## Verifier notes", "", "- The verifier could not confirm this report.", ""]
+
+    validation_warnings = _message_list(validation.get("warnings"))
+    if validation_warnings:
+        lines += ["## Validation notes", ""]
+        lines += [f"- {item}" for item in validation_warnings]
+        lines.append("")
+
+    rejected = _report_list(validation.get("rejected"))
     if rejected:
         lines += ["## Rejected suggestions", ""]
         for item in rejected:
             if isinstance(item, Mapping):
                 lines.append(f"- {item.get('name', '')} — {item.get('reason', '')}")
+        lines.append("")
+
+    if pipeline.get("llm_error") or pipeline.get("llm_verify_error"):
+        lines += ["## Pipeline notes", ""]
+        if pipeline.get("llm_error"):
+            lines.append(f"- LLM review failed: {pipeline['llm_error']}")
+        if pipeline.get("llm_verify_error"):
+            lines.append(f"- LLM verification failed: {pipeline['llm_verify_error']}")
         lines.append("")
 
     return "\n".join(lines).strip() + "\n"
@@ -797,32 +1153,71 @@ def review_to_html(report: Mapping[str, Any]) -> str:
     """Render a saved review as a small self-contained HTML document."""
     import html as _html
 
-    md = review_to_markdown(report)
-    body_parts = []
-    for block in md.split("\n\n"):
-        block = block.strip()
-        if not block:
+    def inline(text: str) -> str:
+        escaped = _html.escape(str(text))
+        # Escape first, then turn the Markdown bold we emitted into markup.
+        return re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", escaped)
+
+    body_parts: list[str] = []
+    paragraph: list[str] = []
+    bullets: list[str] = []
+
+    def flush_paragraph() -> None:
+        if paragraph:
+            body_parts.append(
+                "<p>" + "<br>".join(inline(line) for line in paragraph) + "</p>"
+            )
+            paragraph.clear()
+
+    def flush_bullets() -> None:
+        if bullets:
+            body_parts.append(
+                "<ul>" + "".join(f"<li>{inline(item)}</li>" for item in bullets) + "</ul>"
+            )
+            bullets.clear()
+
+    for raw in review_to_markdown(report).splitlines():
+        line = raw.rstrip()
+        stripped = line.strip()
+        if not stripped:
+            flush_paragraph()
+            flush_bullets()
             continue
-        if block.startswith("# "):
-            body_parts.append(f"<h1>{_html.escape(block[2:].strip())}</h1>")
-        elif block.startswith("## "):
-            body_parts.append(f"<h2>{_html.escape(block[3:].strip())}</h2>")
-        elif block.startswith("- "):
-            items = [
-                line[2:].strip() for line in block.splitlines()
-                if line.startswith("- ")
-            ]
-            body_parts.append("<ul>" + "".join(
-                f"<li>{_html.escape(item)}</li>" for item in items
-            ) + "</ul>")
-        else:
-            body_parts.append(f"<p>{_html.escape(block)}</p>")
+        if line.startswith("# "):
+            flush_paragraph()
+            flush_bullets()
+            body_parts.append(f"<h1>{inline(line[2:])}</h1>")
+            continue
+        if line.startswith("## "):
+            flush_paragraph()
+            flush_bullets()
+            body_parts.append(f"<h2>{inline(line[3:])}</h2>")
+            continue
+        if line.startswith("### "):
+            flush_paragraph()
+            flush_bullets()
+            body_parts.append(f"<h3>{inline(line[4:])}</h3>")
+            continue
+        if line.startswith("- "):
+            flush_paragraph()
+            bullets.append(line[2:].strip())
+            continue
+        if bullets:
+            # Continuation of a multi-line bullet (LLM text can contain newlines).
+            bullets[-1] = (bullets[-1] + " " + stripped).strip()
+            continue
+        paragraph.append(stripped)
+    flush_paragraph()
+    flush_bullets()
+
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <title>Deck Doctor — {_html.escape(_report_deck_name(report) or 'Deck')}</title>
 <style>
 body{{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;max-width:900px;margin:2rem auto;padding:0 1rem;line-height:1.55;color:#1f2328}}
-h1{{border-bottom:1px solid #d0d7de;padding-bottom:.4rem}} h2{{margin-top:1.6rem;font-size:1.1rem}}
+h1{{border-bottom:1px solid #d0d7de;padding-bottom:.4rem}}
+h2{{margin-top:1.6rem;font-size:1.1rem}}
+h3{{margin-top:1.1rem;font-size:.95rem;color:#57606a}}
 li{{margin:.3rem 0}} code{{background:#f6f8fa;padding:.1rem .25rem;border-radius:3px}}
 </style></head><body>
 {''.join(body_parts)}

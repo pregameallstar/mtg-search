@@ -28,14 +28,18 @@ def lookup_card(db, card: dict) -> dict | None:
         LEFT JOIN cardLegalities cl ON c.uuid = cl.uuid
     """
     where = "WHERE c.language = 'English' AND (c.side IS NULL OR c.side = 'a')"
+    row = None
+    # Prefer the exact printing, but fall back to set/number and then name so a
+    # stale uuid (after an ingest or a hand-edited deck) does not silently leave
+    # the card unenriched.
     if uuid:
         row = db.execute(base + where + " AND c.uuid = ? LIMIT 1", [uuid]).fetchone()
-    elif set_code and number:
+    if row is None and set_code and number:
         row = db.execute(
             base + where + " AND c.setCode = ? AND c.number = ? LIMIT 1",
             [set_code, number],
         ).fetchone()
-    elif name:
+    if row is None and name:
         row = db.execute(
             base + where + """
               AND (LOWER(c.name) = LOWER(?) OR LOWER(
@@ -47,10 +51,7 @@ def lookup_card(db, card: dict) -> dict | None:
             """,
             [name, name],
         ).fetchone()
-    else:
-        return None
-
-    if not row:
+    if row is None:
         return None
     data = dict(row)
     data["legalities"] = {"commander": data.pop("commanderLegality", "")}

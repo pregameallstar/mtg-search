@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import threading
+import uuid
 from datetime import datetime, timezone
 
 from flask import (
@@ -17,7 +18,6 @@ from flask import (
 import mtg.review_cache as review_cache
 from mtg import deck_review
 from mtg.deck_enrich import enrich_deck
-from mtg.deck_stats import deck_fingerprint
 from mtg.prompt_store import get_prompt
 from mtg.shared import (
     DECKS_DIR,
@@ -44,30 +44,33 @@ def _load_deck(name: str) -> dict | None:
     return read_named_json(path, name)
 
 
+def _deck_quantity(card: dict) -> int:
+    try:
+        return max(1, int(card.get("quantity") or 1))
+    except (TypeError, ValueError):
+        return 1
+
+
 def _report_path(filename: str) -> str | None:
     filename = str(filename or "").strip()
     if not filename or filename != os.path.basename(filename):
         return None
-    if "/" in filename or "\\" in filename or ".." in filename or not filename.endswith(".json"):
+    if "\x00" in filename or "/" in filename or "\\" in filename or ".." in filename:
+        return None
+    if not filename.endswith(".json"):
         return None
     return os.path.join(REVIEWS_PATH, filename)
 
 
 def _brief_for_deck(deck: dict) -> str:
-    notes = str(deck.get("reviewNotes") or "").strip()
-    if notes:
-        return notes
-    outline = deck.get("outline")
-    if isinstance(outline, list):
-        parts = []
-        for section in outline:
-            if not isinstance(section, dict):
-                continue
-            text = str(section.get("text") or "").strip()
-            if text:
-                parts.append(text)
-        return " ".join(parts)[:2000]
-    return ""
+    """The user-authored Deck Brief.
+
+    Outline text is intentionally not used as a fallback: the outline is already
+    sent to retrieval and the LLM separately, and silently persisting a copy as
+    ``reviewNotes`` made the first review rewrite the deck and then shadow
+    future outline edits.
+    """
+    return str(deck.get("reviewNotes") or "").strip()
 
 
 def _save_review_notes(deck_name: str, brief: str) -> None:
@@ -80,37 +83,86 @@ def _save_review_notes(deck_name: str, brief: str) -> None:
             deck = read_named_json(path, deck_name)
             if not isinstance(deck, dict):
                 return
+            if str(deck.get("reviewNotes") or "") == brief:
+                return
             if brief:
                 deck["reviewNotes"] = brief
+                deck["reviewNotesUpdatedAt"] = datetime.now(timezone.utc).isoformat()
             else:
                 deck.pop("reviewNotes", None)
+                deck.pop("reviewNotesUpdatedAt", None)
             write_json_atomic(path, deck)
     except (StorageError, OSError):
         pass
 
 
-def _report_stale(data: dict) -> tuple[bool, str]:
-    """Compare a saved review fingerprint with the current saved deck."""
-    deck_name = clean_name(data.get("deck", ""))
+def _review_deck_name(data: dict) -> str:
+    """Saved reports store a deck name; live job results store a deck object."""
+    deck = data.get("deck")
+    if isinstance(deck, dict):
+        return clean_name(deck.get("name", ""))
+    return clean_name(deck or "")
+
+
+def _review_fingerprint(data: dict) -> str:
+    deck = data.get("deck")
+    if isinstance(deck, dict) and deck.get("fingerprint"):
+        return str(deck.get("fingerprint") or "")
+    return str(data.get("fingerprint") or "")
+
+
+def _report_stale(data: dict, cache: dict | None = None) -> tuple[bool, str]:
+    """Compare a saved review or live job result with the current saved deck."""
+    deck_name = _review_deck_name(data)
     if not deck_name:
         return True, "Deck name is missing."
-    try:
-        deck = _load_deck(deck_name)
-    except (StorageError, OSError):
-        deck = None
-    if deck is None:
-        return True, "The reviewed deck no longer exists."
+    expected = _review_fingerprint(data)
+    if not expected:
+        return True, "This review has no fingerprint."
+    cache = cache if cache is not None else {"decks": {}, "guidelines": {}}
+    decks = cache.setdefault("decks", {})
+    if deck_name not in decks:
+        try:
+            deck = _load_deck(deck_name)
+            decks[deck_name] = enrich_deck(get_db(), deck) if deck is not None else None
+        except (StorageError, OSError):
+            decks[deck_name] = None
+        except Exception:
+            decks[deck_name] = None
+    enriched = decks[deck_name]
+    if enriched is None:
+        return True, "The reviewed deck is no longer saved."
     options = data.get("options") if isinstance(data.get("options"), dict) else {}
+    guideline_name = str(options.get("guideline") or enriched.get("guideline") or "")
+    guidelines = cache.setdefault("guidelines", {})
+    if guideline_name not in guidelines:
+        guidelines[guideline_name] = deck_review._guideline(guideline_name)
     try:
-        current = deck_fingerprint(
-            enrich_deck(get_db(), deck),
-            deck_review.fingerprint_options(options),
+        current = deck_review.review_fingerprint(
+            enriched, options, guidelines[guideline_name]
         )
     except Exception:
         return True, "The reviewed deck could not be re-read."
-    if current != data.get("fingerprint"):
+    if current != expected:
         return True, "The deck changed since this review."
     return False, ""
+
+
+def _bool_option(value, default=False) -> bool:
+    """Parse booleans without treating the string "false" as truthy."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in ("1", "true", "yes", "on"):
+            return True
+        if lowered in ("0", "false", "no", "off", ""):
+            return False
+    return default
 
 
 def _llm_options() -> dict:
@@ -119,6 +171,7 @@ def _llm_options() -> dict:
         "base_url": session.get("llm_base_url") or os.environ.get("LLM_BASE_URL", ""),
         "model": session.get("llm_model") or os.environ.get("LLM_MODEL", ""),
         "api_key": session.get("llm_api_key") or os.environ.get("LLM_API_KEY", ""),
+        "timeout": os.environ.get("LLM_TIMEOUT_SECONDS", ""),
     }
 
 
@@ -133,7 +186,7 @@ def deck_review_page():
             "commander": (deck.get("commander") or {}).get("name", ""),
             "brief": _brief_for_deck(deck),
             "count": sum(
-                int(card.get("quantity") or 1)
+                _deck_quantity(card)
                 for card in (deck.get("cards") or [])
                 if isinstance(card, dict)
             ) + (1 if deck.get("commander") else 0),
@@ -193,26 +246,28 @@ def api_review_run():
     else:
         deck.pop("reviewNotes", None)
     llm = _llm_options()
-    use_llm = bool(options.get("use_llm", True)) and bool(llm["api_key"])
-    verify_llm = bool(options.get("verify_llm", False)) and use_llm
+    requested_use_llm = _bool_option(options.get("use_llm"), True)
+    requested_verify_llm = _bool_option(options.get("verify_llm"), False)
+    use_llm = requested_use_llm and bool(llm["api_key"])
+    verify_llm = requested_verify_llm and use_llm
     try:
         target_bracket = int(options.get("target_bracket"))
         if target_bracket not in (1, 2, 3, 4, 5):
             target_bracket = None
     except (TypeError, ValueError):
         target_bracket = None
+    max_adds = deck_review._limit(options.get("max_adds"))
+    max_cuts = deck_review._limit(options.get("max_cuts"))
     try:
-        max_adds = min(max(int(options.get("max_adds", 10)), 0), 20)
-    except (TypeError, ValueError):
-        max_adds = 10
-    try:
-        max_cuts = min(max(int(options.get("max_cuts", 10)), 0), 20)
-    except (TypeError, ValueError):
-        max_cuts = 10
+        combo_count = int(options["combo_count"]) if options.get("combo_count") not in (None, "") else None
+    except (KeyError, TypeError, ValueError):
+        combo_count = None
     options = {
         **options,
         "use_llm": use_llm,
         "verify_llm": verify_llm,
+        "requested_use_llm": requested_use_llm,
+        "requested_verify_llm": requested_verify_llm,
         "llm": llm,
         "review_prompt": get_prompt("review_prompt"),
         "guideline": options.get("guideline") or deck.get("guideline") or "",
@@ -220,7 +275,15 @@ def api_review_run():
         "target_bracket": target_bracket,
         "max_adds": max_adds,
         "max_cuts": max_cuts,
+        "combo_count": combo_count,
     }
+
+    try:
+        enriched = enrich_deck(get_db(), deck)
+        guideline = deck_review._guideline(str(options.get("guideline") or ""))
+        run_fingerprint = deck_review.review_fingerprint(enriched, options, guideline)
+    except Exception:
+        run_fingerprint = ""
 
     job_id = review_cache.create_job(total=5)
     thread = threading.Thread(
@@ -232,9 +295,7 @@ def api_review_run():
     return jsonify({
         "success": True,
         "jobId": job_id,
-        "fingerprint": deck_review.deck_fingerprint(
-            deck, deck_review.fingerprint_options(options)
-        ),
+        "fingerprint": run_fingerprint,
     }), 202
 
 
@@ -257,11 +318,21 @@ def api_review_result():
         return jsonify({"error": job.get("error") or "Review failed."}), 500
     if job["status"] != "done" or not job.get("result"):
         return jsonify({"error": "Job is still running."}), 409
-    return jsonify({"success": True, "jobId": job_id, "stale": False, **job["result"]})
+    stale, stale_reason = _report_stale(job["result"])
+    return jsonify({
+        "success": True,
+        "jobId": job_id,
+        "stale": stale,
+        "staleReason": stale_reason,
+        **job["result"],
+    })
 
 
 def _report_summaries(deck_name: str = "") -> list[dict]:
     reports = []
+    # Reuse the enriched deck when several reports belong to the same deck;
+    # otherwise listing reviews enriches the same 100-card list once per file.
+    cache: dict = {"decks": {}, "guidelines": {}}
     try:
         filenames = sorted(os.listdir(REVIEWS_PATH), reverse=True)
     except OSError:
@@ -275,18 +346,18 @@ def _report_summaries(deck_name: str = "") -> list[dict]:
         data = read_json(path, default=None)
         if not isinstance(data, dict):
             continue
-        name = str(data.get("deck") or "")
+        name = _review_deck_name(data)
         if deck_name and name != deck_name:
             continue
         analysis = data.get("analysis") if isinstance(data.get("analysis"), dict) else {}
         audit = data.get("audit") if isinstance(data.get("audit"), dict) else {}
         health = audit.get("health") if isinstance(audit.get("health"), dict) else {}
         bracket = audit.get("bracket") if isinstance(audit.get("bracket"), dict) else {}
-        stale, stale_reason = _report_stale(data)
+        stale, stale_reason = _report_stale(data, cache)
         reports.append({
             "filename": filename,
             "deck": name,
-            "fingerprint": data.get("fingerprint", ""),
+            "fingerprint": _review_fingerprint(data),
             "createdAt": data.get("createdAt", ""),
             "verdict": analysis.get("verdict", ""),
             "health": health.get("score"),
@@ -314,20 +385,38 @@ def api_review_save():
         return jsonify({"error": "Job is not finished."}), 409
 
     result = job["result"]
-    deck_name = clean_name(body.get("name") or result["deck"].get("name") or "deck")
+    result_deck = result.get("deck") if isinstance(result.get("deck"), dict) else {}
+    reviewed_name = clean_name(result_deck.get("name", ""))
+    requested_name = clean_name(body.get("name", ""))
+    if reviewed_name and requested_name and requested_name != reviewed_name:
+        return jsonify({
+            "error": (
+                f"This review belongs to \"{reviewed_name}\". "
+                "Save it under that deck, or run a new review."
+            )
+        }), 409
+    deck_name = reviewed_name or requested_name or "deck"
     if not deck_name:
         return jsonify({"error": "Deck name is required."}), 400
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    fingerprint = str(result["deck"].get("fingerprint") or "")
+    # Microseconds + a collision check so two saves of the same review do not
+    # silently replace each other.
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
+    fingerprint = str(result_deck.get("fingerprint") or "")
     safe = sanitize_filename(deck_name).replace(".json", "")
-    filename = f"{safe}__{timestamp}__{fingerprint[:8]}.json"
+    filename = f"{safe}__{stamp}__{fingerprint[:8]}.json"
     path = _report_path(filename)
     if not path:
         return jsonify({"error": "Invalid report filename."}), 400
+    if os.path.exists(path):
+        filename = f"{safe}__{stamp}_{uuid.uuid4().hex[:6]}__{fingerprint[:8]}.json"
+        path = _report_path(filename)
+        if not path:
+            return jsonify({"error": "Invalid report filename."}), 400
     report = {
         **result,
         "schemaVersion": 1,
         "deck": deck_name,
+        "commander": result_deck.get("commander") or {},
         "fingerprint": fingerprint,
         "createdAt": datetime.now(timezone.utc).isoformat(),
     }
@@ -404,6 +493,6 @@ def api_review_delete():
         os.unlink(path)
     except FileNotFoundError:
         return jsonify({"error": "Report not found."}), 404
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         return jsonify({"error": str(exc)}), 500
     return jsonify({"success": True})

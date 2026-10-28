@@ -50,6 +50,7 @@
     <div id="review-progress" class="deck-review-progress" hidden>
         <div class="deck-review-progress-track"><div id="review-progress-fill"></div></div>
         <span id="review-progress-label">Starting…</span>
+        <button type="button" id="review-cancel-btn" class="review-cancel-btn">Stop waiting</button>
     </div>
 
     <div id="review-result" class="deck-review-result" hidden></div>
@@ -85,10 +86,14 @@
     var progressEl = document.getElementById('review-progress');
     var progressFill = document.getElementById('review-progress-fill');
     var progressLabel = document.getElementById('review-progress-label');
+    var cancelBtn = document.getElementById('review-cancel-btn');
     var resultEl = document.getElementById('review-result');
     var reportsEl = document.getElementById('review-reports-list');
     var currentJob = null;
     var currentFilename = null;
+    var currentReviewName = null;
+    var reviewChangedByPage = false;
+    var initialDeckName = {{ deck_name | tojson }};
 
     function esc(s) {
         return String(s === null || s === undefined ? '' : s)
@@ -101,6 +106,22 @@
         statusEl.hidden = !text;
         statusEl.textContent = text || '';
         statusEl.className = 'deck-review-status ' + (kind || '');
+    }
+
+    function resetRunUi() {
+        currentJob = null;
+        runBtn.disabled = false;
+        if (progressEl) progressEl.hidden = true;
+        progressFill.style.width = '5%';
+        progressLabel.textContent = 'Starting…';
+    }
+
+    function clearResult() {
+        currentFilename = null;
+        currentReviewName = null;
+        reviewChangedByPage = false;
+        resultEl.hidden = true;
+        resultEl.innerHTML = '';
     }
 
     function setDeckValue(name) {
@@ -136,8 +157,8 @@
         var name = deckInput.value.trim();
         if (!name) { setStatus('Enter a saved deck name first.', 'error'); return; }
         runBtn.disabled = true;
-        resultEl.hidden = true;
-        currentFilename = null;
+        clearResult();
+        currentReviewName = name;
         progressEl.hidden = false;
         progressFill.style.width = '5%';
         progressLabel.textContent = 'Starting…';
@@ -185,23 +206,40 @@
                 setTimeout(poll, 600);
             })
             .catch(function (err) {
-                runBtn.disabled = false;
-                progressEl.hidden = true;
+                resetRunUi();
                 setStatus(err.message, 'error');
             });
     }
 
     function loadResult() {
-        fetch('/api/deck/review/result?jobId=' + encodeURIComponent(currentJob))
+        var jobId = currentJob;
+        if (!jobId) return;
+        fetch('/api/deck/review/result?jobId=' + encodeURIComponent(jobId))
             .then(function (r) { return r.json(); })
             .then(function (data) {
+                if (currentJob !== jobId) return;  // deck selection changed mid-run
                 if (data.error) throw new Error(data.error);
                 renderResult(data, !!data.stale);
                 runBtn.disabled = false;
                 progressEl.hidden = true;
                 loadReports();
             })
-            .catch(function (err) { setStatus(err.message, 'error'); runBtn.disabled = false; });
+            .catch(function (err) { resetRunUi(); setStatus(err.message, 'error'); });
+    }
+
+    function frontName(value) {
+        return String(value === null || value === undefined ? '' : value)
+            .split(' // ')[0].trim().toLowerCase();
+    }
+
+    function messageList(items) {
+        if (!Array.isArray(items) || !items.length) return '';
+        return '<ul class="review-list">' + items.map(function (item) {
+            var text = item && typeof item === 'object'
+                ? (item.message || item.name || '')
+                : item;
+            return '<li><span>' + esc(text) + '</span></li>';
+        }).join('') + '</ul>';
     }
 
     function renderResult(data, stale) {
@@ -210,16 +248,46 @@
         var bracket = audit.bracket || {};
         var salt = bracket.salt || {};
         var health = audit.health || {};
+        var components = health.components || {};
+        var counts = audit.counts || {};
+        var curve = audit.curve || {};
+        var legality = audit.legality || {};
         var gaps = Array.isArray(audit.roleGaps) ? audit.roleGaps : [];
+        var legalityWarningKeys = {};
+        (Array.isArray(legality.warnings) ? legality.warnings : []).forEach(function (warning) {
+            if (warning && typeof warning === 'object') {
+                legalityWarningKeys[String(warning.code || '') + '|' + String(warning.message || '')] = true;
+            }
+        });
+        var auditWarnings = (Array.isArray(audit.warnings) ? audit.warnings : []).filter(function (warning) {
+            if (!warning || typeof warning !== 'object') return true;
+            return !legalityWarningKeys[String(warning.code || '') + '|' + String(warning.message || '')];
+        });
+        var briefCaps = audit.briefConstraints && typeof audit.briefConstraints === 'object'
+            ? audit.briefConstraints : {};
+        var signals = Array.isArray(bracket.signals) ? bracket.signals : [];
         var candidates = data.candidates || {};
         var adds = candidates.adds || {};
-        var cuts = candidates.cuts || [];
+        var cuts = Array.isArray(candidates.cuts) ? candidates.cuts : [];
+        var options = data.options || {};
+        var pipeline = data.pipeline || {};
+        var validation = data.validation || {};
+        var verification = data.verification || {};
+        var currentDeck = data.deck;
+        currentReviewName = currentDeck && typeof currentDeck === 'object'
+            ? String(currentDeck.name || '')
+            : String(currentDeck || deckInput.value.trim());
+        reviewChangedByPage = false;
+
         var candidateIndex = {};
         Object.keys(adds).forEach(function (role) {
-            (adds[role] || []).forEach(function (card) {
+            (Array.isArray(adds[role]) ? adds[role] : []).forEach(function (card) {
+                if (!card || typeof card !== 'object') return;
                 candidateIndex[String(card.name || '').toLowerCase()] = card;
+                candidateIndex[frontName(card.name)] = card;
             });
         });
+
         var html = '';
         if (stale) {
             html += '<div class="review-stale-banner">⚠ This review is stale: ' +
@@ -227,14 +295,66 @@
                 ' Re-run Deck Doctor before applying recommendations.</div>';
         }
 
+        var summary = analysis && analysis.summary ? analysis.summary : '';
+        if (!summary) {
+            summary = 'No LLM narrative was generated. ';
+            if (pipeline.llm_error) {
+                summary += 'The LLM call failed: ' + pipeline.llm_error;
+            } else if (options.requested_use_llm === false) {
+                summary += 'The LLM option was turned off.';
+            } else if (options.use_llm === false) {
+                summary += 'Add an LLM API key on the Config page to enable it.';
+            }
+        }
         html += '<div class="review-hero">';
         html += '<div><div class="review-kicker">Verdict</div><h2>' +
             esc(analysis && analysis.verdict ? analysis.verdict : 'Deterministic audit') + '</h2>';
-        html += '<p>' + esc(analysis && analysis.summary ? analysis.summary : 'No LLM narrative was generated. The structural audit and candidate cards are shown below.') + '</p></div>';
+        html += '<p>' + esc(summary) + '</p></div>';
         html += '<div class="review-score"><strong>' + esc(health.score != null ? health.score : '--') + '</strong><span>health / 100</span>';
         html += '<div class="review-bracket">Bracket ' + esc(bracket.estimate != null ? bracket.estimate : '—') +
             (salt.score != null ? ' · Salt ' + esc(salt.score) : '') + '</div></div>';
         html += '</div>';
+
+        // Deterministic audit: counts, curve, legality, health components.
+        html += '<section><h3>Deterministic audit</h3>';
+        html += '<div class="review-audit-grid">';
+        html += '<div><span>Total cards</span><strong>' + esc(counts.total != null ? counts.total : '—') + '</strong></div>';
+        html += '<div><span>Main / commander</span><strong>' + esc(counts.main != null ? counts.main : '—') + ' + ' + esc(counts.commander != null ? counts.commander : '—') + '</strong></div>';
+        html += '<div><span>Average mana value</span><strong>' + esc(curve.averageMv != null ? curve.averageMv : '—') + '</strong></div>';
+        html += '<div><span>Lands</span><strong>' + esc(curve.landCount != null ? curve.landCount : '—') + '</strong></div>';
+        html += '<div><span>Ramp</span><strong>' + esc(curve.rampCount != null ? curve.rampCount : '—') + '</strong></div>';
+        html += '<div><span>Bracket confidence</span><strong>' + esc(bracket.confidence || '—') + '</strong></div>';
+        html += '</div>';
+        if (legality.legal === false) {
+            html += '<div class="review-legality review-legality-bad"><strong>Legality: illegal</strong>' +
+                messageList(legality.errors) + messageList(legality.warnings) + '</div>';
+        } else if (legality.legal === true) {
+            html += '<div class="review-legality review-legality-ok">✅ Legality: legal</div>';
+            if (Array.isArray(legality.warnings) && legality.warnings.length) {
+                html += messageList(legality.warnings);
+            }
+        }
+        if (Object.keys(components).length) {
+            html += '<h4>Health components</h4><div class="review-audit-grid">';
+            [
+                ['roles', 'Roles'], ['mana', 'Mana'], ['interaction', 'Interaction'],
+                ['draw', 'Card draw'], ['wincons', 'Win conditions'], ['legality', 'Legality']
+            ].forEach(function (pair) {
+                html += '<div><span>' + esc(pair[1]) + '</span><strong>' + esc(components[pair[0]] != null ? components[pair[0]] : '—') + '</strong></div>';
+            });
+            html += '</div>';
+        }
+        if (auditWarnings.length) {
+            html += '<h4>Audit notes</h4>' + messageList(auditWarnings);
+        }
+        if (Object.keys(briefCaps).length) {
+            html += '<h4>Brief constraints</h4><div class="review-audit-grid">';
+            Object.keys(briefCaps).forEach(function (role) {
+                html += '<div><span>' + esc(role) + '</span><strong>max ' + esc(briefCaps[role]) + '</strong></div>';
+            });
+            html += '</div>';
+        }
+        html += '</section>';
 
         html += '<div class="review-cards">';
         html += '<section><h3>Strengths</h3>' + list(analysis && analysis.strengths) + '</section>';
@@ -242,8 +362,24 @@
         html += '</div>';
 
         html += '<section><h3>Role gaps</h3><div class="review-gaps">';
-        gaps.forEach(function (gap) { html += '<div><span>' + esc(gap.role) + '</span><strong>' + esc(gap.actual) + ' / ' + esc(gap.target) + '</strong></div>'; });
+        gaps.forEach(function (gap) {
+            var suffix = gap.deficit ? ' (needs ' + gap.deficit + ')' : (gap.surplus ? ' (' + gap.surplus + ' over)' : '');
+            html += '<div><span>' + esc(gap.role) + '</span><strong>' + esc(gap.actual) + ' / ' + esc(gap.target) + esc(suffix) + '</strong></div>';
+        });
         html += '</div></section>';
+
+        var signalLines = signals.filter(function (signal) { return signal && signal.count; });
+        if (signalLines.length) {
+            html += '<section><h3>Bracket signals</h3><ul class="review-list">';
+            signalLines.forEach(function (signal) {
+                var cards = Array.isArray(signal.cards) && signal.cards.length
+                    ? ' · ' + signal.cards.join(', ')
+                    : '';
+                html += '<li><div class="review-item-line"><strong>' + esc(signal.label || signal.key) +
+                    '</strong><span>' + esc(signal.count) + '</span></div><span>' + esc(cards) + '</span></li>';
+            });
+            html += '</ul></section>';
+        }
 
         html += '<div class="review-cards">';
         html += '<section><h3>Cuts</h3>';
@@ -254,6 +390,7 @@
             cutItems.forEach(function (cut) {
                 html += '<li><div class="review-item-line"><strong>' + esc(cut.name) + '</strong>' +
                     '<button type="button" class="review-apply-cut" data-name="' + esc(cut.name) + '"' +
+                    ' data-uuid="' + esc(cut.uuid || '') + '"' +
                     (stale ? ' disabled title="Re-run the review first"' : '') + '>Cut</button></div>' +
                     '<span>' + esc(cut.reason || cut.reasonHint || '') + '</span></li>';
             });
@@ -265,54 +402,94 @@
         var addItems = analysis && Array.isArray(analysis.adds) ? analysis.adds : [];
         if (!addItems.length) {
             Object.keys(adds).forEach(function (role) {
-                adds[role].forEach(function (card) { addItems.push({name: card.name, reason: card.reasonHint, role: role}); });
+                (Array.isArray(adds[role]) ? adds[role] : []).forEach(function (card) {
+                    if (!card || typeof card !== 'object') return;
+                    addItems.push({name: card.name, reason: card.reasonHint, role: role});
+                });
             });
         }
         if (!addItems.length) html += '<p class="deck-review-empty">No candidate adds found.</p>';
         else {
             html += '<ul class="review-list">';
             addItems.forEach(function (add) {
-                var candidate = candidateIndex[String(add.name || '').toLowerCase()];
+                var candidate = candidateIndex[String(add.name || '').toLowerCase()] ||
+                    candidateIndex[frontName(add.name)];
                 var button = candidate
                     ? '<button type="button" class="review-apply-add" data-set-code="' +
                       esc(candidate.setCode) + '" data-number="' + esc(candidate.number) + '"' +
+                      ' data-replaces="' + esc(add.replaces || '') + '"' +
                       (stale ? ' disabled title="Re-run the review first"' : '') + '>Add</button>'
                     : '';
+                var replaces = add.replaces ? ' · replaces ' + add.replaces : '';
+                var priceText = candidate && candidate.price != null
+                    ? ' · ' + String(options.currency || 'usd').toUpperCase() + ' ' + Number(candidate.price).toFixed(2)
+                    : '';
                 html += '<li><div class="review-item-line"><strong>' + esc(add.name) + '</strong>' + button + '</div>' +
-                    '<span>' + esc(add.reason || '') + (add.role ? ' · ' + esc(add.role) : '') + '</span></li>';
+                    '<span>' + esc(add.reason || '') + (add.role ? ' · ' + esc(add.role) : '') + esc(replaces) + esc(priceText) + '</span></li>';
             });
             html += '</ul>';
         }
         html += '</section></div>';
 
-        if (analysis) {
+        if (analysis && analysis.mana_base) {
             html += '<section><h3>Mana base</h3><p>' + esc(analysis.mana_base) + '</p></section>';
+        }
+        if (analysis && analysis.win_conditions) {
             html += '<section><h3>Win conditions</h3><p>' + esc(analysis.win_conditions) + '</p></section>';
+        }
+        if (analysis && analysis.bracket_fit) {
             html += '<section><h3>Bracket fit</h3><p>' + esc(analysis.bracket_fit) + '</p></section>';
+        }
+        if (analysis && Array.isArray(analysis.next_steps) && analysis.next_steps.length) {
             html += '<section><h3>Next steps</h3>' + list(analysis.next_steps) + '</section>';
         }
 
-        var verification = data.verification || {};
+        if (pipeline.llm_error || pipeline.llm_verify_error) {
+            html += '<section class="review-warning"><h3>Pipeline notes</h3><ul class="review-list">';
+            if (pipeline.llm_error) {
+                html += '<li><strong>LLM review failed</strong><span>' + esc(pipeline.llm_error) + '</span></li>';
+            }
+            if (pipeline.llm_verify_error) {
+                html += '<li><strong>LLM verification failed</strong><span>' + esc(pipeline.llm_verify_error) + '</span></li>';
+            }
+            html += '</ul></section>';
+        }
+
         var verifyWarnings = Array.isArray(verification.warnings) ? verification.warnings : [];
-        if (verifyWarnings.length) {
-            html += '<section class="review-warning"><h3>Verifier notes</h3><ul class="review-list">';
-            verifyWarnings.forEach(function (warning) {
-                html += '<li><span>' + esc(warning) + '</span></li>';
+        if (verifyWarnings.length || verification.verified === false) {
+            html += '<section class="review-warning"><h3>Verifier notes</h3>';
+            if (verifyWarnings.length) {
+                html += messageList(verifyWarnings);
+            } else {
+                html += '<p class="deck-review-empty">The verifier could not confirm this report.</p>';
+            }
+            html += '</section>';
+        }
+
+        var validationWarnings = Array.isArray(validation.warnings) ? validation.warnings : [];
+        if (validationWarnings.length) {
+            html += '<section class="review-warning"><h3>Validation notes</h3>' +
+                messageList(validationWarnings) + '</section>';
+        }
+
+        var rejected = Array.isArray(validation.rejected) ? validation.rejected : [];
+        if (rejected.length) {
+            html += '<section class="review-warning"><h3>Rejected suggestions</h3><ul class="review-list">';
+            rejected.forEach(function (item) {
+                html += '<li><strong>' + esc(item.name) + '</strong><span>' + esc(item.reason) + '</span></li>';
             });
             html += '</ul></section>';
         }
 
-        var rejected = (data.validation && data.validation.rejected) || [];
-        if (rejected.length) {
-            html += '<section class="review-warning"><h3>Rejected suggestions</h3><ul class="review-list">';
-            rejected.forEach(function (item) { html += '<li><strong>' + esc(item.name) + '</strong><span>' + esc(item.reason) + '</span></li>'; });
-            html += '</ul></section>';
+        var actions = '<div class="review-actions">';
+        if (currentJob) {
+            actions += '<button type="button" id="review-save-btn" class="btn-secondary">Save review</button>';
         }
-        html += '<div class="review-actions"><button type="button" id="review-save-btn" class="btn-secondary">Save review</button>' +
-            '<button type="button" class="review-export-btn btn-secondary" data-format="markdown">Export Markdown</button>' +
+        actions += '<button type="button" class="review-export-btn btn-secondary" data-format="markdown">Export Markdown</button>' +
             '<button type="button" class="review-export-btn btn-secondary" data-format="html">Export HTML</button>' +
             (currentFilename ? '<button type="button" id="review-delete-current" class="btn-secondary review-delete-current">Delete review</button>' : '') +
             '</div>';
+        html += actions;
         resultEl.innerHTML = html;
         resultEl.hidden = false;
         var saveBtn = document.getElementById('review-save-btn');
@@ -326,34 +503,139 @@
         });
         resultEl.querySelectorAll('.review-apply-add').forEach(function (btn) {
             btn.addEventListener('click', function () {
-                applyCard('add', {setCode: btn.dataset.setCode, number: btn.dataset.number});
+                applyCard('add', {
+                    setCode: btn.dataset.setCode,
+                    number: btn.dataset.number,
+                    replaces: btn.dataset.replaces || ''
+                });
             });
         });
         resultEl.querySelectorAll('.review-apply-cut').forEach(function (btn) {
             btn.addEventListener('click', function () {
-                applyCard('cut', {name: btn.dataset.name});
+                applyCard('cut', {name: btn.dataset.name, uuid: btn.dataset.uuid || ''});
             });
         });
+    }
+
+    function postJson(url, body) {
+        return fetch(url, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body)
+        }).then(function (r) {
+            return r.json().catch(function () { return {}; }).then(function (data) {
+                return {ok: r.ok, status: r.status, data: data || {}};
+            });
+        });
+    }
+
+    function recheckReviewStale(done) {
+        if (reviewChangedByPage) { done(false, ''); return; }
+        var url = null;
+        if (currentFilename) {
+            url = '/api/deck/review/report?filename=' + encodeURIComponent(currentFilename);
+        } else if (currentJob) {
+            url = '/api/deck/review/result?jobId=' + encodeURIComponent(currentJob);
+        }
+        if (!url) { done(false, ''); return; }
+        fetch(url)
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                if (data.error) { done(true, data.error); return; }
+                done(!!data.stale, data.staleReason || '');
+            })
+            .catch(function (err) { done(true, err.message || 'Could not verify the review.'); });
     }
 
     function applyCard(kind, payload) {
         var name = deckInput.value.trim();
         if (!name) { setStatus('Save the deck first, then apply recommendations.', 'error'); return; }
-        var endpoint = kind === 'add' ? '/api/deck/add-card' : '/api/deck/remove-card';
-        var body = kind === 'add'
-            ? {deck: name, setCode: payload.setCode, number: payload.number}
-            : {deck: name, name: payload.name};
-        fetch(endpoint, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(body)
-        })
-        .then(function (r) { return r.json(); })
-        .then(function (data) {
-            if (data.error) throw new Error(data.error);
-            setStatus(kind === 'add' ? 'Card added to the deck.' : 'Card removed from the deck.', 'ok');
-        })
-        .catch(function (err) { setStatus(err.message, 'error'); });
+        if (!currentReviewName || name !== currentReviewName) {
+            setStatus(
+                'This review belongs to "' + (currentReviewName || 'another deck') +
+                '", not "' + name + '". Re-run Deck Doctor for the selected deck.',
+                'error'
+            );
+            return;
+        }
+        if (kind === 'cut' && !window.confirm('Remove ' + payload.name + ' from "' + name + '"?')) {
+            return;
+        }
+        recheckReviewStale(function (stale, reason) {
+            if (stale) {
+                setStatus(
+                    'This review is no longer fresh: ' + (reason || 'the deck changed.') +
+                    ' Re-run Deck Doctor before applying recommendations.',
+                    'error'
+                );
+                return;
+            }
+            if (kind === 'add') {
+                addRecommendedCard(name, payload);
+            } else {
+                cutRecommendedCard(name, payload);
+            }
+        });
+    }
+
+    function addRecommendedCard(name, payload) {
+        function attempt() {
+            return postJson('/api/deck/add-card', {
+                deck: name,
+                setCode: payload.setCode,
+                number: payload.number
+            });
+        }
+        function succeeded(replaced) {
+            reviewChangedByPage = true;
+            setStatus(
+                'Added ' + (payload.name || 'the card') +
+                (replaced ? ' and removed ' + replaced : '') +
+                '. Re-run Deck Doctor to refresh the audit.',
+                'ok'
+            );
+        }
+        attempt()
+            .then(function (res) {
+                if (res.ok) { succeeded(''); return; }
+                var error = res.data.error || 'Could not add the card.';
+                if (!payload.replaces || res.status !== 409 || !/deck is full/i.test(error)) {
+                    throw new Error(error);
+                }
+                // A full deck needs the suggested cut first. Only remove the
+                // named replacement, and only after the add reported "full".
+                return postJson('/api/deck/remove-card', {
+                    deck: name,
+                    name: payload.replaces,
+                    quantity: 1
+                }).then(function (removed) {
+                    if (!removed.ok) {
+                        throw new Error(removed.data.error || ('Could not remove ' + payload.replaces + '.'));
+                    }
+                    return attempt();
+                }).then(function (retry) {
+                    if (!retry.ok) {
+                        throw new Error(retry.data.error || 'Could not add the card after removing the replacement.');
+                    }
+                    succeeded(payload.replaces);
+                });
+            })
+            .catch(function (err) { setStatus(err.message, 'error'); });
+    }
+
+    function cutRecommendedCard(name, payload) {
+        var body = {deck: name, name: payload.name, quantity: 1};
+        if (payload.uuid) body.uuid = payload.uuid;
+        postJson('/api/deck/remove-card', body)
+            .then(function (res) {
+                if (!res.ok) throw new Error(res.data.error || 'Could not cut the card.');
+                reviewChangedByPage = true;
+                setStatus(
+                    'Removed ' + payload.name + '. Re-run Deck Doctor to refresh the audit.',
+                    'ok'
+                );
+            })
+            .catch(function (err) { setStatus(err.message, 'error'); });
     }
 
     function list(items) {
@@ -365,15 +647,22 @@
 
     function saveReview() {
         if (!currentJob) return;
+        var name = deckInput.value.trim();
+        if (currentReviewName && name !== currentReviewName) {
+            setStatus('The selected deck changed. Re-run Deck Doctor before saving.', 'error');
+            return;
+        }
         fetch('/api/deck/review/save', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ jobId: currentJob, name: deckInput.value.trim() })
+            body: JSON.stringify({ jobId: currentJob, name: name })
         })
         .then(function (r) { return r.json(); })
         .then(function (data) {
             if (data.error) throw new Error(data.error);
             currentFilename = data.filename || null;
+            var btn = document.getElementById('review-save-btn');
+            if (btn) { btn.disabled = true; btn.textContent = 'Saved'; }
             setStatus('Review saved.', 'ok');
             loadReports();
         })
@@ -428,9 +717,6 @@
                         '<button type="button" class="review-delete-report" data-filename="' +
                         esc(report.filename) + '">Delete</button></li>';
                 }).join('') + '</ul>';
-                reportsEl.querySelectorAll('.review-load-report').forEach(function (btn) {
-                    btn.addEventListener('click', function () { loadSavedReport(btn.dataset.filename); });
-                });
             })
             .catch(function () {});
     }
@@ -440,16 +726,31 @@
             .then(function (r) { return r.json(); })
             .then(function (data) {
                 if (data.error) throw new Error(data.error);
+                // Loading a saved report abandons any run that is still polling.
+                resetRunUi();
                 if (data.deck) {
-                    setDeckValue(data.deck);
+                    setDeckValue(typeof data.deck === 'object' ? data.deck.name : data.deck);
                     refreshOpenDeck();
+                    loadReports();
                 }
-                if (data.options && typeof data.options.brief === 'string') {
-                    if (briefInput) briefInput.value = data.options.brief;
+                var opts = data.options || {};
+                if (typeof opts.brief === 'string') {
+                    if (briefInput) briefInput.value = opts.brief;
                     briefTouched = true;
                 }
+                var bracketInput = document.getElementById('review-target-bracket');
+                if (bracketInput) {
+                    bracketInput.value = opts.target_bracket != null ? String(opts.target_bracket) : '';
+                }
+                var useLlm = document.getElementById('review-use-llm');
+                if (useLlm) {
+                    useLlm.checked = opts.requested_use_llm !== undefined
+                        ? !!opts.requested_use_llm
+                        : opts.use_llm !== false;
+                }
+                var verifyLlm = document.getElementById('review-verify-llm');
+                if (verifyLlm) verifyLlm.checked = !!opts.requested_verify_llm;
                 currentFilename = filename;
-                currentJob = null;
                 renderResult(data, !!data.stale);
                 setStatus(data.stale ? 'Loaded stale review. Re-run before applying.' : 'Loaded saved review.',
                     data.stale ? 'error' : 'ok');
@@ -459,20 +760,40 @@
 
     if (reportsEl) {
         reportsEl.addEventListener('click', function (e) {
-            var btn = e.target.closest('.review-delete-report');
-            if (btn) deleteReview(btn.dataset.filename);
+            var deleteBtn = e.target.closest('.review-delete-report');
+            if (deleteBtn) {
+                deleteReview(deleteBtn.dataset.filename);
+                return;
+            }
+            var loadBtn = e.target.closest('.review-load-report');
+            if (loadBtn) loadSavedReport(loadBtn.dataset.filename);
         });
     }
     runBtn.addEventListener('click', runReview);
+    if (cancelBtn) {
+        cancelBtn.addEventListener('click', function () {
+            resetRunUi();
+            clearResult();
+            setStatus('Stopped waiting. The server may still finish the review in the background.', '');
+        });
+    }
     deckInput.addEventListener('change', function () {
+        var selected = deckInput.value.trim();
+        if (currentReviewName && selected !== currentReviewName) {
+            // Recommendations must never be applied to a different deck.
+            resetRunUi();
+            clearResult();
+            setStatus('Deck changed. Run Deck Doctor to review "' + selected + '".', '');
+        }
         syncBrief(true);
         refreshOpenDeck();
+        loadReports();
     });
     deckInput.addEventListener('input', refreshOpenDeck);
     if (briefInput) briefInput.addEventListener('input', function () { briefTouched = true; });
     syncBrief(true);
     refreshOpenDeck();
-    loadReports();
+    if (!initialDeckName) loadReports();
 })();
 </script>
 {% endblock %}

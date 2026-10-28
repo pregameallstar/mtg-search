@@ -600,7 +600,7 @@ def review_deck(name: str, include_candidates: bool = False) -> dict:
     include_candidates: include embedding-retrieved adds and cut candidates.
     """
     from mtg.deck_enrich import enrich_deck
-    from mtg.deck_review import candidate_adds, cut_candidates
+    from mtg.deck_review import brief_role_caps, candidate_adds, cut_candidates, _guideline
     from mtg.deck_stats import analyze_deck
 
     fname = sanitize_filename(name)
@@ -614,15 +614,31 @@ def review_deck(name: str, include_candidates: bool = False) -> dict:
         return {"error": str(exc)}
     if not isinstance(deck, dict):
         return {"error": f"Deck '{name}' is not a valid deck object."}
+    if deck.get("name") != name:
+        return {
+            "error": (
+                f"Deck '{name}' not found (the file belongs to "
+                f"'{deck.get('name', '')}'). Use list_decks for exact names."
+            )
+        }
 
     db = _get_db()
     try:
         enriched = enrich_deck(db, deck)
-        audit = analyze_deck(enriched)
+        guideline = _guideline(str(deck.get("guideline") or ""))
+        audit = analyze_deck(
+            enriched,
+            guideline=guideline,
+            brief_caps=brief_role_caps(deck.get("reviewNotes")),
+        )
         result = {"name": deck.get("name", name), "audit": audit}
         if include_candidates:
+            options = {
+                "brief": str(deck.get("reviewNotes") or ""),
+                "guideline": str(deck.get("guideline") or ""),
+            }
             result["candidates"] = {
-                "adds": candidate_adds(db, enriched, audit, {}),
+                "adds": candidate_adds(db, enriched, audit, options),
                 "cuts": cut_candidates(enriched, audit),
             }
         return result

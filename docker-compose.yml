@@ -36,6 +36,7 @@ services:
       - LLM_BASE_URL=${LLM_BASE_URL:-}
       - LLM_MODEL=${LLM_MODEL:-}
       - LLM_API_KEY=${LLM_API_KEY:-}
+      - LLM_TIMEOUT_SECONDS=${LLM_TIMEOUT_SECONDS:-120}
       - MCP_SSE_PORT=${MCP_SSE_PORT:-8765}
       # Inside the container the services must bind all interfaces so Docker's
       # port mapping can reach them; the host-side bind is controlled above.

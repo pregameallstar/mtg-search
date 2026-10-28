@@ -4102,6 +4102,8 @@ main:has(.card-templates-page) {
 .deck-review-progress { margin: 0.75rem 0 1rem; font-size: 0.78rem; color: var(--text-dim); }
 .deck-review-progress-track { height: 6px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 999px; overflow: hidden; margin-bottom: 0.35rem; }
 #review-progress-fill { height: 100%; width: 5%; background: var(--accent); transition: width 0.2s ease; }
+.review-cancel-btn { margin-left: 0.6rem; background: transparent; border: 1px solid var(--border); border-radius: 4px; color: var(--text-dim); cursor: pointer; font-size: 0.72rem; padding: 0.12rem 0.45rem; }
+.review-cancel-btn:hover { color: #f85149; border-color: #f85149; }
 .review-hero { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; padding: 1rem; background: var(--bg-card); border: 1px solid var(--border); border-radius: 9px; margin-bottom: 1rem; }
 .review-kicker { color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.68rem; }
 .review-hero h2 { margin: 0.2rem 0 0.4rem; }
@@ -4119,6 +4121,13 @@ main:has(.card-templates-page) {
 .review-gaps { display: grid; gap: 0.3rem; }
 .review-gaps div { display: flex; justify-content: space-between; font-size: 0.78rem; color: var(--text-dim); border-bottom: 1px solid var(--border); padding-bottom: 0.2rem; }
 .review-gaps strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.review-audit-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.45rem; margin-bottom: 0.6rem; }
+.review-audit-grid div { display: flex; flex-direction: column; gap: 0.1rem; padding: 0.35rem 0.5rem; background: var(--bg); border: 1px solid var(--border); border-radius: 5px; font-size: 0.72rem; color: var(--text-dim); }
+.review-audit-grid strong { color: var(--text); font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+.deck-review-result h4 { margin: 0.9rem 0 0.4rem; font-size: 0.8rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; }
+.review-legality { margin: 0.5rem 0 0.75rem; padding: 0.5rem 0.6rem; border: 1px solid var(--border); border-radius: 6px; font-size: 0.78rem; }
+.review-legality-bad { border-color: #f85149; color: #f85149; }
+.review-legality-ok { border-color: #3fb950; color: #3fb950; }
 .review-warning { border-color: #d29922 !important; }
 .review-actions { margin: 1rem 0 2rem; }
 .deck-review-reports { margin-top: 2rem; }

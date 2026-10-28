@@ -168,7 +168,7 @@ The pipeline runs five steps:
 4. **LLM review** — optional. The model chooses only from the candidate list and writes cuts, adds, mana-base notes, win conditions, bracket fit, and next steps.
 5. **Validate** — invalid adds/cuts are rejected; only real cards in the right deck/color identity survive.
 
-The page shows scorecards, cuts, adds with apply buttons, saved reviews with delete/load controls, stale warnings, validation notes, and a Deck Brief field for strategy or Rule 0 constraints. Nothing is applied automatically. Review reports live in `deck_reviews/` and are fingerprinted; export them as Markdown or HTML. An optional second LLM pass checks the report against the candidate list and deck.
+The page shows scorecards, the deterministic audit (counts, curve, legality, health components, bracket signals, role coverage), cuts, adds with apply buttons, saved reviews with delete/load controls, stale warnings, validation/verifier notes, and a Deck Brief field for strategy or Rule 0 constraints. Nothing is applied automatically. Review reports live in `deck_reviews/` and are fingerprinted over card identities and quantities, card and commander tags, eval data, the guideline contents, and the audit/role engine versions; any input that can change the result marks a saved review stale. Explicit numeric caps in the brief (for example "Rule 0: max 2 board wipes") lower the matching deterministic role targets, and the full brief informs retrieval and the LLM prompt. Export reports as Markdown or HTML. An optional second LLM pass checks the report against the candidate list, candidate color identities, and the audit, and LLM requests are bounded by `LLM_TIMEOUT_SECONDS` (default 120).
 
 ### Card Detail
 

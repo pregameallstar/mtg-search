@@ -2,6 +2,10 @@
 
 Review runs happen on a daemon thread; the browser polls progress and then fetches
 the result. Jobs are capped so abandoned reviews cannot grow memory without bound.
+
+This store is process-local. It matches the current single-process deployment
+(``python app.py`` inside the container); running the app under multiple workers
+would require a shared job store so polling lands on the worker that ran the job.
 """
 
 from __future__ import annotations

@@ -266,10 +266,13 @@ its role panel, guideline bars, and bracket badge.
 background job; `GET /progress` and `GET /result` poll it. Reports are saved to
 `deck_reviews/` and listed by `/api/deck/review/reports`. The Deck Brief is
 stored on the deck as `reviewNotes`, feeds the embedding profile and LLM prompt,
-and is part of the review fingerprint. Saved reviews are checked against the
-current deck fingerprint and marked stale after edits.
-`/api/deck/review/export` downloads Markdown or HTML. An optional second LLM
-pass verifies the report against the candidate/deck lists. The pipeline enriches
+and is part of the review fingerprint. Explicit numeric caps in the brief (for
+example "Rule 0: max 2 board wipes") lower the matching role targets. The review
+fingerprint covers card identities/quantities, card and commander tags, eval
+data, the guideline contents, and the audit/role engine versions, so any input
+that can change the result marks saved reviews stale. `/api/deck/review/export`
+downloads Markdown or HTML. An optional second LLM pass verifies the report
+against the candidate/deck lists, candidate color identities, and the audit. The pipeline enriches
 the deck, runs `analyze_deck()`, retrieves real candidate adds with embeddings,
 optionally calls the LLM with `DECK_REVIEW_SYSTEM_PROMPT`, and rejects any
 recommendation that is not a real card in the candidate list or not in the deck
