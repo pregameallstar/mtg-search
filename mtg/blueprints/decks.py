@@ -3,7 +3,14 @@ from datetime import datetime, timezone
 
 from flask import Blueprint, request, render_template, jsonify, session
 
-from mtg.shared import get_db, DECKS_DIR, HISTORY_DIR, card_image, _list_json_files
+from mtg.shared import (
+    get_db,
+    DECKS_DIR,
+    HISTORY_DIR,
+    card_image,
+    _list_json_files,
+)
+from mtg.deck_versions import write_version
 from mtg.roles import ROLES_VERSION, classify_roles
 from mtg.storage import (
     StorageError,
@@ -72,6 +79,14 @@ def api_deck_save():
                     raise
                 read_named_json(fpath, previous_name)
             write_json_atomic(fpath, body)
+            # Baseline/first snapshot, then at most one automatic snapshot per
+            # 10 minutes. The History tab can force an explicit snapshot.
+            try:
+                write_version(os.path.join(DECKS_DIR, "_versions"), body,
+                              min_interval=600)
+            except Exception:
+                # Versioning is best-effort; never fail the deck save for it.
+                pass
     except StorageError as e:
         return jsonify({"error": str(e)}), e.status_code
     except OSError as e:

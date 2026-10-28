@@ -27,6 +27,7 @@
             </a>
             <div class="saved-deck-actions">
                 <a class="btn-deck-action" href="/deck-review?deck={{ deck.name | urlencode }}" title="Review deck">Review</a>
+                <a class="btn-deck-action" href="/compare-decks?a={{ deck.name | urlencode }}" title="Compare decks">Compare</a>
                 <button class="btn-deck-delete" data-name="{{ deck.name | e }}" title="Delete deck">Delete</button>
             </div>
         </div>

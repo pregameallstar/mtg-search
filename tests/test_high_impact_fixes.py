@@ -321,3 +321,13 @@ def test_config_review_prompt_uses_server_store(tmp_path, monkeypatch):
     assert rv.status_code == 302
     files = list(tmp_path.glob("*.json"))
     assert files and json.loads(files[0].read_text())["review_prompt"] == "CUSTOM REVIEW PROMPT"
+
+
+def test_deck_save_creates_baseline_snapshot(tmp_path, monkeypatch):
+    monkeypatch.setattr(decks_module, "DECKS_DIR", str(tmp_path))
+    c = _client()
+    assert c.post("/api/deck/save", json={
+        "name": "Snapshot Test", "cards": [], "sections": {},
+    }).status_code == 200
+    versions = list((tmp_path / "_versions").glob("*.json"))
+    assert len(versions) == 1

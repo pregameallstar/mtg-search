@@ -1295,6 +1295,7 @@
         renderDeckCost();
         updateDeckNameInput();
         updateReviewTab();
+        updateHistoryLinks();
         updatePricingStoreSelect();
         updateSectionIncludeCheckboxes();
         makeDeckCardRowsDraggable();
@@ -2520,6 +2521,16 @@
     function updateHistoryBtnVisibility() {
         var btn = $('#deck-history-delete-btn');
         if (btn) btn.style.display = deck.name ? '' : 'none';
+    }
+
+    function updateHistoryLinks() {
+        var link = $('#history-compare-link');
+        if (!link) return;
+        if (deck.name) {
+            link.href = '/compare-decks?a=' + encodeURIComponent(deck.name);
+        } else {
+            link.href = '/compare-decks';
+        }
     }
 
     function updateReviewTab() {
@@ -4862,6 +4873,152 @@
         }
     }
 
+    function historyDate(value) {
+        if (!value) return '';
+        var date = new Date(value);
+        return isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+    }
+
+    function initHistoryTab() {
+        var tab = document.querySelector('.tool-tab-btn[data-tool="history"]');
+        if (tab) tab.addEventListener('click', loadHistoryTab);
+        var snapshotBtn = $('#history-snapshot-btn');
+        if (snapshotBtn) snapshotBtn.addEventListener('click', snapshotDeckVersion);
+        var refreshBtn = $('#history-refresh-btn');
+        if (refreshBtn) refreshBtn.addEventListener('click', loadHistoryTab);
+    }
+
+    function historyStatus(text, kind) {
+        var el = $('#history-status');
+        if (!el) return;
+        el.textContent = text || '';
+        el.className = 'history-status ' + (kind || '');
+    }
+
+    function loadHistoryTab() {
+        var versionsEl = $('#deck-versions-list');
+        var historyEl = $('#deck-history-list');
+        if (!deck.name) {
+            if (versionsEl) versionsEl.innerHTML = '<p class="history-empty">Save the deck first.</p>';
+            if (historyEl) historyEl.innerHTML = '<p class="history-empty">Save the deck first.</p>';
+            return;
+        }
+        var name = encodeURIComponent(deck.name);
+        Promise.all([
+            fetch('/api/deck/versions?deck=' + name).then(function (r) { return r.json(); }),
+            fetch('/api/deck/history?deck=' + name).then(function (r) { return r.json(); })
+        ]).then(function (results) {
+            renderVersions(results[0].versions || []);
+            renderHistoryEvents(results[1].history || []);
+        }).catch(function () {
+            historyStatus('Could not load history.', 'error');
+        });
+    }
+
+    function renderVersions(versions) {
+        var el = $('#deck-versions-list');
+        if (!el) return;
+        if (!versions.length) {
+            el.innerHTML = '<p class="history-empty">No versions yet. Click “Snapshot current”.</p>';
+            return;
+        }
+        el.innerHTML = versions.map(function (version) {
+            return '<div class="history-version-row">' +
+                '<div><strong>' + escapeHtml(version.commander || 'No commander') + '</strong>' +
+                '<div class="history-version-meta">' + escapeHtml(historyDate(version.createdAt)) +
+                ' · ' + escapeHtml(version.total) + ' cards</div></div>' +
+                '<div class="history-version-actions">' +
+                    '<button type="button" data-version-diff="' + escapeAttr(version.filename) + '">Diff</button>' +
+                    '<button type="button" data-version-restore="' + escapeAttr(version.filename) + '">Restore</button>' +
+                '</div>' +
+            '</div>';
+        }).join('');
+        el.querySelectorAll('[data-version-diff]').forEach(function (btn) {
+            btn.addEventListener('click', function () { loadVersionDiff(btn.dataset.versionDiff); });
+        });
+        el.querySelectorAll('[data-version-restore]').forEach(function (btn) {
+            btn.addEventListener('click', function () { restoreVersion(btn.dataset.versionRestore); });
+        });
+    }
+
+    function renderHistoryEvents(events) {
+        var el = $('#deck-history-list');
+        if (!el) return;
+        if (!events.length) {
+            el.innerHTML = '<p class="history-empty">No change events yet.</p>';
+            return;
+        }
+        el.innerHTML = events.slice().reverse().slice(0, 100).map(function (event) {
+            var card = event.card && event.card.name ? event.card.name : '';
+            var action = event.action === 'remove' ? '−' : '+';
+            var section = event.section && event.section !== 'main' ? ' · ' + event.section : '';
+            return '<div class="history-event-row">' +
+                '<div><strong>' + escapeHtml(action + ' ' + card) + '</strong>' +
+                '<div class="history-event-meta">' + escapeHtml(historyDate(event.timestamp)) + section + '</div></div>' +
+                '<span class="history-event-meta">' + escapeHtml(event.quantity || 1) + '</span>' +
+            '</div>';
+        }).join('');
+    }
+
+    function snapshotDeckVersion() {
+        if (!deck.name) { historyStatus('Save the deck first.', 'error'); return; }
+        historyStatus('Saving snapshot…');
+        fetch('/api/deck/versions/snapshot', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: deck.name })
+        }).then(function (r) { return r.json(); }).then(function (data) {
+            if (data.error) throw new Error(data.error);
+            if (!data.success) { historyStatus('No snapshot created (' + data.reason + ').', 'error'); return; }
+            historyStatus('Snapshot created.', 'ok');
+            loadHistoryTab();
+        }).catch(function (err) { historyStatus(err.message, 'error'); });
+    }
+
+    function restoreVersion(filename) {
+        if (!deck.name) return;
+        if (!window.confirm('Restore this version? The current deck will be snapshotted first.')) return;
+        fetch('/api/deck/versions/restore', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ deck: deck.name, filename: filename })
+        }).then(function (r) { return r.json(); }).then(function (data) {
+            if (data.error) throw new Error(data.error);
+            historyStatus('Version restored.', 'ok');
+            loadSavedDeckByName(deck.name);
+            loadHistoryTab();
+        }).catch(function (err) { historyStatus(err.message, 'error'); });
+    }
+
+    function loadVersionDiff(filename) {
+        if (!deck.name) return;
+        var diffEl = $('#deck-version-diff');
+        fetch('/api/deck/version/diff?deck=' + encodeURIComponent(deck.name) +
+              '&filename=' + encodeURIComponent(filename))
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                if (data.error) throw new Error(data.error);
+                var c = data.comparison || {};
+                var s = c.summary || {};
+                var html = '<h4>Current deck vs snapshot</h4>' +
+                    '<div>+' + escapeHtml(s.added || 0) + ' added · −' +
+                    escapeHtml(s.removed || 0) + ' removed · ' +
+                    escapeHtml(s.changed || 0) + ' quantity changes</div>';
+                function list(title, items, mode) {
+                    if (!items || !items.length) return '';
+                    return '<h4>' + escapeHtml(title) + '</h4><ul>' + items.map(function (item) {
+                        var suffix = mode === 'changed' ? ' (' + item.from + ' → ' + item.to + ')' : '';
+                        return '<li>' + escapeHtml(item.name) + suffix + '</li>';
+                    }).join('') + '</ul>';
+                }
+                html += list('Only in current', c.removed, 'removed');
+                html += list('Only in snapshot', c.added, 'added');
+                html += list('Quantity changes', c.changed, 'changed');
+                diffEl.innerHTML = html;
+                diffEl.hidden = false;
+            }).catch(function (err) { historyStatus(err.message, 'error'); });
+    }
+
     function init() {
         initToolTabs();
         initPanelCollapse();
@@ -4873,6 +5030,7 @@
         initQuickAdd();
         initSectionManagement();
         initGuideline();
+        initHistoryTab();
 
         // Read config from Flask session
         if (window._mtgConfig) {

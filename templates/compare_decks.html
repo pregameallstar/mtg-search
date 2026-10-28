@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% block title %}Compare Decks — MTG Search{% endblock %}
+{% block content %}
+<div class="compare-page">
+    <h1>Compare Decks</h1>
+    <p class="compare-intro">
+        Compare two saved decks: card changes, role differences, curve,
+        health, bracket, and commander.
+    </p>
+
+    <div class="compare-form">
+        <label>Deck A
+            <select id="compare-a">
+                <option value="">Select a deck…</option>
+                {% for deck in decks %}
+                <option value="{{ deck.name }}" {% if deck.name == a %}selected{% endif %}>
+                    {{ deck.name }}{% if deck.commander %} — {{ deck.commander }}{% endif %}
+                </option>
+                {% endfor %}
+            </select>
+        </label>
+        <span class="compare-vs">vs</span>
+        <label>Deck B
+            <select id="compare-b">
+                <option value="">Select a deck…</option>
+                {% for deck in decks %}
+                <option value="{{ deck.name }}" {% if deck.name == b %}selected{% endif %}>
+                    {{ deck.name }}{% if deck.commander %} — {{ deck.commander }}{% endif %}
+                </option>
+                {% endfor %}
+            </select>
+        </label>
+        <button type="button" id="compare-btn" class="eval-config-save">Compare</button>
+    </div>
+
+    <div id="compare-status" class="compare-status" hidden></div>
+    <div id="compare-result" class="compare-result" hidden></div>
+</div>
+
+<script>
+(function () {
+    'use strict';
+    var a = document.getElementById('compare-a');
+    var b = document.getElementById('compare-b');
+    var btn = document.getElementById('compare-btn');
+    var result = document.getElementById('compare-result');
+    var status = document.getElementById('compare-status');
+
+    function esc(value) {
+        return String(value == null ? '' : value)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function setStatus(text, error) {
+        status.hidden = !text;
+        status.textContent = text || '';
+        status.className = 'compare-status' + (error ? ' error' : '');
+    }
+
+    function cardList(items, mode) {
+        if (!Array.isArray(items) || !items.length) {
+            return '<p class="compare-empty">None.</p>';
+        }
+        return '<ul class="compare-list">' + items.map(function (item) {
+            var suffix = '';
+            if (mode === 'changed') suffix = ' (' + esc(item.from) + ' → ' + esc(item.to) + ')';
+            else if (item.quantity && item.quantity > 1) suffix = ' ×' + esc(item.quantity);
+            return '<li><strong>' + esc(item.name) + '</strong>' + suffix + '</li>';
+        }).join('') + '</ul>';
+    }
+
+    function render(data) {
+        var c = data.comparison || {};
+        var sa = c.a || {};
+        var sb = c.b || {};
+        var roles = c.roles || {};
+        var roleRows = Object.keys(roles).filter(function (role) {
+            return roles[role].a !== roles[role].b;
+        }).map(function (role) {
+            return '<div class="compare-role-row"><span>' + esc(role) + '</span><strong>' +
+                esc(roles[role].a) + ' → ' + esc(roles[role].b) + '</strong></div>';
+        }).join('');
+
+        var html = '';
+        html += '<div class="compare-hero">';
+        html += '<div><span class="compare-kicker">Deck A</span><h2>' + esc(sa.name) +
+            '</h2><p>' + esc(sa.commander || 'No commander') + '</p><span>' +
+            esc(sa.total) + ' cards · health ' + esc(sa.health) + ' · bracket ' +
+            esc(sa.bracket) + '</span></div>';
+        html += '<div class="compare-arrow">→</div>';
+        html += '<div><span class="compare-kicker">Deck B</span><h2>' + esc(sb.name) +
+            '</h2><p>' + esc(sb.commander || 'No commander') + '</p><span>' +
+            esc(sb.total) + ' cards · health ' + esc(sb.health) + ' · bracket ' +
+            esc(sb.bracket) + '</span></div>';
+        html += '</div>';
+
+        html += '<div class="compare-summary">' +
+            '<span>+' + esc(c.summary && c.summary.added) + ' added</span>' +
+            '<span>−' + esc(c.summary && c.summary.removed) + ' removed</span>' +
+            '<span>' + esc(c.summary && c.summary.changed) + ' quantity changes</span>' +
+        '</div>';
+
+        html += '<div class="compare-columns">' +
+            '<section><h3>Only in A</h3>' + cardList(c.removed, 'removed') + '</section>' +
+            '<section><h3>Only in B</h3>' + cardList(c.added, 'added') + '</section>' +
+            '<section><h3>Quantity changes</h3>' + cardList(c.changed, 'changed') + '</section>' +
+        '</div>';
+
+        if (roleRows) {
+            html += '<section><h3>Role changes</h3><div class="compare-roles">' + roleRows + '</div></section>';
+        }
+        result.innerHTML = html;
+        result.hidden = false;
+    }
+
+    function compare() {
+        if (!a.value || !b.value) {
+            setStatus('Choose both decks first.', true);
+            return;
+        }
+        setStatus('Comparing…', false);
+        btn.disabled = true;
+        fetch('/api/deck/compare', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({a: a.value, b: b.value})
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            if (data.error) throw new Error(data.error);
+            render(data);
+            setStatus('', false);
+            var url = new URL(window.location.href);
+            url.searchParams.set('a', a.value);
+            url.searchParams.set('b', b.value);
+            history.replaceState(null, '', url.toString());
+        })
+        .catch(function (err) { setStatus(err.message, true); })
+        .finally(function () { btn.disabled = false; });
+    }
+
+    btn.addEventListener('click', compare);
+    if (a.value && b.value) compare();
+})();
+</script>
+{% endblock %}

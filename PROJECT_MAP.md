@@ -26,6 +26,7 @@ to your task, then drill into specific files.
 | **Deck Builder** | `/deck-builder` | `mtg/blueprints/decks.py` (226 lines) | `templates/deck_builder.html` (438 lines) | `static/deck-builder.js` (3,460 lines) | style.css §deck-builder |
 | **Saved Decks** | `/saved-decks` | `mtg/blueprints/decks.py` (shared) | `templates/saved_decks.html` (105 lines) | inline in `saved_decks.html` | style.css §saved-decks |
 | **Deck Doctor** | `/deck-review?deck=…` | `mtg/blueprints/deck_review.py`, `mtg/deck_review.py` | `templates/deck_review.html` | inline in `deck_review.html` | style.css §Deck Doctor |
+| **Compare Decks** | `/compare-decks` | `mtg/blueprints/deck_versions.py`, `mtg/deck_versions.py` | `templates/compare_decks.html` | inline in `compare_decks.html` | style.css §Compare Decks |
 | **Card Templates** | `/card-templates` | `mtg/blueprints/templates_bp.py` (87 lines) | `templates/card_templates.html` (1,048 lines) | inline in `card_templates.html` | style.css §templates |
 | **Configuration** | `/config` | `mtg/blueprints/config.py` (247 lines) | `templates/config.html` (590 lines) | inline in `config.html` | style.css §config |
 | **MCP Server** | (standalone process) | `mtg/mcp_server.py` (404 lines) | — | — | — |
@@ -201,12 +202,15 @@ Split-panel drag-and-drop Commander deck builder. The most JS-heavy tool.
 | `mtg/blueprints/decks.py` | 2 page routes + deck JSON API endpoints |
 | `mtg/blueprints/deck_analysis.py` | Role batches + deterministic deck audit API |
 | `mtg/blueprints/deck_review.py` | Deck Doctor page, review jobs, saved reports |
+| `mtg/blueprints/deck_versions.py` | Deck versions, restore, diff, and compare APIs |
 | `mtg/blueprints/tags.py` | Global tag catalog CRUD at `/api/tags` |
 | `templates/deck_builder.html` | Page layout: tool panel + right deck panel, role/bracket analysis, modals |
 | `templates/deck_review.html` | Deck Doctor report/run page |
+| `templates/compare_decks.html` | Compare two saved decks |
 | `static/deck-builder.js` | Entire client app (3,460 lines): Deck model, drag-drop, search, charts, autosave |
 | `decks/` | Saved deck JSON files (one per deck) |
 | `decks/_tags.json` | Global tag catalog (shared across all decks) |
+| `decks/_versions/` | Deck snapshots (created on first save, explicit snapshots, pre-restore safety) |
 
 ### Routes
 
@@ -231,6 +235,13 @@ Split-panel drag-and-drop Commander deck builder. The most JS-heavy tool.
 | `/api/deck/review/report` | GET | Load a saved review (with stale flag) |
 | `/api/deck/review/export` | GET | Download Markdown/HTML review |
 | `/api/deck/review/delete` | POST | Delete a saved review |
+| `/api/deck/versions` | GET | List snapshots for a deck |
+| `/api/deck/versions/snapshot` | POST | Snapshot a saved deck |
+| `/api/deck/version` | GET | Load a snapshot |
+| `/api/deck/versions/restore` | POST | Restore a snapshot |
+| `/api/deck/versions/delete` | POST | Delete a snapshot |
+| `/api/deck/version/diff` | GET | Diff current deck against a snapshot |
+| `/api/deck/compare` | POST | Compare two saved decks |
 | `/api/tags/list` | GET | Tag catalog (auto-seeds 8 predefined tags) |
 | `/api/tags/save` | POST | Save tag catalog |
 
@@ -425,6 +436,7 @@ These are not tied to a single tool but used by several.
 | `mtg/deck_enrich.py` | — | `lookup_card()`, `enrich_deck()` — saved deck → DB-backed cards | Deck analysis, Deck Doctor |
 | `mtg/deck_review.py` | — | `candidate_adds()`, `cut_candidates()`, `validate_analysis()`, `run_review_job()` | Deck Doctor |
 | `mtg/review_cache.py` | — | bounded job progress/result cache | Deck Doctor |
+| `mtg/deck_versions.py` | — | snapshot listing/writing, restore payloads, `compare_decks()` | Deck Builder History, Compare Decks |
 | `mtg/similarity.py` | 286 | `score_similarity()`, `extract_terms()`, `get_idf()`, `gate()`, `split_csv()`, `similarity_label()`, `wubrg_sort()` | Similarity tool, Eval deepdive/similar, MCP server |
 | `mtg/embed.py` | 232 | `build(db_path)`, `find(db_path, text, top_k=200)`, `status()` | Similarity tool, Eval pipeline, Config page |
 | `mtg/llm.py` | 163 | `generate()`, `_parse_json()` (JSON repair), `fetch_models()` | Commander Eval, Config page |

@@ -67,6 +67,7 @@ mtg/
   deck_stats.py         deterministic deck audit + health score (pure)
   deck_enrich.py        saved-deck card → current DB row enrichment
   deck_review.py        Deck Doctor: audit → candidates → LLM → validation
+  deck_versions.py      Deck snapshots, version listing, deck comparison
   review_cache.py       bounded in-memory background review jobs
   blueprints/
     __init__.py         empty
@@ -78,6 +79,7 @@ mtg/
     pricing.py          /api/pricing/fetch, /api/pricing/status
     deck_analysis.py    /api/cards/roles, /api/deck/analyze
     deck_review.py      /deck-review, /api/deck/review/*
+    deck_versions.py    /compare-decks, /api/deck/versions/*, /api/deck/compare
     templates_bp.py     /card-templates, /api/template/*
     tags.py             /api/tags/* (global tag catalog)
     config.py           /config/* (LLM, ingest, embeddings, MCP, prompts)
@@ -99,7 +101,7 @@ static/
   style.css             all styling (~3,700 lines, dark theme)
 tests/                  pytest suite (Python + a QuickJS harness for deck-builder.js)
 card_templates/         saved template JSON (Default_Guideline.json)
-decks/                  saved deck JSON + _tags.json + _history/
+decks/                  saved deck JSON + _tags.json + _history/ + _versions/
 prices/                 Scryfall price cache JSON
 images/                 lazy Scryfall image cache
 embeddings/             vectors.npy + meta.json + build_info.json + .build.lock
@@ -270,6 +272,16 @@ optionally calls the LLM with `DECK_REVIEW_SYSTEM_PROMPT`, and rejects any
 recommendation that is not a real card in the candidate list or not in the deck
 for cuts.
 
+### 6.1d Deck Versions / Compare — `mtg/blueprints/deck_versions.py` + `mtg/deck_versions.py`
+
+The Deck Builder History tab reads `/api/deck/versions` and `/api/deck/history`,
+snapshots via `/api/deck/versions/snapshot`, restores via
+`/api/deck/versions/restore`, and diffs current-vs-snapshot via
+`/api/deck/version/diff`. `/compare-decks` compares two saved decks with
+`POST /api/deck/compare`. Snapshots live in `decks/_versions/`; the first save
+creates a baseline and later saves are throttled to one automatic snapshot per
+10 minutes. Explicit snapshots are forced.
+
 ### 6.2 Similarity — `mtg/blueprints/similar.py` (359 loc) + `mtg/similarity.py` (295 loc)
 
 Finds mechanically similar cards via **two backends**:
@@ -434,6 +446,7 @@ These are where changes in one tool silently break another:
 | `deck_enrich.py` | `lookup_card()` / `enrich_deck()` — merge saved-deck rows with current DB data | deck analysis, Deck Doctor |
 | `deck_review.py` | `candidate_adds()`, `cut_candidates()`, `validate_analysis()`, `run_review_job()` | Deck Doctor |
 | `review_cache.py` | job progress/result cache, FIFO 25 | Deck Doctor |
+| `deck_versions.py` | `write_version()`, `list_versions()`, `compare_decks()` — snapshots and diffs | Deck Builder History, Compare Decks |
 | `similarity.py` | TF-IDF scoring engine (pure) | similar, eval_helpers, mcp_server |
 | `embed.py` | `build()`, `find()`, `status()` — thread-safe, model cached per process | similar, eval, config, mcp_server |
 | `llm.py` | `generate()` (openai/anthropic), `_parse_json()` JSON repair, `fetch_models()` | eval, config |

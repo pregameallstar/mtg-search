@@ -15,6 +15,7 @@ A self-hosted Magic: The Gathering card search engine, deck builder, and Command
   - **Guideline Templates** — define expected card counts per category (Ramp, Removal, Card Draw, etc.) with progress bars that track your deck against targets. Auto-classification assigns cards to categories; category-name tags override automatic classification.
   - **Tag system** — tag cards with predefined tags (Ramp, Removal, Card Draw, Tutor, Board Wipe, Protection, Recursion, Win Condition) or custom tags. Tags are shared across all decks.
   - **Role / bracket analysis** — shared role classification, guideline progress, structural health, and an advisory Commander bracket/salt estimate.
+  - **History / versions** — change timeline, manual snapshots, restore, and current-vs-snapshot diffs.
 - **Deck analysis** — a shared role engine classifies cards into Lands, Ramp, Card Draw, Card Selection, Targeted Removal, Board Wipe, Counterspell, Tutor, Protection, Recursion, Tokens, Counters, Sac Outlet, Lifegain, Stax, Extra Turns, Mass Land Denial, Fast Mana, and Win Condition. The Deck Builder shows role targets, a structural health score, and an advisory Commander bracket/salt estimate. Tags override automatic classification.
 - **Similarity engine** — find cards that play mechanically similarly to a given card. Two search backends:
   - **Semantic** (default) — AI embedding vectors (`all-MiniLM-L6-v2`) map oracle text into vector space. Catches reworded abilities, mechanical cousins, and conceptually similar designs that keyword matching misses. Built once per database ingest, queries run in ~100ms.
@@ -30,6 +31,7 @@ A self-hosted Magic: The Gathering card search engine, deck builder, and Command
   - **Card templates** — pre-built card lists you can load into the Deck Builder
   - **Guideline templates** — category targets (Ramp, Removal, Card Draw, etc.) with expected counts, used to score decks against deck-building standards
 - **Commander Finder** — browse commander-eligible cards by color identity, EDHREC popularity, partner/background status, or a strategy description (semantic when embeddings are available, text fallback otherwise).
+- **Deck versions & compare** — the Deck Builder History tab shows a change timeline, snapshots deck versions, restores snapshots, and diffs the current deck against a version. `/compare-decks` compares two saved decks: card additions/removals, quantity changes, commander, counts, health, bracket, and role deltas.
 - **Deck Doctor** — review a specific 100-card deck. A deterministic audit covers legality, curve, roles, health, and bracket/salt; embeddings retrieve real candidate cards grouped by role gap; an optional LLM writes a coaching report; every recommendation is validated against the deck and DB. Reports are saved in `deck_reviews/`, keyed by a deck fingerprint, and flagged stale when the deck changes. Reviews export as Markdown or HTML. An optional second LLM pass verifies the report.
 - **MCP server** — expose `semantic_search`, `keyword_search`, `search_cards`, `get_card`, `list_decks`, and `get_deck` tools to LLM agents (Claude Code, OpenWebUI, etc.) via SSE + MCPO proxy.
 - **Database ingest** — drag-and-drop upload of MTGJSON `AllPrintings.sqlite` (or `.tar.gz`/`.zip` archives). Deduplication, validation, and embedding rebuild run automatically.
@@ -80,7 +82,7 @@ Volume mounts:
 | `prompt_store` (named volume) | `/app/prompt_store/` | Server-side custom LLM prompts |
 | `./.secret_key` | `/app/.secret_key` | Flask session secret (writeable) |
 | `./.last_ingest.json` | `/app/.last_ingest.json` | Database ingest metadata (writeable) |
-| `./decks/` | `/app/decks/` | Saved deck files |
+| `./decks/` | `/app/decks/` | Saved decks, history, and version snapshots |
 | `./mtg/` | `/app/mtg/` | Application package (live-edit during dev) |
 | `./requirements.txt` | `/app/requirements.txt` | Python dependencies |
 | `./app.py` | `/app/app.py` | App entry point |
@@ -149,6 +151,10 @@ Results are paginated (10, 25, or 50 per page). Click any card to open its detai
 ### Commander Finder
 
 `GET /commanders` — Browse commander-eligible cards. Filter by color identity, partner/background, EDHREC rank, or a strategy description. Results link to the card, Similarity, and Commander Eval tools. `GET /api/commanders` returns the same data as JSON.
+
+### Compare Decks
+
+`GET /compare-decks` — compare two saved decks. Shows commander, total cards, health, bracket, added/removed cards, quantity changes, and role deltas. `POST /api/deck/compare` returns the same comparison as JSON.
 
 ### Deck Doctor
 
@@ -377,6 +383,7 @@ mtg/                # Application package
 │   ├── templates_bp.py    #  /card-templates, /api/template/*
 │   ├── deck_analysis.py    #  /api/cards/roles, /api/deck/analyze
 │   ├── deck_review.py      #  /deck-review, /api/deck/review/* (jobs, reports, export)
+│   ├── deck_versions.py    #  /compare-decks, /api/deck/versions/*
 │   └── tags.py            #  /api/tags/*
 ├── shared.py        #  db_path, get_db, constants, Jinja helpers
 ├── card_query.py    #  Canonical search query builder (SQL, no Flask)
@@ -385,6 +392,7 @@ mtg/                # Application package
 ├── bracket_rules.py #  Provisional bracket thresholds + fast-mana list
 ├── deck_rules.py    #  Commander count/singleton/color-identity rules
 ├── deck_stats.py    #  Deterministic deck audit + health score
+├── deck_versions.py #  Deck snapshots, version listing, deck comparison
 ├── deck_enrich.py   #  Saved-deck card → DB row enrichment
 ├── deck_review.py   #  Deck Doctor pipeline (audit, candidates, LLM, validation, export)
 ├── review_cache.py  #  In-memory background review jobs
@@ -406,6 +414,7 @@ templates/          # Jinja2 templates
 ├── search.html     # Card search page
 ├── commanders.html # Commander Finder
 ├── deck_review.html # Deck Doctor
+├── compare_decks.html # Compare Decks
 ├── card.html       # Full card detail page
 ├── similar_landing.html  # Similarity landing page
 ├── similar.html    # Similarity results page

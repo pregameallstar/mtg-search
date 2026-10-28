@@ -4159,3 +4159,55 @@ main:has(.card-templates-page) {
 
 .review-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 .review-actions .btn-secondary { padding: 0.4rem 0.7rem; }
+
+/* --- Compare Decks --- */
+.compare-page { max-width: 1100px; margin: 0 auto; }
+.compare-intro { color: var(--text-dim); max-width: 75ch; }
+.compare-form { display: flex; gap: 0.75rem; align-items: end; flex-wrap: wrap; padding: 0.9rem 1rem; background: var(--bg-card); border: 1px solid var(--border); border-radius: 9px; margin: 1rem 0; }
+.compare-form label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.78rem; color: var(--text-dim); }
+.compare-form select { min-width: 230px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 0.35rem 0.45rem; }
+.compare-vs { color: var(--text-dim); padding-bottom: 0.4rem; }
+.compare-status { color: var(--text-dim); font-size: 0.82rem; margin: 0.5rem 0; }
+.compare-status.error { color: #f85149; }
+.compare-hero { display: flex; gap: 1rem; align-items: center; justify-content: space-between; padding: 1rem; background: var(--bg-card); border: 1px solid var(--border); border-radius: 9px; flex-wrap: wrap; }
+.compare-hero > div { flex: 1; min-width: 200px; }
+.compare-hero h2 { margin: 0.2rem 0; }
+.compare-hero p { margin: 0; color: var(--text-dim); }
+.compare-hero span { color: var(--text-dim); font-size: 0.76rem; }
+.compare-kicker { text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.65rem; color: var(--text-dim); }
+.compare-arrow { flex: 0 0 auto !important; min-width: 0 !important; color: var(--accent); font-size: 1.4rem; }
+.compare-summary { display: flex; gap: 0.75rem; flex-wrap: wrap; margin: 1rem 0; font-size: 0.8rem; color: var(--text-dim); }
+.compare-summary span { border: 1px solid var(--border); border-radius: 999px; padding: 0.2rem 0.55rem; }
+.compare-columns { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+.compare-columns section, .compare-result > section { background: var(--bg-card); border: 1px solid var(--border); border-radius: 9px; padding: 0.8rem 1rem; margin-bottom: 1rem; }
+.compare-result h3 { margin: 0 0 0.45rem; font-size: 0.9rem; }
+.compare-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.25rem; font-size: 0.78rem; }
+.compare-list li { display: flex; justify-content: space-between; gap: 0.5rem; }
+.compare-empty { color: var(--text-dim); font-size: 0.78rem; }
+.compare-roles { display: grid; gap: 0.25rem; }
+.compare-role-row { display: flex; justify-content: space-between; font-size: 0.78rem; color: var(--text-dim); border-bottom: 1px solid var(--border); padding-bottom: 0.2rem; }
+.compare-role-row strong { color: var(--text); }
+@media (max-width: 760px) { .compare-columns { grid-template-columns: 1fr; } }
+
+/* --- Deck history / versions --- */
+.history-actions { display: flex; gap: 0.45rem; flex-wrap: wrap; margin-bottom: 0.6rem; }
+.history-status { font-size: 0.75rem; color: var(--text-dim); min-height: 1.1em; margin-bottom: 0.5rem; }
+.history-status.error { color: #f85149; }
+.history-status.ok { color: #3fb950; }
+.history-heading { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); margin: 0.9rem 0 0.4rem; }
+.history-list { display: grid; gap: 0.3rem; }
+.history-version-row, .history-event-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+    padding: 0.3rem 0; border-bottom: 1px solid var(--border); font-size: 0.74rem;
+}
+.history-version-meta, .history-event-meta { color: var(--text-dim); }
+.history-version-actions { display: flex; gap: 0.3rem; }
+.history-version-actions button {
+    background: transparent; border: 1px solid var(--border); border-radius: 4px;
+    color: var(--text-dim); cursor: pointer; font-size: 0.65rem; padding: 0.12rem 0.35rem;
+}
+.history-version-actions button:hover { color: var(--accent); border-color: var(--accent); }
+.history-empty { color: var(--text-dim); font-size: 0.75rem; }
+.history-diff { margin-top: 0.75rem; padding: 0.6rem 0.75rem; background: var(--bg-card); border: 1px solid var(--border); border-radius: 7px; font-size: 0.74rem; }
+.history-diff h4 { margin: 0 0 0.35rem; font-size: 0.8rem; }
+.history-diff ul { margin: 0.2rem 0 0.5rem; padding-left: 1rem; }

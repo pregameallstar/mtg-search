@@ -120,6 +120,8 @@ PRICES_DIR = "prices"
 os.makedirs(PRICES_DIR, exist_ok=True)
 HISTORY_DIR = os.path.join(DECKS_DIR, "_history")
 os.makedirs(HISTORY_DIR, exist_ok=True)
+VERSIONS_DIR = os.path.join(DECKS_DIR, "_versions")
+os.makedirs(VERSIONS_DIR, exist_ok=True)
 os.makedirs(REVIEWS_DIR, exist_ok=True)
 
 # ponytail: alias for backward compat — Jinja globals and deck routes use this name

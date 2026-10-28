@@ -18,6 +18,7 @@
             <button class="tool-tab-btn" data-tool="templates">Templates</button>
             <button class="tool-tab-btn" data-tool="outline">Outline</button>
             <button class="tool-tab-btn" data-tool="review">Deck Doctor</button>
+            <button class="tool-tab-btn" data-tool="history">History</button>
         </div>
 
         <div class="panel-body search-panel-body">
@@ -277,6 +278,25 @@
                 <p id="deck-review-hint" style="font-size:0.72rem;color:var(--text-dim);margin-top:0.6rem;">
                     Save the deck first so Deck Doctor can find it by name.
                 </p>
+            </div>
+
+            {# ── Deck History / Versions Tool ── #}
+            <div class="tool-content" data-tool="history" hidden>
+                <p style="font-size:0.85rem;color:var(--text-dim);margin-bottom:0.75rem;">
+                    Snapshot versions, review the change timeline, and compare the
+                    current deck against a snapshot. Versions are stored with the deck.
+                </p>
+                <div class="history-actions">
+                    <button type="button" id="history-snapshot-btn" class="btn-deck-action">＋ Snapshot current</button>
+                    <button type="button" id="history-refresh-btn" class="btn-deck-action btn-secondary">Refresh</button>
+                    <a id="history-compare-link" class="btn-deck-action btn-secondary" href="/compare-decks">Compare decks</a>
+                </div>
+                <div id="history-status" class="history-status"></div>
+                <h3 class="history-heading">Versions</h3>
+                <div id="deck-versions-list" class="history-list"></div>
+                <h3 class="history-heading">Change timeline</h3>
+                <div id="deck-history-list" class="history-list"></div>
+                <div id="deck-version-diff" class="history-diff" hidden></div>
             </div>
         </div>
     </div>
