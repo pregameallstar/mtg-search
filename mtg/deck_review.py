@@ -18,6 +18,18 @@ from typing import Any, Mapping
 
 import mtg.embed as embed
 import mtg.review_cache as review_cache
+from mtg.deck_brief import (
+    BRIEF_CONSTRAINTS_VERSION,
+    WIN_PLANS,
+    brief_caps,
+    brief_fingerprint,
+    brief_is_empty,
+    brief_prompt_payload,
+    brief_retrieval_text,
+    brief_role_caps,
+    merge_caps,
+    normalize_brief,
+)
 from mtg.deck_enrich import enrich_deck
 from mtg.deck_stats import analyze_deck, deck_fingerprint
 from mtg.prompts import DECK_REVIEW_SYSTEM_PROMPT, DECK_REVIEW_VERIFY_SYSTEM_PROMPT
@@ -57,105 +69,25 @@ MAX_ROLE_HITS = 30
 MAX_ADDS_PER_ROLE = 4
 
 
-BRIEF_CONSTRAINTS_VERSION = 1
-
-# Conservative mapping from words that appear in a Deck Brief to role names.
-# Longer phrases are matched first so "card draw" wins over "draw".
-_BRIEF_ROLE_WORDS = {
-    "counterspell": "Counterspell",
-    "counter": "Counterspell",
-    "board wipe": "Board Wipe",
-    "boardwipe": "Board Wipe",
-    "wipe": "Board Wipe",
-    "targeted removal": "Targeted Removal",
-    "spot removal": "Targeted Removal",
-    "removal": "Targeted Removal",
-    "tutor": "Tutor",
-    "mana rock": "Ramp",
-    "ramp": "Ramp",
-    # Plural only: "no land denial" must not be read as "no lands".
-    "lands": "Lands",
-    "card draw": "Card Draw",
-    "draw": "Card Draw",
-    "protection": "Protection",
-    "recursion": "Recursion",
-    "win condition": "Win Condition",
-    "wincon": "Win Condition",
-}
-
-_BRIEF_ROLE_RE = re.compile(
-    r"\b(?:" + "|".join(
-        re.escape(word) for word in sorted(_BRIEF_ROLE_WORDS, key=len, reverse=True)
-    ) + r")s?\b",
-    re.IGNORECASE,
-)
-# A bare "2 counterspells" is only treated as a cap inside a sentence that
-# looks like a Rule 0 / playgroup constraint, to avoid reading description
-# ("the deck has two counterspells") as a limit.
-_BRIEF_CAP_CONTEXT_RE = re.compile(
-    r"rule\s*0|constrain|constraint|restrict|limit|maximum|\bmax\b|"
-    r"at most|no more than|only|cap(?:ped)?|playgroup",
-    re.IGNORECASE,
-)
-
-
-def _brief_role(phrase: str) -> str | None:
-    lowered = phrase.lower().strip()
-    if lowered in _BRIEF_ROLE_WORDS:
-        return _BRIEF_ROLE_WORDS[lowered]
-    if lowered.endswith("s"):
-        return _BRIEF_ROLE_WORDS.get(lowered[:-1])
-    return None
-
-
-def _brief_role_in(text: str) -> str | None:
-    match = _BRIEF_ROLE_RE.search(text)
-    return _brief_role(match.group(0)) if match else None
-
-
-def brief_role_caps(brief: str | None) -> dict[str, int]:
-    """Extract explicit maximum role counts from a free-form Deck Brief.
-
-    Returns ``{role: max_count}`` for sentences that look like constraints.
-    This is intentionally conservative: it understands patterns such as
-    "Rule 0: max 2 board wipes", "no more than 2 counterspells", "no tutors",
-    and "2 boardwipes" inside a Rule 0 / playgroup clause.
-    """
-    text = str(brief or "")
-    if not text.strip():
-        return {}
-    caps: dict[str, int] = {}
-    for sentence in re.split(r"(?<=[.!?;])\s+|\n+", text):
-        if not _BRIEF_CAP_CONTEXT_RE.search(sentence):
-            continue
-        for match in re.finditer(
-            r"\bno\s+" + _BRIEF_ROLE_RE.pattern, sentence, re.IGNORECASE
-        ):
-            role = _brief_role_in(match.group(0))
-            if role:
-                caps[role] = 0
-        for match in re.finditer(
-            r"(\d{1,2})\s+" + _BRIEF_ROLE_RE.pattern, sentence, re.IGNORECASE
-        ):
-            role = _brief_role_in(match.group(0))
-            if not role:
-                continue
-            count = max(0, int(match.group(1)))
-            caps[role] = min(caps.get(role, count), count)
-    return caps
-
-
 def review_fingerprint(
     deck: Mapping[str, Any],
     options: Mapping[str, Any],
     guideline: Mapping[str, Any] | None = None,
 ) -> str:
     """Fingerprint everything the review pipeline reads, not just the deck list."""
+    raw_brief = options.get("deckBrief")
+    notes = str(options.get("brief") or "")
+    if not notes and isinstance(raw_brief, Mapping):
+        notes = str(raw_brief.get("notes") or "")
+    structured = normalize_brief(raw_brief, notes=notes)
     base = deck_fingerprint(deck, fingerprint_options(options))
     payload = {
         "base": base,
         "guideline": dict(guideline) if isinstance(guideline, Mapping) else None,
-        "briefCaps": brief_role_caps(options.get("brief")),
+        "brief": brief_fingerprint(structured),
+        "briefCaps": merge_caps(
+            brief_role_caps(structured.get("notes")), brief_caps(structured)
+        ),
         "briefCapsVersion": BRIEF_CONSTRAINTS_VERSION,
     }
     return hashlib.sha256(
@@ -174,6 +106,7 @@ def fingerprint_options(options: Mapping[str, Any]) -> dict[str, Any]:
         "max_cuts": options.get("max_cuts"),
         "max_mana_value": options.get("max_mana_value"),
         "combo_count": options.get("combo_count"),
+        "deckBrief": brief_fingerprint(options.get("deckBrief")),
         "guideline": options.get("guideline"),
     }
 
@@ -189,6 +122,15 @@ def _guideline(name: str) -> dict | None:
 
 def _front_name(value: Any) -> str:
     return str(value or "").split(" // ", 1)[0].strip().lower()
+
+
+def _effective_brief(deck: Mapping[str, Any], options: Mapping[str, Any]) -> dict[str, Any]:
+    """The structured brief for this run, with the free-form notes attached."""
+    raw = options.get("deckBrief")
+    if not isinstance(raw, Mapping):
+        raw = deck.get("deckBrief") if isinstance(deck, Mapping) else None
+    notes = str(options.get("brief") or deck.get("reviewNotes") or "")
+    return normalize_brief(raw, notes=notes)
 
 
 def _qty(card: Mapping[str, Any]) -> int:
@@ -233,12 +175,16 @@ def _cached_price(scryfall_id: str, store: str) -> float | None:
 
 def _deck_profile(deck: Mapping[str, Any], audit: Mapping[str, Any], options: Mapping[str, Any]) -> str:
     commander = deck.get("commander") if isinstance(deck.get("commander"), Mapping) else {}
+    brief = _effective_brief(deck, options)
     parts = [
         str(commander.get("name") or ""),
         str(commander.get("text") or ""),
-        str(options.get("brief") or ""),
+        brief_retrieval_text(brief),
+        str(brief.get("notes") or ""),
         str(options.get("strategy") or ""),
     ]
+    if brief.get("must_keep"):
+        parts.append("must keep: " + ", ".join(str(name) for name in brief["must_keep"]))
     outline = deck.get("outline")
     if isinstance(outline, list):
         parts.extend(
@@ -318,6 +264,10 @@ def candidate_adds(
         if isinstance(card, Mapping)
     }
     deck_names.add(_front_name(commander.get("name")))
+    brief = _effective_brief(deck, options)
+    avoid_names = {
+        _front_name(name) for name in (brief.get("avoid") or []) if _front_name(name)
+    }
 
     gaps = [
         str(gap.get("role"))
@@ -334,6 +284,7 @@ def candidate_adds(
         for section in (deck.get("outline") or [])
         if isinstance(section, Mapping)
     )[:1200]
+    brief_text = brief_retrieval_text(brief)
 
     # Only cards that matched a role query can be recommended. The deck-profile
     # query is used to refine their scores, but we never do DB/role work for the
@@ -341,7 +292,8 @@ def candidate_adds(
     found: dict[str, dict[str, Any]] = {}
     gap_roles_by_name: dict[str, set[str]] = {}
     for role in gaps:
-        query = f"{commander.get('name', '')} {outline} {ROLE_QUERIES[role]}"
+        # Keep the role phrase early: the embedding model truncates long input.
+        query = f"{commander.get('name', '')} {ROLE_QUERIES[role]} {brief_text} {outline}"
         hits = _find(db, query, 150)
         hits.sort(key=lambda item: item.get("score") or 0, reverse=True)
         kept = 0
@@ -389,7 +341,9 @@ def candidate_adds(
         if not row:
             continue
         name = str(row["name"] or "")
-        if _front_name(name) in deck_names or name.lower() in seen_names:
+        if _front_name(name) in deck_names or _front_name(name) in avoid_names:
+            continue
+        if name.lower() in seen_names:
             continue
         if not color_identity_subset(row.get("colorIdentity") or "", commander_ci):
             continue
@@ -445,11 +399,17 @@ def candidate_adds(
     return {role: bucket for role, bucket in grouped.items() if bucket}
 
 
-def cut_candidates(deck: Mapping[str, Any], audit: Mapping[str, Any],
-                   limit: int = 15) -> list[dict[str, Any]]:
+def cut_candidates(
+    deck: Mapping[str, Any],
+    audit: Mapping[str, Any],
+    limit: int = 15,
+    *,
+    must_keep: list[str] | tuple[str, ...] | None = None,
+) -> list[dict[str, Any]]:
     """Build a deterministic cut shortlist from surplus, curve, and metadata."""
     commander = deck.get("commander") if isinstance(deck.get("commander"), Mapping) else {}
     commander_name = _front_name(commander.get("name"))
+    keep_names = {_front_name(name) for name in (must_keep or []) if _front_name(name)}
     gaps = {
         str(gap.get("role")): gap
         for gap in (audit.get("roleGaps") or [])
@@ -460,7 +420,7 @@ def cut_candidates(deck: Mapping[str, Any], audit: Mapping[str, Any],
         if not isinstance(card, Mapping):
             continue
         name = str(card.get("name") or "")
-        if _front_name(name) == commander_name:
+        if _front_name(name) == commander_name or _front_name(name) in keep_names:
             continue
         info = classify_roles(card)
         if "Lands" in info["roles"] and "basic" in str(card.get("supertypes") or "").lower():
@@ -476,8 +436,6 @@ def cut_candidates(deck: Mapping[str, Any], audit: Mapping[str, Any],
             if actual > target:
                 score += 2.0
                 reasons.append(f"surplus {role}")
-            elif actual == target and target > 0:
-                score += 0.5
         mv = _number(card.get("manaValue"))
         if mv is not None and mv >= 6:
             score += 1.5
@@ -494,6 +452,8 @@ def cut_candidates(deck: Mapping[str, Any], audit: Mapping[str, Any],
             "name": name,
             "uuid": card.get("uuid") or "",
             "quantity": _qty(card),
+            "scryfallId": card.get("scryfallId") or "",
+            "imageUrl": card.get("imageUrl") or "",
             "roles": info["roles"],
             "reasonHint": ", ".join(reasons) or "low structural contribution",
             "score": round(score, 3),
@@ -526,6 +486,7 @@ def _build_user_prompt(
     options: Mapping[str, Any],
 ) -> str:
     commander = deck.get("commander") if isinstance(deck.get("commander"), Mapping) else {}
+    brief = _effective_brief(deck, options)
     rows = []
     for card in (deck.get("cards") or []):
         if not isinstance(card, Mapping):
@@ -572,7 +533,9 @@ def _build_user_prompt(
             "max_adds": options.get("max_adds", 10),
             "max_cuts": options.get("max_cuts", 10),
         },
-        "deck_brief": options.get("brief") or "",
+        "deck_brief": brief_prompt_payload(
+            brief, notes=brief.get("notes") or options.get("brief") or ""
+        ),
         "outline": outline,
         "commander_eval_summary": eval_summary,
     }
@@ -636,6 +599,7 @@ def _verify_llm(
     if not api_key:
         return None, "No LLM API key configured."
     dtdeck = deck.get("commander") if isinstance(deck.get("commander"), Mapping) else {}
+    brief = _effective_brief(deck, options)
     deck_names = [
         str(card.get("name") or "")
         for card in (deck.get("cards") or [])
@@ -662,7 +626,9 @@ def _verify_llm(
         "candidate_names": [card["name"] for card in candidate_details],
         "candidate_details": candidate_details,
         "audit": _audit_for_prompt(audit or {}),
-        "deck_brief": options.get("brief") or "",
+        "deck_brief": brief_prompt_payload(
+            brief, notes=brief.get("notes") or options.get("brief") or ""
+        ),
         "analysis": analysis,
     }, indent=2)
     try:
@@ -688,6 +654,8 @@ def validate_analysis(
     *,
     max_adds: int = 10,
     max_cuts: int = 10,
+    must_keep: list[str] | tuple[str, ...] | None = None,
+    avoid: list[str] | tuple[str, ...] | None = None,
 ) -> tuple[dict | None, dict[str, Any]]:
     """Reject hallucinated or illegal recommendations before display."""
     if not isinstance(analysis, Mapping):
@@ -699,6 +667,8 @@ def validate_analysis(
         if isinstance(card, Mapping)
     }
     commander_name = _front_name((deck.get("commander") or {}).get("name"))
+    keep_names = {_front_name(name) for name in (must_keep or []) if _front_name(name)}
+    avoid_names = {_front_name(name) for name in (avoid or []) if _front_name(name)}
     candidate_names = {
         _front_name(card.get("name"))
         for bucket in candidates.values()
@@ -720,6 +690,9 @@ def validate_analysis(
             continue
         name = str(item.get("name") or "").strip()
         key = _front_name(name)
+        if key in avoid_names:
+            rejected.append({"type": "add", "name": name, "reason": "on the avoid list"})
+            continue
         if not key or key not in candidate_names:
             rejected.append({"type": "add", "name": name, "reason": "not in candidate list"})
             continue
@@ -748,6 +721,9 @@ def validate_analysis(
             continue
         if key == commander_name:
             rejected.append({"type": "cut", "name": name, "reason": "cannot cut the commander"})
+            continue
+        if key in keep_names:
+            rejected.append({"type": "cut", "name": name, "reason": "must-keep card"})
             continue
         if any(_front_name(entry.get("name")) == key for entry in cuts):
             continue
@@ -780,19 +756,28 @@ def run_review_job(job_id: str, deck: Mapping[str, Any], options: Mapping[str, A
         db.row_factory = sqlite3.Row
         enriched = enrich_deck(db, deck)
 
+        options = dict(options)
+        brief = _effective_brief(enriched, options)
+        if not isinstance(options.get("deckBrief"), Mapping):
+            options["deckBrief"] = brief
+        if not options.get("brief"):
+            options["brief"] = brief.get("notes") or ""
+
         review_cache.update(job_id, step=2, label="Auditing deck structure…")
         guideline = _guideline(str(options.get("guideline") or deck.get("guideline") or ""))
+        caps = merge_caps(brief_role_caps(brief.get("notes")), brief_caps(brief))
         audit = analyze_deck(
             enriched,
             guideline=guideline,
             target_bracket=options.get("target_bracket"),
             combo_count=options.get("combo_count"),
-            brief_caps=brief_role_caps(options.get("brief")),
+            brief_caps=caps,
+            win_plans=brief.get("win_plans"),
         )
 
         review_cache.update(job_id, step=3, label="Finding candidate cards…")
         candidates = candidate_adds(db, enriched, audit, options)
-        cuts = cut_candidates(enriched, audit)
+        cuts = cut_candidates(enriched, audit, must_keep=brief.get("must_keep"))
 
         analysis = None
         llm_error = None
@@ -807,6 +792,8 @@ def run_review_job(job_id: str, deck: Mapping[str, Any], options: Mapping[str, A
             analysis, enriched, candidates,
             max_adds=_limit(options.get("max_adds")),
             max_cuts=_limit(options.get("max_cuts")),
+            must_keep=brief.get("must_keep"),
+            avoid=brief.get("avoid"),
         )
         verification = None
         verify_error = None
@@ -834,6 +821,7 @@ def run_review_job(job_id: str, deck: Mapping[str, Any], options: Mapping[str, A
             "options": {
                 "target_bracket": options.get("target_bracket"),
                 "brief": options.get("brief") or "",
+                "deckBrief": brief,
                 "currency": options.get("currency"),
                 "use_llm": bool(options.get("use_llm")),
                 "verify_llm": bool(options.get("verify_llm")),
@@ -947,8 +935,32 @@ def review_to_markdown(report: Mapping[str, Any]) -> str:
         else:
             note = "No LLM narrative was generated."
         lines += [f"**Note:** {note}", ""]
-    if options.get("brief"):
-        lines += ["## Deck brief", "", str(options["brief"]), ""]
+    brief_value = options.get("deckBrief")
+    notes = str(options.get("brief") or "")
+    if not notes and isinstance(brief_value, Mapping):
+        notes = str(brief_value.get("notes") or "")
+    brief = normalize_brief(brief_value, notes=notes)
+    if not brief_is_empty(brief):
+        lines += ["## Deck brief", ""]
+        if brief.get("archetype"):
+            lines.append(f"- **Archetype:** {brief['archetype']}")
+        if brief.get("themes"):
+            lines.append("- **Themes:** " + ", ".join(brief["themes"]))
+        if brief.get("win_plans"):
+            labels = [WIN_PLANS.get(slug, slug) for slug in brief["win_plans"]]
+            lines.append("- **Win plans:** " + ", ".join(labels))
+        if brief.get("constraints"):
+            limits = ", ".join(
+                f"{role} max {count}" for role, count in brief["constraints"].items()
+            )
+            lines.append(f"- **Hard limits:** {limits}")
+        if brief.get("must_keep"):
+            lines.append("- **Must keep:** " + ", ".join(brief["must_keep"]))
+        if brief.get("avoid"):
+            lines.append("- **Avoid:** " + ", ".join(brief["avoid"]))
+        if brief.get("notes"):
+            lines += ["", str(brief["notes"])]
+        lines.append("")
 
     lines += ["## Audit", ""]
     if counts:

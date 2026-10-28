@@ -264,15 +264,20 @@ its role panel, guideline bars, and bracket badge.
 
 `GET /deck-review?deck=<name>` is the page. `POST /api/deck/review/run` starts a
 background job; `GET /progress` and `GET /result` poll it. Reports are saved to
-`deck_reviews/` and listed by `/api/deck/review/reports`. The Deck Brief is
-stored on the deck as `reviewNotes`, feeds the embedding profile and LLM prompt,
-and is part of the review fingerprint. Explicit numeric caps in the brief (for
-example "Rule 0: max 2 board wipes") lower the matching role targets. The review
-fingerprint covers card identities/quantities, card and commander tags, eval
-data, the guideline contents, and the audit/role engine versions, so any input
-that can change the result marks saved reviews stale. `/api/deck/review/export`
-downloads Markdown or HTML. An optional second LLM pass verifies the report
-against the candidate/deck lists, candidate color identities, and the audit. The pipeline enriches
+`deck_reviews/` and listed by `/api/deck/review/reports`. The Deck Brief is a
+structured v1 object stored on the deck as `deckBrief` (archetype, themes, win
+plans, hard limits, must-keep, avoid, and notes), with `reviewNotes` retaining the
+free-form notes for backward compatibility. It feeds the embedding profile and
+LLM prompt; caps lower role targets, cap-only roles flag surplus, must-keep cards
+are protected from cuts, and `avoid` cards are filtered from candidate adds. A
+declared non-`alt_win` plan suppresses the explicit win-condition gap and credits
+the corresponding health component. The review fingerprint covers card
+identities/quantities, card and commander tags, eval data, the structured brief,
+the guideline contents, and the audit/role engine versions, so any input that can
+change the result marks saved reviews stale. `/api/deck/review/export` downloads
+Markdown or HTML. An optional second LLM pass verifies the report against the
+candidate/deck lists, candidate color identities, the audit, and the brief's
+must-keep/avoid/constraints. See `DECK_BRIEF.md` for the schema and rollout plan. The pipeline enriches
 the deck, runs `analyze_deck()`, retrieves real candidate adds with embeddings,
 optionally calls the LLM with `DECK_REVIEW_SYSTEM_PROMPT`, and rejects any
 recommendation that is not a real card in the candidate list or not in the deck

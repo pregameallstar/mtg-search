@@ -11,6 +11,12 @@ import json
 from typing import Any, Mapping
 
 from mtg.bracket import estimate_bracket
+from mtg.deck_brief import (
+    brief_fingerprint,
+    declared_win_plan_credit,
+    normalize_win_plans,
+    suppressed_roles,
+)
 from mtg.deck_rules import validate_deck
 from mtg.roles import ROLES_VERSION, classify_roles
 
@@ -95,6 +101,7 @@ def _health(
     legal: bool,
     error_count: int,
     role_targets: Mapping[str, int] | None = None,
+    declared_win_plan: bool = False,
 ) -> dict[str, Any]:
     targets = role_targets or DEFAULT_ROLE_TARGETS
     coverage_values = []
@@ -123,7 +130,13 @@ def _health(
     draw = role_counts.get("Card Draw", 0) + role_counts.get("Card Selection", 0)
     draw_score = round(_clamp(draw / 12) * HEALTH_WEIGHTS["draw"])
     wincons = role_counts.get("Win Condition", 0)
-    wincon_score = round(_clamp(wincons / 2) * HEALTH_WEIGHTS["wincons"])
+    if declared_win_plan:
+        # The classifier only understands literal "win the game" text. When
+        # the user declares a combat/commander-damage/combo/drain/mill plan,
+        # credit the component instead of pretending the deck has no win plan.
+        wincon_score = HEALTH_WEIGHTS["wincons"]
+    else:
+        wincon_score = round(_clamp(wincons / 2) * HEALTH_WEIGHTS["wincons"])
     legality_score = HEALTH_WEIGHTS["legality"] if legal else max(0, HEALTH_WEIGHTS["legality"] - error_count * 2)
 
     components = {
@@ -134,7 +147,11 @@ def _health(
         "wincons": wincon_score,
         "legality": legality_score,
     }
-    return {"score": sum(components.values()), "components": components}
+    return {
+        "score": sum(components.values()),
+        "components": components,
+        "declaredWinPlan": declared_win_plan,
+    }
 
 
 def _card_tags(card: Mapping[str, Any]) -> list[str]:
@@ -200,6 +217,7 @@ def deck_fingerprint(deck: Mapping[str, Any], options: Mapping[str, Any] | None 
         ),
         "guideline": deck.get("guideline") or "",
         "reviewNotes": deck.get("reviewNotes") or "",
+        "deckBrief": brief_fingerprint(deck.get("deckBrief")),
         "outline": [
             {"name": section.get("name", ""), "text": section.get("text", "")}
             for section in (deck.get("outline") or [])
@@ -225,13 +243,22 @@ def analyze_deck(
     target_bracket: int | None = None,
     combo_count: int | None = None,
     brief_caps: Mapping[str, int] | None = None,
+    win_plans: list[str] | None = None,
 ) -> dict[str, Any]:
     """Return the deterministic audit for a Commander deck.
 
     ``brief_caps`` are maximum counts extracted from the Deck Brief (for example
     "Rule 0: max 2 board wipes"). They lower the matching role targets so the
     audit and health score do not push the deck past an explicit limit.
+
+    ``win_plans`` are the user's declared win plans. When they name a plan the
+    classifier cannot verify (combat, commander damage, combo, drain, mill),
+    the explicit win-condition gap is suppressed and the health component is
+    credited. ``alt_win`` still requires explicit win-the-game cards.
     """
+    plans = normalize_win_plans(win_plans)
+    declared_credit = declared_win_plan_credit({"win_plans": plans})
+    suppressed = suppressed_roles({"win_plans": plans})
     commander = deck.get("commander") if isinstance(deck.get("commander"), Mapping) else None
     raw_cards = deck.get("cards") if isinstance(deck.get("cards"), list) else []
     cards = [card for card in raw_cards if isinstance(card, Mapping)]
@@ -281,18 +308,24 @@ def analyze_deck(
                 continue
 
     brief_constraints: dict[str, int] = {}
+    cap_only_roles: dict[str, int] = {}
     for role, cap in (brief_caps or {}).items():
         try:
             cap = max(0, int(cap))
         except (TypeError, ValueError):
             continue
-        if role not in target_map:
-            continue
-        target_map[role] = min(target_map[role], cap)
         brief_constraints[str(role)] = cap
+        if role in target_map:
+            target_map[role] = min(target_map[role], cap)
+        else:
+            # Extra Turns / Mass Land Denial are caps, not minimum targets. A
+            # cap above zero should not create a "needs more" gap.
+            cap_only_roles[str(role)] = cap
 
     role_gaps = []
     for role, target in target_map.items():
+        if role in suppressed:
+            continue
         actual = primary_counts.get(role) if role in primary_counts else role_counts.get(role, 0)
         if target <= 0 and actual <= 0:
             continue
@@ -303,6 +336,17 @@ def analyze_deck(
             "deficit": max(0, target - actual),
             "surplus": max(0, actual - target),
         })
+    for role, cap in cap_only_roles.items():
+        actual = role_counts.get(role, 0)
+        if actual > cap:
+            role_gaps.append({
+                "role": role,
+                "target": cap,
+                "actual": actual,
+                "deficit": 0,
+                "surplus": actual - cap,
+                "limitOnly": True,
+            })
 
     bracket = estimate_bracket(
         cards,
@@ -318,6 +362,7 @@ def analyze_deck(
         legal=legality["legal"],
         error_count=len(legality["errors"]),
         role_targets=target_map,
+        declared_win_plan=declared_credit,
     )
 
     guideline_progress = None
@@ -343,13 +388,24 @@ def analyze_deck(
             "uuid": card.get("uuid") or "",
             "name": str(card.get("name") or ""),
             "quantity": _qty(card),
+            "scryfallId": card.get("scryfallId") or "",
+            "imageUrl": card.get("imageUrl") or "",
             **info,
         })
 
     warnings = list(legality.get("warnings", []))
     if average_mv is None:
         warnings.append({"code": "no_mana_values", "message": "No nonland mana values found."})
-    if role_counts.get("Win Condition", 0) == 0:
+    if declared_credit:
+        warnings.append({
+            "code": "declared_wincon",
+            "message": (
+                "Win-condition score credited from the declared win plan. "
+                "This heuristic cannot verify combat, commander-damage, combo, "
+                "drain, or mill finishes."
+            ),
+        })
+    elif role_counts.get("Win Condition", 0) == 0:
         warnings.append({
             "code": "no_explicit_wincon",
             "message": (
@@ -385,6 +441,8 @@ def analyze_deck(
         },
         "roleGaps": role_gaps,
         "briefConstraints": brief_constraints,
+        "winPlans": plans,
+        "suppressedRoles": sorted(suppressed),
         "colorIdentity": legality["colorIdentity"],
         "bracket": bracket,
         "guideline": guideline_progress,

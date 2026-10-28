@@ -7,6 +7,7 @@ the same functions are reused by Deck Doctor.
 from __future__ import annotations
 
 from flask import Blueprint, jsonify, request
+from mtg.deck_brief import brief_caps, brief_from_deck, brief_role_caps, merge_caps
 from mtg.deck_enrich import enrich_card, enrich_deck
 from mtg.deck_stats import (
     AUDIT_SCHEMA_VERSION,
@@ -107,10 +108,15 @@ def api_deck_analyze():
     except (TypeError, ValueError):
         target_bracket = None
 
+    brief = brief_from_deck(deck)
     audit = analyze_deck(
         enriched_deck,
         guideline=guideline,
         target_bracket=target_bracket,
+        brief_caps=merge_caps(
+            brief_role_caps(brief.get("notes")), brief_caps(brief)
+        ),
+        win_plans=brief.get("win_plans"),
     )
     fingerprint = deck_fingerprint(enriched_deck, options)
     return jsonify({

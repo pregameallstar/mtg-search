@@ -165,6 +165,7 @@
         this.guideline = null;    // Guideline template name string (or null)
         this.reviewNotes = '';    // Deck Doctor brief / Rule 0 notes
         this.reviewNotesUpdatedAt = ''; // Written by Deck Doctor only
+        this.deckBrief = null;    // Structured Deck Doctor brief (owned by Deck Doctor)
         this.pricingStore = null; // Per-deck pricing override (null = use global)
         this.pricingSections = {}; // Section include toggles for cost { "main": true, "Sideboard": false, ... }
         this._savedName = null;   // Last name successfully persisted (rename tracking)
@@ -423,6 +424,7 @@
         this.guideline = null;
         this.reviewNotes = '';
         this.reviewNotesUpdatedAt = '';
+        this.deckBrief = null;
         this.pricingStore = null;
         this.pricingSections = {};
     };
@@ -491,6 +493,7 @@
             guideline: this.guideline,
             reviewNotes: this.reviewNotes || '',
             reviewNotesUpdatedAt: this.reviewNotesUpdatedAt || '',
+            deckBrief: this.deckBrief || null,
             pricingStore: this.pricingStore || null,
             pricingSections: this.pricingSections || {},
         };
@@ -652,6 +655,7 @@
         this.guideline = data.guideline || null;
         this.reviewNotes = data.reviewNotes || '';
         this.reviewNotesUpdatedAt = data.reviewNotesUpdatedAt || '';
+        this.deckBrief = data.deckBrief || null;
         this.pricingStore = data.pricingStore || null;
         this.pricingSections = data.pricingSections || {};
         this.cards = (data.cards || []).map(function (c) {

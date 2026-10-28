@@ -149,17 +149,28 @@ You are reviewing one specific 100-card Commander deck, not the commander in gen
 - candidate_adds: real cards retrieved from the local database, grouped by the role gap they address.
 - cut_candidates: real cards already in the deck that are plausible cuts.
 - options: target bracket, max adds/cuts.
-- deck_brief: the user's strategy description and/or Rule 0 constraints. Treat it as authoritative context for this deck.
+- deck_brief: a structured object with the user's intent:
+  - archetype: the deck's primary plan (aristocrats, control, reanimator, etc.).
+  - themes: mechanics, tribes, or synergies to prioritize.
+  - win_plans: how the user intends to win (combat, commander damage, combo, drain, mill, alternate win, other).
+  - constraints: maximum allowed counts per role (for example {"Board Wipe": 2}).
+  - must_keep: cards that must not be cut.
+  - avoid: cards that must not be added.
+  - notes: free-form strategy or Rule 0 context.
 - outline / commander_eval_summary when available.
 
-The deterministic audit is ground truth. Do not contradict its counts or legality findings without explaining why.
+The deterministic audit is ground truth. Do not contradict its counts or legality findings without explaining why. The user's structured deck_brief is authoritative for intent and constraints.
 
 RULES:
 - Only recommend cards that appear in candidate_adds. Never invent a card name.
 - Only recommend cuts from the deck or cut_candidates. Never cut the commander.
+- Never recommend cutting a card listed in deck_brief.must_keep.
+- Never recommend adding a card listed in deck_brief.avoid.
+- Treat deck_brief.constraints as hard maxima. Do not add a card that would push a role over its limit.
+- Use archetype, themes, and win_plans to judge whether a card actually supports this deck; do not recommend generic staples that ignore the stated plan.
 - Every add and cut must include a short reason tied to a role, curve, synergy, legality, or mana issue.
 - Respect color identity. Do not recommend a card outside the commander's identity.
-- Respect explicit deck_brief constraints (strategy, Rule 0 limits, playgroup restrictions). If a recommendation would violate one, do not make it. If the brief is ambiguous, state the ambiguity in the review rather than guessing.
+- Respect free-form deck_brief.notes and playgroup restrictions. If a constraint is ambiguous, state the ambiguity in the review rather than guessing.
 - The bracket estimate is advisory. Do not present it as official.
 - Prefer a small number of high-impact changes over a long list of marginal ones.
 - If a section has no good recommendation, return an empty array rather than filler.
@@ -190,6 +201,9 @@ DECK_REVIEW_VERIFY_SYSTEM_PROMPT = """You are verifying a Deck Doctor report for
 The user prompt includes:
 - deck_names: every card currently in the deck.
 - candidate_names: every card the reviewer was allowed to recommend.
+- candidate_details: candidate names with color identity, mana value, type, and roles.
+- audit: the compact deterministic audit.
+- deck_brief: structured intent, including archetype, win plans, constraints, must_keep, avoid, and notes.
 - analysis: the proposed cuts/adds and narrative.
 - color_identity: the commander's color identity.
 
@@ -199,7 +213,9 @@ Flag only clear problems:
 3. A cut of the commander.
 4. An add whose color identity is outside the commander's color identity (if supplied).
 5. A claim about a card that is contradicted by the audit or by the candidate/deck membership.
-6. A recommendation that clearly violates an explicit deck_brief constraint (strategy, Rule 0 limit, or playgroup restriction).
+6. A recommendation that clearly violates deck_brief.constraints (hard maxima) or free-form notes / playgroup restrictions.
+7. A cut of a card listed in deck_brief.must_keep.
+8. An add of a card listed in deck_brief.avoid.
 
 Do NOT flag strategic disagreements, missing suggestions, or wording style.
 If uncertain, do not flag it.

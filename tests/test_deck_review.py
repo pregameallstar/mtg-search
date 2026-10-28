@@ -169,7 +169,8 @@ def test_build_user_prompt_includes_deck_brief():
         {}, [],
         {"brief": "Squirrel tribal. Rule 0: max 2 board wipes.", "target_bracket": 3},
     )
-    assert '"deck_brief": "Squirrel tribal. Rule 0: max 2 board wipes."' in prompt
+    assert '"deck_brief": {' in prompt
+    assert '"notes": "Squirrel tribal. Rule 0: max 2 board wipes."' in prompt
 
 
 def test_fingerprint_options_include_brief():

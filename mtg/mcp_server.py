@@ -599,8 +599,14 @@ def review_deck(name: str, include_candidates: bool = False) -> dict:
     name: exact saved deck name as shown by list_decks.
     include_candidates: include embedding-retrieved adds and cut candidates.
     """
+    from mtg.deck_brief import (
+        brief_caps,
+        brief_from_deck,
+        brief_role_caps,
+        merge_caps,
+    )
     from mtg.deck_enrich import enrich_deck
-    from mtg.deck_review import brief_role_caps, candidate_adds, cut_candidates, _guideline
+    from mtg.deck_review import candidate_adds, cut_candidates, _guideline
     from mtg.deck_stats import analyze_deck
 
     fname = sanitize_filename(name)
@@ -626,20 +632,25 @@ def review_deck(name: str, include_candidates: bool = False) -> dict:
     try:
         enriched = enrich_deck(db, deck)
         guideline = _guideline(str(deck.get("guideline") or ""))
+        brief = brief_from_deck(deck)
         audit = analyze_deck(
             enriched,
             guideline=guideline,
-            brief_caps=brief_role_caps(deck.get("reviewNotes")),
+            brief_caps=merge_caps(
+                brief_role_caps(brief.get("notes")), brief_caps(brief)
+            ),
+            win_plans=brief.get("win_plans"),
         )
         result = {"name": deck.get("name", name), "audit": audit}
         if include_candidates:
             options = {
-                "brief": str(deck.get("reviewNotes") or ""),
+                "brief": brief.get("notes") or "",
+                "deckBrief": brief,
                 "guideline": str(deck.get("guideline") or ""),
             }
             result["candidates"] = {
                 "adds": candidate_adds(db, enriched, audit, options),
-                "cuts": cut_candidates(enriched, audit),
+                "cuts": cut_candidates(enriched, audit, must_keep=brief.get("must_keep")),
             }
         return result
     finally:

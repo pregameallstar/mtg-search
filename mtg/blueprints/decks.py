@@ -94,7 +94,7 @@ def api_deck_save():
             # send its stale empty copy and erase it. Only Deck Doctor writes
             # these two fields; preserve the on-disk values across deck saves.
             if isinstance(existing, dict):
-                for key in ("reviewNotes", "reviewNotesUpdatedAt"):
+                for key in ("reviewNotes", "reviewNotesUpdatedAt", "deckBrief"):
                     if key in existing:
                         body[key] = existing[key]
                     else:

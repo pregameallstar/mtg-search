@@ -19,7 +19,10 @@
             <select id="review-deck-name">
                 <option value="">Select a saved deck…</option>
                 {% for deck in decks %}
-                <option value="{{ deck.name }}" data-brief="{{ deck.brief | e }}" {% if deck.name == deck_name %}selected{% endif %}>
+                <option value="{{ deck.name }}"
+                        data-brief="{{ deck.brief | e }}"
+                        data-brief-data="{{ deck.brief_data | tojson | forceescape }}"
+                        {% if deck.name == deck_name %}selected{% endif %}>
                     {{ deck.name }}{% if deck.commander %} — {{ deck.commander }}{% endif %} ({{ deck.count }} cards)
                 </option>
                 {% endfor %}
@@ -33,10 +36,6 @@
                 {% endfor %}
             </select>
         </label>
-        <label class="review-brief-label">Deck brief
-            <textarea id="review-brief" rows="4" maxlength="4000"
-                      placeholder="Strategy, theme, or Rule 0 constraints — e.g. Squirrel tribal; max 2 board wipes and 2 counterspells; no infinite combos.">{{ selected_brief }}</textarea>
-        </label>
         <label class="chip">
             <input type="checkbox" id="review-use-llm" checked> Use LLM
         </label>
@@ -44,6 +43,50 @@
             <input type="checkbox" id="review-verify-llm"> Verify with LLM
         </label>
         <button type="button" id="review-run-btn" class="eval-config-save">Review deck</button>
+
+        <div class="review-brief-grid">
+            <label>Archetype
+                <input id="review-archetype" list="review-archetype-options" maxlength="80"
+                       placeholder="e.g. aristocrats, control, reanimator">
+                <datalist id="review-archetype-options">
+                    {% for archetype in ["aristocrats", "aggro", "control", "combo", "midrange", "reanimator", "spellslinger", "tribal", "voltron", "stax", "lands", "tokens", "blink", "mill", "enchantress", "artifacts", "lifegain"] %}
+                    <option value="{{ archetype }}"></option>
+                    {% endfor %}
+                </datalist>
+            </label>
+            <label>Themes
+                <input id="review-themes" maxlength="240"
+                       placeholder="sacrifice, squirrels, artifacts">
+            </label>
+            <label>Must keep
+                <input id="review-must-keep" maxlength="500"
+                       title="Separate multiple cards with semicolons"
+                       placeholder="Blood Artist; Sol Ring">
+            </label>
+            <label>Avoid
+                <input id="review-avoid" maxlength="500"
+                       title="Separate multiple cards with semicolons"
+                       placeholder="Armageddon; Winter Orb">
+            </label>
+            <fieldset class="review-brief-group review-winplans">
+                <legend>Win plans</legend>
+                {% for value, label in [("combat", "Combat"), ("commander_damage", "Commander damage"), ("combo", "Combo"), ("drain", "Drain"), ("mill", "Mill"), ("alt_win", "Alternate win"), ("other", "Other")] %}
+                <label class="chip"><input type="checkbox" name="review-win-plan" value="{{ value }}"> {{ label }}</label>
+                {% endfor %}
+            </fieldset>
+            <fieldset class="review-brief-group review-limits">
+                <legend>Hard limits (blank = default)</legend>
+                <label>Counterspells <input type="number" min="0" max="99" data-role="Counterspell"></label>
+                <label>Board wipes <input type="number" min="0" max="99" data-role="Board Wipe"></label>
+                <label>Tutors <input type="number" min="0" max="99" data-role="Tutor"></label>
+                <label>Extra turns <input type="number" min="0" max="99" data-role="Extra Turns"></label>
+                <label>Mass land denial <input type="number" min="0" max="99" data-role="Mass Land Denial"></label>
+            </fieldset>
+            <label class="review-brief-label">Additional notes
+                <textarea id="review-brief" rows="4" maxlength="4000"
+                          placeholder="Strategy, theme, or Rule 0 context. Structured fields above drive the deterministic audit; notes are extra context for the LLM.">{{ selected_brief }}</textarea>
+            </label>
+        </div>
     </div>
 
     <div id="review-status" class="deck-review-status" hidden></div>
@@ -80,6 +123,10 @@
     'use strict';
     var deckInput = document.getElementById('review-deck-name');
     var briefInput = document.getElementById('review-brief');
+    var archetypeInput = document.getElementById('review-archetype');
+    var themesInput = document.getElementById('review-themes');
+    var mustKeepInput = document.getElementById('review-must-keep');
+    var avoidInput = document.getElementById('review-avoid');
     var briefTouched = false;
     var runBtn = document.getElementById('review-run-btn');
     var statusEl = document.getElementById('review-status');
@@ -93,7 +140,9 @@
     var currentFilename = null;
     var currentReviewName = null;
     var reviewChangedByPage = false;
+    var reviewHoverHide = null;
     var initialDeckName = {{ deck_name | tojson }};
+    var initialBriefData = {{ selected_brief_data | tojson }};
 
     function esc(s) {
         return String(s === null || s === undefined ? '' : s)
@@ -120,6 +169,7 @@
         currentFilename = null;
         currentReviewName = null;
         reviewChangedByPage = false;
+        if (reviewHoverHide) reviewHoverHide();
         resultEl.hidden = true;
         resultEl.innerHTML = '';
     }
@@ -138,12 +188,88 @@
         deckInput.value = name;
     }
 
+    function parseBriefData(option) {
+        if (!option || !option.dataset || !option.dataset.briefData) return null;
+        try {
+            return JSON.parse(option.dataset.briefData) || null;
+        } catch (err) {
+            return null;
+        }
+    }
+
+    function listToText(values, separator) {
+        return Array.isArray(values) ? values.join(separator || ', ') : '';
+    }
+
+    function setBriefForm(data, notes) {
+        data = data || {};
+        if (briefInput) briefInput.value = String(notes || data.notes || '');
+        if (archetypeInput) archetypeInput.value = data.archetype || '';
+        if (themesInput) themesInput.value = listToText(data.themes);
+        if (mustKeepInput) mustKeepInput.value = listToText(data.must_keep, '; ');
+        if (avoidInput) avoidInput.value = listToText(data.avoid, '; ');
+        var plans = Array.isArray(data.win_plans) ? data.win_plans : [];
+        document.querySelectorAll('input[name="review-win-plan"]').forEach(function (input) {
+            input.checked = plans.indexOf(input.value) !== -1;
+        });
+        var constraints = data.constraints && typeof data.constraints === 'object'
+            ? data.constraints : {};
+        document.querySelectorAll('.review-limits input[data-role]').forEach(function (input) {
+            var value = constraints[input.dataset.role];
+            input.value = value === null || value === undefined ? '' : String(value);
+        });
+    }
+
     function syncBrief(force) {
         if (!briefInput) return;
         if (force) briefTouched = false;
         if (briefTouched) return;
         var option = deckInput.selectedOptions && deckInput.selectedOptions[0];
-        briefInput.value = option && option.dataset ? (option.dataset.brief || '') : '';
+        var data = parseBriefData(option);
+        if (!data && initialDeckName && deckInput.value.trim() === initialDeckName) {
+            data = initialBriefData;
+        }
+        setBriefForm(data || {}, option && option.dataset ? (option.dataset.brief || '') : '');
+    }
+
+    function parseListInput(value) {
+        return String(value || '')
+            .split(/[,;\n]+/)
+            .map(function (part) { return part.trim(); })
+            .filter(Boolean);
+    }
+
+    function parseCardListInput(value) {
+        // Card names contain commas (legendary names); use semicolons/lines.
+        return String(value || '')
+            .split(/[;\n]+/)
+            .map(function (part) { return part.trim(); })
+            .filter(Boolean);
+    }
+
+    function briefFormData() {
+        var plans = [];
+        document.querySelectorAll('input[name="review-win-plan"]').forEach(function (input) {
+            if (input.checked) plans.push(input.value);
+        });
+        var constraints = {};
+        document.querySelectorAll('.review-limits input[data-role]').forEach(function (input) {
+            if (input.value === '') return;
+            var count = Number(input.value);
+            if (isFinite(count) && count >= 0) {
+                constraints[input.dataset.role] = Math.min(99, Math.floor(count));
+            }
+        });
+        return {
+            version: 1,
+            archetype: archetypeInput ? archetypeInput.value.trim() : '',
+            themes: parseListInput(themesInput ? themesInput.value : ''),
+            win_plans: plans,
+            constraints: constraints,
+            must_keep: parseCardListInput(mustKeepInput ? mustKeepInput.value : ''),
+            avoid: parseCardListInput(avoidInput ? avoidInput.value : ''),
+            notes: briefInput ? briefInput.value.trim() : ''
+        };
     }
 
     function refreshOpenDeck() {
@@ -172,7 +298,12 @@
         fetch('/api/deck/review/run', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: name, brief: briefInput ? briefInput.value.trim() : '', options: options })
+            body: JSON.stringify({
+                name: name,
+                brief: briefInput ? briefInput.value.trim() : '',
+                briefData: briefFormData(),
+                options: options
+            })
         })
         .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
         .then(function (res) {
@@ -232,6 +363,14 @@
             .split(' // ')[0].trim().toLowerCase();
     }
 
+    var scryfallIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+    function cardImageUrl(scryfallId) {
+        var id = String(scryfallId || '');
+        if (!scryfallIdPattern.test(id)) return '';
+        return '/img/normal/front/' + id.charAt(0) + '/' + id.charAt(1) + '/' + id + '.jpg';
+    }
+
     function messageList(items) {
         if (!Array.isArray(items) || !items.length) return '';
         return '<ul class="review-list">' + items.map(function (item) {
@@ -243,6 +382,7 @@
     }
 
     function renderResult(data, stale) {
+        if (reviewHoverHide) reviewHoverHide();
         var audit = data.audit || {};
         var analysis = data.analysis;
         var bracket = audit.bracket || {};
@@ -286,6 +426,28 @@
                 candidateIndex[String(card.name || '').toLowerCase()] = card;
                 candidateIndex[frontName(card.name)] = card;
             });
+        });
+
+        // Cuts may come from the deterministic shortlist (with scryfallId) or
+        // from the LLM (name only), so index both those and the audit's deck
+        // cards by name/uuid for hover art.
+        var cutImageIndex = {};
+        function indexCutImage(key, card) {
+            if (!key || !card || typeof card !== 'object') return;
+            var url = card.imageUrl || cardImageUrl(card.scryfallId);
+            if (url) cutImageIndex[key] = url;
+        }
+        (Array.isArray(cuts) ? cuts : []).forEach(function (cut) {
+            if (!cut || typeof cut !== 'object') return;
+            indexCutImage(String(cut.uuid || ''), cut);
+            indexCutImage(String(cut.name || '').toLowerCase(), cut);
+            indexCutImage(frontName(cut.name), cut);
+        });
+        (Array.isArray(audit.cardRoles) ? audit.cardRoles : []).forEach(function (card) {
+            if (!card || typeof card !== 'object') return;
+            indexCutImage(String(card.uuid || ''), card);
+            indexCutImage(String(card.name || '').toLowerCase(), card);
+            indexCutImage(frontName(card.name), card);
         });
 
         var html = '';
@@ -388,7 +550,11 @@
         else {
             html += '<ul class="review-list">';
             cutItems.forEach(function (cut) {
-                html += '<li><div class="review-item-line"><strong>' + esc(cut.name) + '</strong>' +
+                var cutImage = (cut.uuid && cutImageIndex[String(cut.uuid)]) ||
+                    cutImageIndex[String(cut.name || '').toLowerCase()] ||
+                    cutImageIndex[frontName(cut.name)] || '';
+                html += '<li class="review-hover-card" data-image-url="' + esc(cutImage) + '">' +
+                    '<div class="review-item-line"><strong>' + esc(cut.name) + '</strong>' +
                     '<button type="button" class="review-apply-cut" data-name="' + esc(cut.name) + '"' +
                     ' data-uuid="' + esc(cut.uuid || '') + '"' +
                     (stale ? ' disabled title="Re-run the review first"' : '') + '>Cut</button></div>' +
@@ -424,7 +590,11 @@
                 var priceText = candidate && candidate.price != null
                     ? ' · ' + String(options.currency || 'usd').toUpperCase() + ' ' + Number(candidate.price).toFixed(2)
                     : '';
-                html += '<li><div class="review-item-line"><strong>' + esc(add.name) + '</strong>' + button + '</div>' +
+                var addImage = candidate
+                    ? (candidate.imageUrl || cardImageUrl(candidate.scryfallId))
+                    : '';
+                html += '<li class="review-hover-card" data-image-url="' + esc(addImage) + '">' +
+                    '<div class="review-item-line"><strong>' + esc(add.name) + '</strong>' + button + '</div>' +
                     '<span>' + esc(add.reason || '') + (add.role ? ' · ' + esc(add.role) : '') + esc(replaces) + esc(priceText) + '</span></li>';
             });
             html += '</ul>';
@@ -545,6 +715,70 @@
                 done(!!data.stale, data.staleReason || '');
             })
             .catch(function (err) { done(true, err.message || 'Could not verify the review.'); });
+    }
+
+    function initReviewHoverPreview() {
+        var preview = document.createElement('img');
+        preview.className = 'card-hover-preview';
+        preview.style.display = 'none';
+        preview.onerror = function () { this.style.display = 'none'; };
+        document.body.appendChild(preview);
+        var timer = null;
+        var active = null;
+
+        function cardRow(target) {
+            if (!target || !target.closest) return null;
+            return target.closest('.review-hover-card');
+        }
+
+        function position(e) {
+            var width = 400;
+            var height = 560;
+            var left = e.clientX + 16;
+            var top = e.clientY - height / 2;
+            if (left + width > window.innerWidth) left = e.clientX - width - 16;
+            if (top < 8) top = 8;
+            if (top + height > window.innerHeight - 8) {
+                top = window.innerHeight - height - 8;
+            }
+            preview.style.left = left + 'px';
+            preview.style.top = top + 'px';
+        }
+
+        reviewHoverHide = function () {
+            clearTimeout(timer);
+            active = null;
+            preview.style.display = 'none';
+        };
+
+        resultEl.addEventListener('mouseover', function (e) {
+            if (e.target.closest && e.target.closest('button')) return;
+            var row = cardRow(e.target);
+            if (!row || row === active) return;
+            active = row;
+            clearTimeout(timer);
+            var url = row.dataset.imageUrl;
+            if (!url) {
+                preview.style.display = 'none';
+                return;
+            }
+            timer = setTimeout(function () {
+                preview.src = url;
+                preview.style.display = '';
+                position(e);
+            }, 250);
+        });
+
+        resultEl.addEventListener('mouseout', function (e) {
+            var leaving = cardRow(e.target);
+            var entering = e.relatedTarget ? cardRow(e.relatedTarget) : null;
+            if (leaving && leaving === entering) return;
+            reviewHoverHide();
+        });
+
+        resultEl.addEventListener('mousemove', function (e) {
+            if (preview.style.display !== 'none') position(e);
+        });
     }
 
     function applyCard(kind, payload) {
@@ -734,10 +968,11 @@
                     loadReports();
                 }
                 var opts = data.options || {};
-                if (typeof opts.brief === 'string') {
-                    if (briefInput) briefInput.value = opts.brief;
-                    briefTouched = true;
-                }
+                setBriefForm(
+                    opts.deckBrief || {},
+                    typeof opts.brief === 'string' ? opts.brief : ''
+                );
+                briefTouched = true;
                 var bracketInput = document.getElementById('review-target-bracket');
                 if (bracketInput) {
                     bracketInput.value = opts.target_bracket != null ? String(opts.target_bracket) : '';
@@ -777,6 +1012,7 @@
             setStatus('Stopped waiting. The server may still finish the review in the background.', '');
         });
     }
+    initReviewHoverPreview();
     deckInput.addEventListener('change', function () {
         var selected = deckInput.value.trim();
         if (currentReviewName && selected !== currentReviewName) {
@@ -791,6 +1027,11 @@
     });
     deckInput.addEventListener('input', refreshOpenDeck);
     if (briefInput) briefInput.addEventListener('input', function () { briefTouched = true; });
+    var briefGrid = document.querySelector('.review-brief-grid');
+    if (briefGrid) {
+        briefGrid.addEventListener('input', function () { briefTouched = true; });
+        briefGrid.addEventListener('change', function () { briefTouched = true; });
+    }
     syncBrief(true);
     refreshOpenDeck();
     if (!initialDeckName) loadReports();

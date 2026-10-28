@@ -61,7 +61,7 @@ def _wait(client, job_id, timeout=4.0):
     raise AssertionError("review job did not finish")
 
 
-def _run(client, deck=None, name=None, brief=None, options=None):
+def _run(client, deck=None, name=None, brief=None, options=None, brief_data=None):
     body = {"options": {"use_llm": False, **(options or {})}}
     if deck is not None:
         body["deck"] = deck
@@ -69,6 +69,8 @@ def _run(client, deck=None, name=None, brief=None, options=None):
         body["name"] = name
     if brief is not None:
         body["brief"] = brief
+    if brief_data is not None:
+        body["briefData"] = brief_data
     response = client.post("/api/deck/review/run", json=body)
     assert response.status_code == 202, response.get_json()
     job_id = response.get_json()["jobId"]
@@ -107,6 +109,27 @@ def test_fingerprint_changes_with_tags_eval_data_and_engine_inputs():
     evaluated = json.loads(json.dumps(deck))
     evaluated["evalData"]["strategies"][0]["name"] = "Enchantments"
     assert deck_fingerprint(evaluated) != base
+
+
+def test_saved_review_goes_stale_when_structured_brief_changes(client, tmp_path):
+    write_json_atomic(tmp_path / "decks" / "Review_Test.json", _deck())
+    job_id = _run(
+        client,
+        name="Review Test",
+        brief_data={
+            "version": 1,
+            "archetype": "control",
+            "win_plans": ["combat"],
+            "notes": "Control shell.",
+        },
+    )
+    filename = _save(client, job_id, "Review Test")
+    assert client.get(f"/api/deck/review/report?filename={filename}").get_json()["stale"] is False
+
+    changed = json.loads((tmp_path / "decks" / "Review_Test.json").read_text())
+    changed["deckBrief"]["archetype"] = "aggro"
+    write_json_atomic(tmp_path / "decks" / "Review_Test.json", changed)
+    assert client.get(f"/api/deck/review/report?filename={filename}").get_json()["stale"] is True
 
 
 def test_saved_review_goes_stale_when_tags_or_eval_data_change(client, tmp_path):
@@ -181,16 +204,64 @@ def test_deck_save_preserves_review_notes_from_deck_doctor(client, tmp_path, mon
     monkeypatch.setattr(decks_bp, "DECKS_DIR", str(tmp_path / "decks"))
     write_json_atomic(tmp_path / "decks" / "Review_Test.json", _deck())
     job_id = _run(client, name="Review Test", brief="Squirrel tribal.")
-    assert json.loads((tmp_path / "decks" / "Review_Test.json").read_text())["reviewNotes"] == "Squirrel tribal."
+    after_run = json.loads((tmp_path / "decks" / "Review_Test.json").read_text())
+    assert after_run["reviewNotes"] == "Squirrel tribal."
+    assert after_run["deckBrief"]["notes"] == "Squirrel tribal."
 
     # The Deck Builder sends a whole deck object with its stale empty brief.
     stale_builder_payload = _deck()
     stale_builder_payload["reviewNotes"] = ""
+    stale_builder_payload["deckBrief"] = None
     response = client.post("/api/deck/save", json=stale_builder_payload)
     assert response.status_code == 200, response.get_json()
     saved = json.loads((tmp_path / "decks" / "Review_Test.json").read_text())
     assert saved["reviewNotes"] == "Squirrel tribal."
+    assert saved["deckBrief"]["notes"] == "Squirrel tribal."
     assert saved.get("reviewNotesUpdatedAt")
+
+
+def test_structured_brief_is_persisted_and_used(client, tmp_path):
+    write_json_atomic(tmp_path / "decks" / "Review_Test.json", _deck())
+    brief_data = {
+        "version": 1,
+        "archetype": "aristocrats",
+        "themes": ["sacrifice"],
+        "win_plans": ["combat"],
+        "constraints": {"Board Wipe": 1, "Extra Turns": 0},
+        "must_keep": ["Sol Ring"],
+        "avoid": ["Rhystic Study"],
+        "notes": "Rule 0: no extra turns.",
+    }
+    job_id = _run(
+        client,
+        name="Review Test",
+        brief="Rule 0: no extra turns.",
+        brief_data=brief_data,
+    )
+    result = client.get(f"/api/deck/review/result?jobId={job_id}").get_json()
+    assert result["stale"] is False
+    assert result["options"]["deckBrief"]["archetype"] == "aristocrats"
+    assert result["options"]["deckBrief"]["win_plans"] == ["combat"]
+    assert result["options"]["deckBrief"]["must_keep"] == ["Sol Ring"]
+    assert result["audit"]["winPlans"] == ["combat"]
+    assert result["audit"]["suppressedRoles"] == ["Win Condition"]
+    assert result["audit"]["briefConstraints"] == {
+        "Board Wipe": 1,
+        "Extra Turns": 0,
+    }
+
+    saved = json.loads((tmp_path / "decks" / "Review_Test.json").read_text())
+    assert saved["deckBrief"]["archetype"] == "aristocrats"
+    assert saved["deckBrief"]["notes"] == "Rule 0: no extra turns."
+    assert saved["reviewNotes"] == "Rule 0: no extra turns."
+
+    page = client.get("/deck-review?deck=Review%20Test").get_data(as_text=True)
+    assert "data-brief-data=" in page
+    for field in (
+        "review-archetype", "review-themes", "review-must-keep",
+        "review-avoid", "review-win-plan", 'data-role="Extra Turns"',
+    ):
+        assert field in page
 
 
 def test_brief_is_not_copied_from_outline(client, tmp_path):
@@ -204,6 +275,7 @@ def test_brief_is_not_copied_from_outline(client, tmp_path):
     _run(client, name="Review Test", brief="")
     saved = json.loads((tmp_path / "decks" / "Review_Test.json").read_text())
     assert "reviewNotes" not in saved
+    assert "deckBrief" not in saved
 
 
 # --------------------------------------------------------------------------- #
@@ -214,9 +286,9 @@ def test_brief_caps_parser_is_conservative():
     assert deck_review.brief_role_caps(
         "Rule 0 constraints: 2 counterspells, 2 boardwipe"
     ) == {"Counterspell": 2, "Board Wipe": 2}
-    assert deck_review.brief_role_caps("No more than 1 tutor and no land denial") == {
-        "Tutor": 1,
-    }
+    caps = deck_review.brief_role_caps("No more than 1 tutor and no land denial")
+    assert caps == {"Tutor": 1, "Mass Land Denial": 0}
+    assert "Lands" not in caps
     # A descriptive sentence is not a cap.
     assert deck_review.brief_role_caps("The deck has 2 counterspells.") == {}
 
@@ -237,6 +309,88 @@ def test_brief_caps_lower_targets_and_health():
     assert by_role["Counterspell"]["target"] == 1
     assert capped["briefConstraints"] == {"Board Wipe": 1, "Counterspell": 1}
     assert capped["health"]["score"] >= plain["health"]["score"]
+
+
+def test_avoid_cards_are_not_retrieved(search_db_path, monkeypatch):
+    conn = sqlite3.connect(search_db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        deck = {
+            "name": "Avoid Test",
+            "commander": {"name": "Alela, Artful Provocateur"},
+            "cards": [{"name": "Sol Ring", "quantity": 1}],
+            "sections": {},
+            "guideline": "",
+        }
+        enriched = enrich_deck(conn, deck)
+        audit = analyze_deck(enriched)
+        rhystic = conn.execute(
+            "SELECT uuid FROM cards WHERE name = 'Rhystic Study'"
+        ).fetchone()[0]
+        monkeypatch.setattr(deck_review.embed, "find", lambda *a, **k: [
+            {"uuid": rhystic, "name": "Rhystic Study", "score": 0.95}
+        ])
+
+        allowed = deck_review.candidate_adds(conn, enriched, audit, {})
+        assert any(
+            card["name"] == "Rhystic Study"
+            for bucket in allowed.values()
+            for card in bucket
+        )
+
+        blocked = deck_review.candidate_adds(
+            conn, enriched, audit, {"deckBrief": {"avoid": ["Rhystic Study"]}}
+        )
+        assert all(
+            card["name"] != "Rhystic Study"
+            for bucket in blocked.values()
+            for card in bucket
+        )
+    finally:
+        conn.close()
+
+
+def test_audit_cards_and_cuts_expose_image_identifiers(search_db_path):
+    conn = sqlite3.connect(search_db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        deck = {
+            "name": "Art Test",
+            "commander": {"name": "Alela, Artful Provocateur"},
+            "cards": [
+                {"name": "Sol Ring", "quantity": 1},
+                {
+                    "name": "Big Spell",
+                    "quantity": 1,
+                    "manaValue": 9,
+                    "edhrecRank": 50000,
+                    "types": "Sorcery",
+                    "type": "Sorcery",
+                    "text": "Draw a card.",
+                    "scryfallId": "abc123",
+                },
+            ],
+            "sections": {},
+            "guideline": "",
+        }
+        enriched = enrich_deck(conn, deck)
+        audit = analyze_deck(enriched)
+        assert all("scryfallId" in card for card in audit["cardRoles"])
+        sol = next(card for card in audit["cardRoles"] if card["name"] == "Sol Ring")
+        assert sol["scryfallId"]
+
+        cuts = deck_review.cut_candidates(enriched, audit)
+        assert any(cut["name"] == "Big Spell" for cut in cuts)
+        assert any(cut["scryfallId"] == "abc123" for cut in cuts)
+    finally:
+        conn.close()
+
+
+def test_deck_review_page_wires_hover_preview(client):
+    page = client.get("/deck-review").get_data(as_text=True)
+    assert "initReviewHoverPreview" in page
+    assert ".review-hover-card" in page
+    assert "card-hover-preview" in page
 
 
 def test_land_deficit_retrieves_land_candidates(search_db_path, monkeypatch):
@@ -378,12 +532,29 @@ def test_exports_include_audit_legality_warnings_and_replaces():
         "validation": {"warnings": ["Replacement ignored."], "rejected": []},
         "verification": {"warnings": ["Check the mana base."], "verified": True},
         "pipeline": {"llm_error": "timeout"},
-        "options": {"brief": "Rule 0: max 1 board wipe"},
+        "options": {
+            "brief": "Rule 0: max 1 board wipe",
+            "deckBrief": {
+                "version": 1,
+                "archetype": "control",
+                "themes": ["draw"],
+                "win_plans": ["combat"],
+                "constraints": {"Board Wipe": 1},
+                "must_keep": ["Sol Ring"],
+                "avoid": ["Armageddon"],
+                "notes": "Rule 0: max 1 board wipe",
+            },
+        },
     }
     markdown = deck_review.review_to_markdown(report)
     assert "Deck must contain exactly 100 cards." in markdown
     assert "Partner is not fully modeled." in markdown
     assert "max 1" in markdown
+    assert "**Archetype:** control" in markdown
+    assert "**Win plans:** Combat damage" in markdown
+    assert "**Hard limits:** Board Wipe max 1" in markdown
+    assert "**Must keep:** Sol Ring" in markdown
+    assert "**Avoid:** Armageddon" in markdown
     assert "replaces **Explosive Vegetation**" in markdown
     assert "None recommended." in markdown  # explicit empty LLM cuts
     assert "timeout" in markdown
@@ -392,4 +563,5 @@ def test_exports_include_audit_legality_warnings_and_replaces():
     assert "Deck must contain exactly 100 cards." in html
     assert "<strong>replaces" not in html
     assert "<strong>Explosive Vegetation</strong>" in html
+    assert "<strong>Archetype:</strong> control" in html
     assert "**" not in html.split("<body>", 1)[1]

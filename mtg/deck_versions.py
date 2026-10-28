@@ -13,6 +13,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
+from mtg.deck_brief import brief_caps, brief_from_deck, brief_role_caps, merge_caps
 from mtg.deck_stats import analyze_deck
 from mtg.shared import sanitize_filename
 from mtg.storage import write_json_atomic
@@ -192,8 +193,18 @@ def compare_decks(a: Mapping[str, Any], b: Mapping[str, Any]) -> dict[str, Any]:
                 "to": map_b[key]["quantity"],
             })
 
-    audit_a = analyze_deck(a)
-    audit_b = analyze_deck(b)
+    def audit(deck):
+        brief = brief_from_deck(deck)
+        return analyze_deck(
+            deck,
+            brief_caps=merge_caps(
+                brief_role_caps(brief.get("notes")), brief_caps(brief)
+            ),
+            win_plans=brief.get("win_plans"),
+        )
+
+    audit_a = audit(a)
+    audit_b = audit(b)
     role_names = set(audit_a.get("roles") or {}) | set(audit_b.get("roles") or {})
     role_delta = {
         role: {

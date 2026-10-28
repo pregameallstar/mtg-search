@@ -17,6 +17,12 @@ from flask import (
 )
 import mtg.review_cache as review_cache
 from mtg import deck_review
+from mtg.deck_brief import (
+    brief_from_deck,
+    brief_is_empty,
+    brief_to_deck,
+    normalize_brief,
+)
 from mtg.deck_enrich import enrich_deck
 from mtg.prompt_store import get_prompt
 from mtg.shared import (
@@ -63,7 +69,7 @@ def _report_path(filename: str) -> str | None:
 
 
 def _brief_for_deck(deck: dict) -> str:
-    """The user-authored Deck Brief.
+    """The user-authored free-form notes for the Deck Brief.
 
     Outline text is intentionally not used as a fallback: the outline is already
     sent to retrieval and the LLM separately, and silently persisting a copy as
@@ -73,24 +79,43 @@ def _brief_for_deck(deck: dict) -> str:
     return str(deck.get("reviewNotes") or "").strip()
 
 
-def _save_review_notes(deck_name: str, brief: str) -> None:
-    """Persist the Deck Brief on the saved deck. Best-effort."""
+def _page_brief_data(deck: dict) -> dict:
+    """Compact structured brief for the page.
+
+    Notes live in ``data-brief`` for each deck, so they are omitted here to
+    avoid duplicating potentially long text in every select option.
+    """
+    brief = brief_from_deck(deck)
+    return {
+        key: brief[key]
+        for key in (
+            "archetype", "themes", "win_plans", "constraints",
+            "must_keep", "avoid",
+        )
+        if brief.get(key)
+    }
+
+
+def _save_deck_brief(deck_name: str, value) -> None:
+    """Persist the structured Deck Brief on the saved deck. Best-effort."""
     if not deck_name:
         return
+    brief = normalize_brief(value)
     try:
         path = resolve_json_path(DECKS_DIR, deck_name)
         with file_lock(path):
             deck = read_named_json(path, deck_name)
             if not isinstance(deck, dict):
                 return
-            if str(deck.get("reviewNotes") or "") == brief:
+            if brief_from_deck(deck) == brief:
                 return
-            if brief:
-                deck["reviewNotes"] = brief
-                deck["reviewNotesUpdatedAt"] = datetime.now(timezone.utc).isoformat()
-            else:
+            if brief_is_empty(brief):
+                deck.pop("deckBrief", None)
                 deck.pop("reviewNotes", None)
                 deck.pop("reviewNotesUpdatedAt", None)
+            else:
+                brief_to_deck(deck, brief)
+                deck["reviewNotesUpdatedAt"] = datetime.now(timezone.utc).isoformat()
             write_json_atomic(path, deck)
     except (StorageError, OSError):
         pass
@@ -185,6 +210,7 @@ def deck_review_page():
             "name": deck.get("name", ""),
             "commander": (deck.get("commander") or {}).get("name", ""),
             "brief": _brief_for_deck(deck),
+            "brief_data": _page_brief_data(deck),
             "count": sum(
                 _deck_quantity(card)
                 for card in (deck.get("cards") or [])
@@ -195,14 +221,15 @@ def deck_review_page():
         if isinstance(deck, dict) and deck.get("name")
     ]
     decks.sort(key=lambda deck: deck["name"].lower())
-    selected_brief = next(
-        (deck["brief"] for deck in decks if deck["name"] == deck_name), ""
-    )
+    selected = next((deck for deck in decks if deck["name"] == deck_name), None)
+    selected_brief = selected["brief"] if selected else ""
+    selected_brief_data = selected["brief_data"] if selected else normalize_brief({})
     return render_template(
         "deck_review.html",
         deck_name=deck_name,
         decks=decks,
         selected_brief=selected_brief,
+        selected_brief_data=selected_brief_data,
         reports=reports,
     )
 
@@ -232,19 +259,25 @@ def api_review_run():
         return jsonify({"error": "Set a commander before running Deck Doctor."}), 400
 
     options = body.get("options") if isinstance(body.get("options"), dict) else {}
+    raw_brief = body.get("briefData")
+    if not isinstance(raw_brief, dict):
+        raw_brief = body.get("deckBrief")
+    if not isinstance(raw_brief, dict):
+        raw_brief = options.get("deckBrief")
+    if not isinstance(raw_brief, dict):
+        raw_brief = deck.get("deckBrief")
     if "brief" in body:
-        brief = str(body.get("brief") or "").strip()
+        notes = str(body.get("brief") or "").strip()
     elif "brief" in options:
-        brief = str(options.get("brief") or "").strip()
+        notes = str(options.get("brief") or "").strip()
+    elif isinstance(raw_brief, dict) and raw_brief.get("notes"):
+        notes = str(raw_brief.get("notes") or "").strip()
     else:
-        brief = str(deck.get("reviewNotes") or "").strip()
-    brief = brief[:4000]
+        notes = str(deck.get("reviewNotes") or "").strip()
+    brief_data = normalize_brief(raw_brief, notes=notes)
     if name:
-        _save_review_notes(name, brief)
-    if brief:
-        deck["reviewNotes"] = brief
-    else:
-        deck.pop("reviewNotes", None)
+        _save_deck_brief(name, brief_data)
+    brief_to_deck(deck, brief_data)
     llm = _llm_options()
     requested_use_llm = _bool_option(options.get("use_llm"), True)
     requested_verify_llm = _bool_option(options.get("verify_llm"), False)
@@ -271,7 +304,8 @@ def api_review_run():
         "llm": llm,
         "review_prompt": get_prompt("review_prompt"),
         "guideline": options.get("guideline") or deck.get("guideline") or "",
-        "brief": brief,
+        "brief": brief_data.get("notes") or "",
+        "deckBrief": brief_data,
         "target_bracket": target_bracket,
         "max_adds": max_adds,
         "max_cuts": max_cuts,

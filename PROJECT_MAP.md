@@ -435,6 +435,7 @@ These are not tied to a single tool but used by several.
 | `mtg/deck_rules.py` | — | `validate_deck()` — count, singleton, color identity, legality | Deck Builder, deck analysis |
 | `mtg/deck_stats.py` | — | `analyze_deck()`, `deck_fingerprint()` — curve, roles, gaps, health | Deck Builder, Deck Doctor |
 | `mtg/deck_enrich.py` | — | `lookup_card()`, `enrich_deck()` — saved deck → DB-backed cards | Deck analysis, Deck Doctor |
+| `mtg/deck_brief.py` | — | structured Deck Brief schema, normalization, cap merging, retrieval/prompt payloads | Deck Doctor, deck analysis, compare decks |
 | `mtg/deck_review.py` | — | `candidate_adds()`, `cut_candidates()`, `validate_analysis()`, `run_review_job()` | Deck Doctor |
 | `mtg/review_cache.py` | — | bounded job progress/result cache | Deck Doctor |
 | `mtg/deck_versions.py` | — | snapshot listing/writing, restore payloads, `compare_decks()` | Deck Builder History, Compare Decks |
