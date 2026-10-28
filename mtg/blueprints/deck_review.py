@@ -29,6 +29,7 @@ from mtg.shared import (
 from mtg.storage import (
     StorageError,
     clean_name,
+    file_lock,
     read_json,
     read_named_json,
     resolve_json_path,
@@ -50,6 +51,42 @@ def _report_path(filename: str) -> str | None:
     if "/" in filename or "\\" in filename or ".." in filename or not filename.endswith(".json"):
         return None
     return os.path.join(REVIEWS_PATH, filename)
+
+
+def _brief_for_deck(deck: dict) -> str:
+    notes = str(deck.get("reviewNotes") or "").strip()
+    if notes:
+        return notes
+    outline = deck.get("outline")
+    if isinstance(outline, list):
+        parts = []
+        for section in outline:
+            if not isinstance(section, dict):
+                continue
+            text = str(section.get("text") or "").strip()
+            if text:
+                parts.append(text)
+        return " ".join(parts)[:2000]
+    return ""
+
+
+def _save_review_notes(deck_name: str, brief: str) -> None:
+    """Persist the Deck Brief on the saved deck. Best-effort."""
+    if not deck_name:
+        return
+    try:
+        path = resolve_json_path(DECKS_DIR, deck_name)
+        with file_lock(path):
+            deck = read_named_json(path, deck_name)
+            if not isinstance(deck, dict):
+                return
+            if brief:
+                deck["reviewNotes"] = brief
+            else:
+                deck.pop("reviewNotes", None)
+            write_json_atomic(path, deck)
+    except (StorageError, OSError):
+        pass
 
 
 def _report_stale(data: dict) -> tuple[bool, str]:
@@ -94,6 +131,7 @@ def deck_review_page():
         {
             "name": deck.get("name", ""),
             "commander": (deck.get("commander") or {}).get("name", ""),
+            "brief": _brief_for_deck(deck),
             "count": sum(
                 int(card.get("quantity") or 1)
                 for card in (deck.get("cards") or [])
@@ -104,10 +142,14 @@ def deck_review_page():
         if isinstance(deck, dict) and deck.get("name")
     ]
     decks.sort(key=lambda deck: deck["name"].lower())
+    selected_brief = next(
+        (deck["brief"] for deck in decks if deck["name"] == deck_name), ""
+    )
     return render_template(
         "deck_review.html",
         deck_name=deck_name,
         decks=decks,
+        selected_brief=selected_brief,
         reports=reports,
     )
 
@@ -137,6 +179,19 @@ def api_review_run():
         return jsonify({"error": "Set a commander before running Deck Doctor."}), 400
 
     options = body.get("options") if isinstance(body.get("options"), dict) else {}
+    if "brief" in body:
+        brief = str(body.get("brief") or "").strip()
+    elif "brief" in options:
+        brief = str(options.get("brief") or "").strip()
+    else:
+        brief = str(deck.get("reviewNotes") or "").strip()
+    brief = brief[:4000]
+    if name:
+        _save_review_notes(name, brief)
+    if brief:
+        deck["reviewNotes"] = brief
+    else:
+        deck.pop("reviewNotes", None)
     llm = _llm_options()
     use_llm = bool(options.get("use_llm", True)) and bool(llm["api_key"])
     verify_llm = bool(options.get("verify_llm", False)) and use_llm
@@ -161,6 +216,7 @@ def api_review_run():
         "llm": llm,
         "review_prompt": get_prompt("review_prompt"),
         "guideline": options.get("guideline") or deck.get("guideline") or "",
+        "brief": brief,
         "target_bracket": target_bracket,
         "max_adds": max_adds,
         "max_cuts": max_cuts,

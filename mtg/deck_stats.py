@@ -139,6 +139,7 @@ def deck_fingerprint(deck: Mapping[str, Any], options: Mapping[str, Any] | None 
         "commander": commander.get("uuid") or commander.get("name") or "",
         "cards": sorted(key(card) for card in cards if isinstance(card, Mapping)),
         "guideline": deck.get("guideline") or "",
+        "reviewNotes": deck.get("reviewNotes") or "",
         "outline": [
             {"name": section.get("name", ""), "text": section.get("text", "")}
             for section in (deck.get("outline") or [])

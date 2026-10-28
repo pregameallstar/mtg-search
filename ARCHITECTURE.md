@@ -199,7 +199,8 @@ Deck {
   cards: [card],            // main 99; each {uuid, setCode, number, name, quantity, tags, ...}
   evalData: object | null,  // cached Commander Eval analysis blob
   sections: {"Sideboard": [card], "Maybeboard": [card], ...},
-  guideline: string | null  // guideline template name
+  guideline: string | null, // guideline template name
+  reviewNotes: string       // Deck Doctor brief / Rule 0 notes
 }
 ```
 
@@ -263,8 +264,10 @@ its role panel, guideline bars, and bracket badge.
 
 `GET /deck-review?deck=<name>` is the page. `POST /api/deck/review/run` starts a
 background job; `GET /progress` and `GET /result` poll it. Reports are saved to
-`deck_reviews/` and listed by `/api/deck/review/reports`. Saved reviews are
-checked against the current deck fingerprint and marked stale after edits.
+`deck_reviews/` and listed by `/api/deck/review/reports`. The Deck Brief is
+stored on the deck as `reviewNotes`, feeds the embedding profile and LLM prompt,
+and is part of the review fingerprint. Saved reviews are checked against the
+current deck fingerprint and marked stale after edits.
 `/api/deck/review/export` downloads Markdown or HTML. An optional second LLM
 pass verifies the report against the candidate/deck lists. The pipeline enriches
 the deck, runs `analyze_deck()`, retrieves real candidate adds with embeddings,

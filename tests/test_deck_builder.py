@@ -1357,3 +1357,14 @@ def test_getPrimaryCategory_maps_legacy_ramp(js):
         + ")"
     )
     assert js.run(source) == "Ramp"
+
+
+def test_review_notes_round_trip(js):
+    assert js.run(
+        "(function(){var d = new __exposed.Deck(); d.reviewNotes = 'Squirrel tribal';"
+        "return d.toExport().reviewNotes;})()"
+    ) == "Squirrel tribal"
+    assert js.run(
+        "(function(){var d = new __exposed.Deck();"
+        "d.fromImport({reviewNotes: 'Rule 0 notes'}); return d.reviewNotes;})()"
+    ) == "Rule 0 notes"

@@ -258,7 +258,8 @@ Deck {
     "Maybeboard": [card],
     ...
   },
-  guideline: string | null // guideline template name
+  guideline: string | null, // guideline template name
+  reviewNotes: string      // Deck Doctor brief / Rule 0 notes
 }
 ```
 

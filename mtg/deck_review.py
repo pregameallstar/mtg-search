@@ -53,12 +53,15 @@ def fingerprint_options(options: Mapping[str, Any]) -> dict[str, Any]:
     """Only the options that affect the deck analysis/report fingerprint."""
     return {
         "target_bracket": options.get("target_bracket"),
-        "budget": options.get("budget"),
+        "brief": options.get("brief") or "",
         "currency": options.get("currency"),
         "use_llm": bool(options.get("use_llm")),
         "max_adds": options.get("max_adds"),
         "max_cuts": options.get("max_cuts"),
         "guideline": options.get("guideline"),
+        # Legacy fields remain in the fingerprint so old saved reviews keep
+        # matching until they are re-run.
+        "budget": options.get("budget"),
         "strategy": options.get("strategy"),
     }
 
@@ -121,6 +124,7 @@ def _deck_profile(deck: Mapping[str, Any], audit: Mapping[str, Any], options: Ma
     parts = [
         str(commander.get("name") or ""),
         str(commander.get("text") or ""),
+        str(options.get("brief") or ""),
         str(options.get("strategy") or ""),
     ]
     outline = deck.get("outline")
@@ -243,7 +247,6 @@ def candidate_adds(
         target_bracket = int(target_bracket) if target_bracket is not None else None
     except (TypeError, ValueError):
         target_bracket = None
-    budget = _number(options.get("budget"))
     store = str(options.get("currency") or "usd")
     max_mv = _number(options.get("max_mana_value")) or 7
     grouped: dict[str, list[dict[str, Any]]] = {role: [] for role in gaps}
@@ -276,8 +279,6 @@ def candidate_adds(
             if row.get("isGameChanger") or "Mass Land Denial" in roles:
                 continue
         price = _cached_price(str(row.get("scryfallId") or ""), store)
-        if budget is not None and price is not None and price > budget:
-            continue
         rank = _number(row.get("edhrecRank"))
         popularity = 0.5 if rank is None else max(0.0, 1.0 - min(rank, 100000) / 100000)
         score = 0.65 * float(result.get("score") or 0) + 0.20 + 0.15 * popularity
@@ -436,11 +437,11 @@ def _build_user_prompt(
         "cut_candidates": cuts,
         "options": {
             "target_bracket": options.get("target_bracket"),
-            "budget": options.get("budget"),
             "currency": options.get("currency"),
             "max_adds": options.get("max_adds", 10),
             "max_cuts": options.get("max_cuts", 10),
         },
+        "deck_brief": options.get("brief") or "",
         "outline": outline,
         "commander_eval_summary": eval_summary,
     }
@@ -515,6 +516,7 @@ def _verify_llm(
         },
         "deck_names": deck_names,
         "candidate_names": candidate_names,
+        "deck_brief": options.get("brief") or "",
         "analysis": analysis,
     }, indent=2)
     try:
@@ -666,7 +668,7 @@ def run_review_job(job_id: str, deck: Mapping[str, Any], options: Mapping[str, A
             "validation": validation,
             "options": {
                 "target_bracket": options.get("target_bracket"),
-                "budget": options.get("budget"),
+                "brief": options.get("brief") or "",
                 "currency": options.get("currency"),
                 "use_llm": bool(options.get("use_llm")),
                 "verify_llm": bool(options.get("verify_llm")),

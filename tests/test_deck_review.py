@@ -54,7 +54,7 @@ def test_candidate_adds_groups_real_cards(db, monkeypatch):
 
     monkeypatch.setattr(review.embed, "find", fake_find)
     candidates = review.candidate_adds(db, enriched, audit, {
-        "target_bracket": None, "budget": None, "currency": "usd",
+        "target_bracket": None, "currency": "usd",
     })
     names = {card["name"] for bucket in candidates.values() for card in bucket}
     assert "Rhystic Study" in names
@@ -159,3 +159,20 @@ def test_verify_llm_returns_warnings(monkeypatch):
     assert err is None
     assert result["warnings"]
     assert "Imaginary Card" in result["warnings"][0]
+
+
+def test_build_user_prompt_includes_deck_brief():
+    prompt = review._build_user_prompt(
+        _deck(),
+        {"counts": {}, "curve": {}, "roles": {}, "roleGaps": [],
+         "legality": {}, "bracket": {}, "health": {}},
+        {}, [],
+        {"brief": "Squirrel tribal. Rule 0: max 2 board wipes.", "target_bracket": 3},
+    )
+    assert '"deck_brief": "Squirrel tribal. Rule 0: max 2 board wipes."' in prompt
+
+
+def test_fingerprint_options_include_brief():
+    a = review.fingerprint_options({"brief": "A"})
+    b = review.fingerprint_options({"brief": "B"})
+    assert a["brief"] != b["brief"]

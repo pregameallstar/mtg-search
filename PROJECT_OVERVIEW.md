@@ -32,7 +32,7 @@ A self-hosted Magic: The Gathering card search engine, deck builder, and Command
   - **Guideline templates** — category targets (Ramp, Removal, Card Draw, etc.) with expected counts, used to score decks against deck-building standards
 - **Commander Finder** — browse commander-eligible cards by color identity, EDHREC popularity, partner/background status, or a strategy description (semantic when embeddings are available, text fallback otherwise).
 - **Deck versions & compare** — the Deck Builder History tab shows a change timeline, snapshots deck versions, restores snapshots, and diffs the current deck against a version. `/compare-decks` compares two saved decks: card additions/removals, quantity changes, commander, counts, health, bracket, and role deltas.
-- **Deck Doctor** — review a specific 100-card deck. A deterministic audit covers legality, curve, roles, health, and bracket/salt; embeddings retrieve real candidate cards grouped by role gap; an optional LLM writes a coaching report; every recommendation is validated against the deck and DB. Reports are saved in `deck_reviews/`, keyed by a deck fingerprint, and flagged stale when the deck changes. Reviews export as Markdown or HTML. An optional second LLM pass verifies the report.
+- **Deck Doctor** — review a specific 100-card deck. A deterministic audit covers legality, curve, roles, health, and bracket/salt; embeddings retrieve real candidate cards grouped by role gap; an optional LLM writes a coaching report; every recommendation is validated against the deck and DB. A free-form deck brief captures the strategy and Rule 0 constraints, and is used for candidate retrieval, LLM context, and fingerprinting. Reports are saved in `deck_reviews/`, keyed by a deck fingerprint, and flagged stale when the deck changes. Reviews export as Markdown or HTML. An optional second LLM pass verifies the report.
 - **MCP server** — expose `semantic_search`, `keyword_search`, `search_cards`, `get_card`, `list_decks`, and `get_deck` tools to LLM agents (Claude Code, OpenWebUI, etc.) via SSE + MCPO proxy.
 - **Database ingest** — drag-and-drop upload of MTGJSON `AllPrintings.sqlite` (or `.tar.gz`/`.zip` archives). Deduplication, validation, and embedding rebuild run automatically.
 - **Lazy image cache** — first card view fetches from Scryfall and caches locally. Subsequent views serve from disk.
@@ -164,11 +164,11 @@ The pipeline runs five steps:
 
 1. **Enrich** — load the deck and enrich each card from SQLite (text, legalities, EDHREC, salt, Game Changer, DFC faces).
 2. **Audit** — deterministic counts, curve, roles, role gaps, color identity, legality, health, and bracket/salt.
-3. **Candidates** — embedding retrieval finds real cards that fill role gaps, filtered by color identity, legality, mana value, target bracket, budget, and duplicate identity.
+3. **Candidates** — embedding retrieval finds real cards that fill role gaps, filtered by color identity, legality, mana value, target bracket, and duplicate identity, with the deck brief as retrieval and LLM context.
 4. **LLM review** — optional. The model chooses only from the candidate list and writes cuts, adds, mana-base notes, win conditions, bracket fit, and next steps.
 5. **Validate** — invalid adds/cuts are rejected; only real cards in the right deck/color identity survive.
 
-The page shows scorecards, cuts, adds with apply buttons, saved reviews, stale warnings, and validation notes. Nothing is applied automatically. Review reports live in `deck_reviews/` and are fingerprinted; export them as Markdown or HTML. An optional second LLM pass checks the report against the candidate list and deck.
+The page shows scorecards, cuts, adds with apply buttons, saved reviews with delete/load controls, stale warnings, validation notes, and a Deck Brief field for strategy or Rule 0 constraints. Nothing is applied automatically. Review reports live in `deck_reviews/` and are fingerprinted; export them as Markdown or HTML. An optional second LLM pass checks the report against the candidate list and deck.
 
 ### Card Detail
 

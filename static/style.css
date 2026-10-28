@@ -4211,3 +4211,31 @@ main:has(.card-templates-page) {
 .history-diff { margin-top: 0.75rem; padding: 0.6rem 0.75rem; background: var(--bg-card); border: 1px solid var(--border); border-radius: 7px; font-size: 0.74rem; }
 .history-diff h4 { margin: 0 0 0.35rem; font-size: 0.8rem; }
 .history-diff ul { margin: 0.2rem 0 0.5rem; padding-left: 1rem; }
+
+/* --- Deck Doctor deck brief --- */
+.review-brief-label { flex: 1 1 100%; }
+.review-brief-label textarea {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 4.5rem;
+    resize: vertical;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.5rem 0.6rem;
+    font: inherit;
+}
+
+.review-delete-report, .review-delete-current {
+    color: #f85149 !important;
+    border-color: #f85149 !important;
+}
+.review-delete-report {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.68rem;
+    padding: 0.12rem 0.4rem;
+}

@@ -19,7 +19,7 @@
             <select id="review-deck-name">
                 <option value="">Select a saved deck…</option>
                 {% for deck in decks %}
-                <option value="{{ deck.name }}" {% if deck.name == deck_name %}selected{% endif %}>
+                <option value="{{ deck.name }}" data-brief="{{ deck.brief | e }}" {% if deck.name == deck_name %}selected{% endif %}>
                     {{ deck.name }}{% if deck.commander %} — {{ deck.commander }}{% endif %} ({{ deck.count }} cards)
                 </option>
                 {% endfor %}
@@ -33,8 +33,9 @@
                 {% endfor %}
             </select>
         </label>
-        <label>Budget
-            <input type="number" id="review-budget" min="0" step="0.01" placeholder="optional">
+        <label class="review-brief-label">Deck brief
+            <textarea id="review-brief" rows="4" maxlength="4000"
+                      placeholder="Strategy, theme, or Rule 0 constraints — e.g. Squirrel tribal; max 2 board wipes and 2 counterspells; no infinite combos.">{{ selected_brief }}</textarea>
         </label>
         <label class="chip">
             <input type="checkbox" id="review-use-llm" checked> Use LLM
@@ -77,6 +78,8 @@
 (function () {
     'use strict';
     var deckInput = document.getElementById('review-deck-name');
+    var briefInput = document.getElementById('review-brief');
+    var briefTouched = false;
     var runBtn = document.getElementById('review-run-btn');
     var statusEl = document.getElementById('review-status');
     var progressEl = document.getElementById('review-progress');
@@ -114,6 +117,14 @@
         deckInput.value = name;
     }
 
+    function syncBrief(force) {
+        if (!briefInput) return;
+        if (force) briefTouched = false;
+        if (briefTouched) return;
+        var option = deckInput.selectedOptions && deckInput.selectedOptions[0];
+        briefInput.value = option && option.dataset ? (option.dataset.brief || '') : '';
+    }
+
     function refreshOpenDeck() {
         var link = document.getElementById('deck-review-open-deck');
         if (link && deckInput.value.trim()) {
@@ -135,13 +146,12 @@
         var options = {
             use_llm: document.getElementById('review-use-llm').checked,
             verify_llm: document.getElementById('review-verify-llm').checked,
-            target_bracket: document.getElementById('review-target-bracket').value || null,
-            budget: document.getElementById('review-budget').value || null
+            target_bracket: document.getElementById('review-target-bracket').value || null
         };
         fetch('/api/deck/review/run', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: name, options: options })
+            body: JSON.stringify({ name: name, brief: briefInput ? briefInput.value.trim() : '', options: options })
         })
         .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
         .then(function (res) {
@@ -300,13 +310,19 @@
         }
         html += '<div class="review-actions"><button type="button" id="review-save-btn" class="btn-secondary">Save review</button>' +
             '<button type="button" class="review-export-btn btn-secondary" data-format="markdown">Export Markdown</button>' +
-            '<button type="button" class="review-export-btn btn-secondary" data-format="html">Export HTML</button></div>';
+            '<button type="button" class="review-export-btn btn-secondary" data-format="html">Export HTML</button>' +
+            (currentFilename ? '<button type="button" id="review-delete-current" class="btn-secondary review-delete-current">Delete review</button>' : '') +
+            '</div>';
         resultEl.innerHTML = html;
         resultEl.hidden = false;
         var saveBtn = document.getElementById('review-save-btn');
         if (saveBtn) saveBtn.addEventListener('click', saveReview);
         resultEl.querySelectorAll('.review-export-btn').forEach(function (btn) {
             btn.addEventListener('click', function () { exportReview(btn.dataset.format); });
+        });
+        var deleteCurrent = document.getElementById('review-delete-current');
+        if (deleteCurrent) deleteCurrent.addEventListener('click', function () {
+            deleteReview(currentFilename);
         });
         resultEl.querySelectorAll('.review-apply-add').forEach(function (btn) {
             btn.addEventListener('click', function () {
@@ -364,6 +380,27 @@
         .catch(function (err) { setStatus(err.message, 'error'); });
     }
 
+    function deleteReview(filename) {
+        if (!filename) return;
+        if (!window.confirm('Delete this saved review?')) return;
+        fetch('/api/deck/review/delete', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({filename: filename})
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            if (data.error) throw new Error(data.error);
+            if (currentFilename === filename) {
+                currentFilename = null;
+                resultEl.hidden = true;
+            }
+            setStatus('Review deleted.', 'ok');
+            loadReports();
+        })
+        .catch(function (err) { setStatus(err.message, 'error'); });
+    }
+
     function exportReview(format) {
         var params = new URLSearchParams();
         params.set('format', format || 'markdown');
@@ -387,7 +424,9 @@
                     return '<li><button type="button" class="review-load-report" data-filename="' +
                         esc(report.filename) + '">' + esc(report.deck) + ' · ' + esc(report.verdict || 'Review') +
                         (report.stale ? ' · stale' : '') +
-                        '</button><span>' + esc(report.createdAt) + '</span></li>';
+                        '</button><span>' + esc(report.createdAt) + '</span>' +
+                        '<button type="button" class="review-delete-report" data-filename="' +
+                        esc(report.filename) + '">Delete</button></li>';
                 }).join('') + '</ul>';
                 reportsEl.querySelectorAll('.review-load-report').forEach(function (btn) {
                     btn.addEventListener('click', function () { loadSavedReport(btn.dataset.filename); });
@@ -405,7 +444,12 @@
                     setDeckValue(data.deck);
                     refreshOpenDeck();
                 }
+                if (data.options && typeof data.options.brief === 'string') {
+                    if (briefInput) briefInput.value = data.options.brief;
+                    briefTouched = true;
+                }
                 currentFilename = filename;
+                currentJob = null;
                 renderResult(data, !!data.stale);
                 setStatus(data.stale ? 'Loaded stale review. Re-run before applying.' : 'Loaded saved review.',
                     data.stale ? 'error' : 'ok');
@@ -413,9 +457,20 @@
             .catch(function (err) { setStatus(err.message, 'error'); });
     }
 
+    if (reportsEl) {
+        reportsEl.addEventListener('click', function (e) {
+            var btn = e.target.closest('.review-delete-report');
+            if (btn) deleteReview(btn.dataset.filename);
+        });
+    }
     runBtn.addEventListener('click', runReview);
-    deckInput.addEventListener('change', refreshOpenDeck);
+    deckInput.addEventListener('change', function () {
+        syncBrief(true);
+        refreshOpenDeck();
+    });
     deckInput.addEventListener('input', refreshOpenDeck);
+    if (briefInput) briefInput.addEventListener('input', function () { briefTouched = true; });
+    syncBrief(true);
     refreshOpenDeck();
     loadReports();
 })();

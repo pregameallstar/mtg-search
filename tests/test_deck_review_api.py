@@ -115,6 +115,8 @@ def test_review_save_list_load_delete(client, tmp_path):
 
     reports = client.get("/api/deck/review/reports?deck=Review Test").get_json()["reports"]
     assert any(report["filename"] == filename for report in reports)
+    page = client.get("/deck-review?deck=Review%20Test")
+    assert b"review-delete-report" in page.data
     report = client.get(f"/api/deck/review/report?filename={filename}")
     assert report.status_code == 200
     assert report.get_json()["deck"] == "Review Test"
@@ -206,3 +208,48 @@ def test_mcp_review_deck_deterministic(search_db_path, tmp_path, monkeypatch):
     assert "audit" in result
     assert result["audit"]["counts"]["total"] == 4
     assert "candidates" not in result
+
+
+def test_review_brief_is_persisted_with_deck(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(review_bp, "DECKS_DIR", str(tmp_path))
+    write_json_atomic(tmp_path / "Review_Test.json", _deck())
+    response = client.post("/api/deck/review/run", json={
+        "name": "Review Test",
+        "brief": "Squirrel tribal. Rule 0: max 2 board wipes.",
+        "options": {"use_llm": False},
+    })
+    job_id = response.get_json()["jobId"]
+    _wait_for_job(client, job_id)
+    saved = json.loads((tmp_path / "Review_Test.json").read_text())
+    assert saved["reviewNotes"] == "Squirrel tribal. Rule 0: max 2 board wipes."
+    result = client.get(f"/api/deck/review/result?jobId={job_id}").get_json()
+    assert result["options"]["brief"] == "Squirrel tribal. Rule 0: max 2 board wipes."
+
+
+def test_review_page_prefills_brief_from_deck(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(review_bp, "DECKS_DIR", str(tmp_path))
+    deck = _deck()
+    deck["reviewNotes"] = "Squirrel tribal."
+    write_json_atomic(tmp_path / "Review_Test.json", deck)
+    response = client.get("/deck-review")
+    assert b'id="review-brief"' in response.data
+    assert b'data-brief="Squirrel tribal."' in response.data
+
+
+def test_saved_review_stale_when_brief_changes(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(review_bp, "DECKS_DIR", str(tmp_path))
+    write_json_atomic(tmp_path / "Review_Test.json", _deck())
+    response = client.post("/api/deck/review/run", json={
+        "name": "Review Test",
+        "brief": "Squirrel tribal.",
+        "options": {"use_llm": False},
+    })
+    job_id = response.get_json()["jobId"]
+    _wait_for_job(client, job_id)
+    filename = client.post("/api/deck/review/save", json={"jobId": job_id}).get_json()["filename"]
+    assert client.get(f"/api/deck/review/report?filename={filename}").get_json()["stale"] is False
+
+    changed = json.loads((tmp_path / "Review_Test.json").read_text())
+    changed["reviewNotes"] = "Aristocrats."
+    write_json_atomic(tmp_path / "Review_Test.json", changed)
+    assert client.get(f"/api/deck/review/report?filename={filename}").get_json()["stale"] is True
