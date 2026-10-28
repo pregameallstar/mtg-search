@@ -15,7 +15,12 @@ import uuid
 
 from flask import session
 
-from mtg.prompts import COMMANDER_SYSTEM_PROMPT, DEEPDIVE_SYSTEM_PROMPT, VERIFY_SYSTEM_PROMPT
+from mtg.prompts import (
+    COMMANDER_SYSTEM_PROMPT,
+    DEEPDIVE_SYSTEM_PROMPT,
+    DECK_REVIEW_SYSTEM_PROMPT,
+    VERIFY_SYSTEM_PROMPT,
+)
 from mtg.shared import PROJECT_ROOT
 from mtg.storage import read_json, write_json_atomic
 
@@ -25,6 +30,7 @@ DEFAULT_PROMPTS = {
     "eval_prompt": COMMANDER_SYSTEM_PROMPT,
     "deepdive_prompt": DEEPDIVE_SYSTEM_PROMPT,
     "verify_prompt": VERIFY_SYSTEM_PROMPT,
+    "review_prompt": DECK_REVIEW_SYSTEM_PROMPT,
 }
 
 PROMPT_KEYS = tuple(DEFAULT_PROMPTS)

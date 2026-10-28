@@ -456,6 +456,9 @@
                 tags: c.tags || [],
                 note: c.note || '',
                 scryfallId: c.scryfallId || '',
+                roles: c.roles || [],
+                rolePrimary: c.rolePrimary || '',
+                rolesVersion: c.rolesVersion || 0,
             };
         };
 
@@ -808,6 +811,9 @@
     var similarPage = 1;
     var similarTotalPages = 0;
     var similarCardUrl = null;  // base URL for similar pagination
+    var deckAnalysis = null;
+    var analysisTimer = null;
+    var analysisRequestId = 0;
 
     /* ─── DOM References ─── */
     var $ = function (sel) { return document.querySelector(sel); };
@@ -1288,10 +1294,148 @@
         renderGuidelineProgress();
         renderDeckCost();
         updateDeckNameInput();
+        updateReviewTab();
         updatePricingStoreSelect();
         updateSectionIncludeCheckboxes();
         makeDeckCardRowsDraggable();
         initSectionDropZones();
+        scheduleDeckAnalysis();
+    }
+
+    function analysisPayload() {
+        return {
+            name: deck.name,
+            commander: deck.commander,
+            cards: deck.cards,
+            sections: deck.sections,
+            guideline: deck.guideline,
+            outline: deck.outline
+        };
+    }
+
+    function scheduleDeckAnalysis() {
+        if (analysisTimer) clearTimeout(analysisTimer);
+        if (!deck.commander && (!deck.cards || deck.cards.length === 0)) {
+            deckAnalysis = null;
+            renderDeckAnalysis(null);
+            return;
+        }
+        analysisTimer = setTimeout(runDeckAnalysis, 350);
+    }
+
+    function runDeckAnalysis() {
+        var requestId = ++analysisRequestId;
+        fetch('/api/deck/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ deck: analysisPayload() })
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            if (requestId !== analysisRequestId) return;
+            if (data.error || !data.audit) return;
+            deckAnalysis = data.audit;
+            applyAnalysisRoles(data.audit);
+            renderDeckAnalysis(data.audit);
+            renderGuidelineProgress();
+        })
+        .catch(function () { /* analysis is advisory; keep the deck usable */ });
+    }
+
+    function applyAnalysisRoles(audit) {
+        var byUuid = {};
+        var byName = {};
+        (audit.cardRoles || []).forEach(function (info) {
+            if (info.uuid) byUuid[info.uuid] = info;
+            if (info.name) byName[String(info.name).toLowerCase()] = info;
+        });
+        function apply(card) {
+            if (!card) return;
+            var info = (card.uuid && byUuid[card.uuid]) ||
+                byName[String(card.name || '').toLowerCase()];
+            if (!info) return;
+            card.roles = info.roles || [];
+            card.rolePrimary = info.primary || 'Core';
+            card.rolesVersion = audit.rolesVersion || 1;
+        }
+        apply(deck.commander);
+        (deck.cards || []).forEach(apply);
+        Object.keys(deck.sections || {}).forEach(function (name) {
+            (deck.sections[name] || []).forEach(apply);
+        });
+    }
+
+    function getCardRoles(card) {
+        if (card && card.roles && card.roles.length) return card.roles;
+        return [classifyCard(card)];
+    }
+
+    function getPrimaryCategory(card) {
+        if (card && card.rolePrimary) return card.rolePrimary;
+        var roles = getCardRoles(card);
+        var map = {
+            'Lands': 'Lands', 'Ramp': 'Ramp', 'Fast Mana': 'Ramp',
+            'Card Draw': 'Draw', 'Card Selection': 'Draw',
+            'Targeted Removal': 'Removal', 'Board Wipe': 'Removal',
+            'Counterspell': 'Removal'
+        };
+        for (var i = 0; i < roles.length; i++) {
+            if (map[roles[i]]) return map[roles[i]];
+        }
+        return 'Core';
+    }
+
+    function renderDeckAnalysis(audit) {
+        var panel = $('#deck-analysis');
+        if (!panel) return;
+        if (!audit) {
+            panel.hidden = true;
+            return;
+        }
+        panel.hidden = false;
+
+        var health = audit.health || {};
+        var healthEl = $('#deck-health-score');
+        if (healthEl) healthEl.textContent = health.score == null ? '--' : health.score;
+
+        var bracket = audit.bracket || {};
+        var salt = bracket.salt || {};
+        var badge = $('#deck-bracket-badge');
+        if (badge) {
+            var label = bracket.estimate == null ? 'Bracket unknown' : 'Est. bracket ' + bracket.estimate;
+            if (bracket.confidence) label += ' · ' + bracket.confidence;
+            if (salt.score != null) label += ' · Salt ' + salt.score;
+            badge.textContent = label;
+            badge.title = (bracket.signals || []).map(function (signal) {
+                return signal.label + ': ' + signal.count;
+            }).join('\n');
+        }
+
+        var rolesEl = $('#role-breakdown');
+        if (rolesEl) {
+            var gaps = audit.roleGaps || [];
+            var html = '';
+            gaps.forEach(function (gap) {
+                var target = gap.target || 0;
+                var actual = gap.actual || 0;
+                var pct = target > 0 ? Math.min(100, Math.round(actual / target * 100)) : (actual ? 100 : 0);
+                var cls = actual >= target ? 'surplus' : (actual >= target * 0.75 ? '' : 'under');
+                html += '<div class="role-row" title="' + escapeAttr(gap.role + ': ' + actual + ' / ' + target) + '">' +
+                    '<span class="role-row-label">' + escapeHtml(gap.role) + '</span>' +
+                    '<div class="role-row-track"><div class="role-row-fill ' + cls + '" style="width:' + pct + '%"></div></div>' +
+                    '<span class="role-row-count">' + actual + ' / ' + target + '</span>' +
+                '</div>';
+            });
+            rolesEl.innerHTML = html;
+        }
+
+        var warnEl = $('#deck-analysis-warnings');
+        if (warnEl) {
+            var warnings = (audit.legality && audit.legality.errors || []).concat(audit.warnings || []);
+            warnEl.innerHTML = warnings.slice(0, 4).map(function (warning) {
+                return '<div>⚠ ' + escapeHtml(warning.message || String(warning)) + '</div>';
+            }).join('');
+        }
     }
 
     function renderCommander() {
@@ -2008,7 +2152,7 @@
 
         // Classify all cards in the main deck (not sections, not commander)
         deck.cards.forEach(function(card) {
-            var cat = classifyCard(card);
+            var cat = getPrimaryCategory(card);
             if (counts.hasOwnProperty(cat)) {
                 counts[cat] += card.quantity || 1;
             }
@@ -2378,6 +2522,19 @@
         if (btn) btn.style.display = deck.name ? '' : 'none';
     }
 
+    function updateReviewTab() {
+        var link = $('#deck-review-link');
+        var hint = $('#deck-review-hint');
+        if (!link) return;
+        if (deck.name) {
+            link.href = '/deck-review?deck=' + encodeURIComponent(deck.name);
+            if (hint) hint.textContent = 'Review "' + deck.name + '" with the deterministic audit, candidate cards, and optional LLM report.';
+        } else {
+            link.href = '/deck-review';
+            if (hint) hint.textContent = 'Name and save the deck to open a review tied to its saved list.';
+        }
+    }
+
     function updateDeckNameInput() {
         var input = $('#deck-name');
         if (input && input !== document.activeElement) {
@@ -2582,134 +2739,169 @@
         });
     }
 
-    function runDeckSearch(page) {
-        page = page || 1;
-        var params = searchParams ? new URLSearchParams(searchParams.toString()) : new URLSearchParams();
+    function buildDeckSearchParams(page) {
+        // Pure-ish form serializer; exposed to the QuickJS harness.
+        var params = new URLSearchParams();
 
-        // Build search params only on fresh search (not page navigation)
-        if (!searchParams || page !== searchPage) {
-            // If navigating pages, re-use cached params
-            if (searchParams) {
-                params = new URLSearchParams(searchParams.toString());
-            } else {
-                // Text Search
-                var q = $('#deck-search-q').value.trim();
-                if (q) params.set('q', q);
+        var q = $('#deck-search-q').value.trim();
+        if (q) params.set('q', q);
 
-                var name = $('#deck-search-name').value.trim();
-                if (name) params.set('name', name);
+        var name = $('#deck-search-name').value.trim();
+        if (name) params.set('name', name);
 
-                var oracle = $('#deck-search-oracle').value.trim();
-                if (oracle) params.set('oracle', oracle);
+        var oracle = $('#deck-search-oracle').value.trim();
+        if (oracle) params.set('oracle', oracle);
 
-                var typeLine = $('#deck-search-type').value.trim();
-                if (typeLine) params.set('type_line', typeLine);
+        var typeLine = $('#deck-search-type').value.trim();
+        if (typeLine) params.set('type_line', typeLine);
 
-                var manaCost = $('#deck-search-mana_cost').value.trim();
-                if (manaCost) params.set('mana_cost', manaCost);
+        var manaCost = $('#deck-search-mana_cost').value.trim();
+        if (manaCost) params.set('mana_cost', manaCost);
 
-                var keywords = $('#deck-search-keywords').value.trim();
-                if (keywords) params.set('keywords', keywords);
+        var keywords = $('#deck-search-keywords').value.trim();
+        if (keywords) params.set('keywords', keywords);
 
-                var color = $('#deck-color').value;
-                if (color) {
-                    params.set('color', color);
-                    params.set('color_rule', $('#deck-color-rule').value);
-                }
-
-                var ci = $('#deck-ci').value;
-                if (ci) {
-                    params.set('ci', ci);
-                    params.set('ci_rule', $('#deck-ci-rule').value);
-                }
-
-                var mv = $('#deck-mv').value.trim();
-                if (mv) {
-                    params.set('mv', mv);
-                    params.set('mv_op', $('#deck-mv-op').value);
-                }
-
-                var powVal = $('#deck-pow').value.trim();
-                if (powVal) {
-                    params.set('pow', powVal);
-                    params.set('pow_op', $('#deck-pow-op').value);
-                }
-
-                var touVal = $('#deck-tou').value.trim();
-                if (touVal) {
-                    params.set('tou', touVal);
-                    params.set('tou_op', $('#deck-tou-op').value);
-                }
-
-                var loyVal = $('#deck-loy').value.trim();
-                if (loyVal) {
-                    params.set('loy', loyVal);
-                    params.set('loy_op', $('#deck-loy-op').value);
-                }
-
-                $$('#deck-rarity-chips input:checked').forEach(function (cb) {
-                    params.append('rarity', cb.value);
-                });
-
-                var setCode = $('#deck-set').value.trim();
-                if (setCode) params.set('set', setCode);
-
-                var format = $('#deck-format').value;
-                if (format) params.set('format', format);
-                var legality = $('#deck-legality').value;
-                if (legality) params.set('legality', legality);
-            }
-
-            params.set('unique', 'cards');
-
-            // Per-page
-            var perPageEl = $('#deck-search-per-page');
-            if (perPageEl) params.set('per_page', perPageEl.value);
-
-            searchParams = params;
+        var color = $('#deck-color').value;
+        if (color) {
+            params.set('color', color);
+            params.set('color_rule', $('#deck-color-rule').value);
         }
 
-        params.set('page', page);
+        var ci = $('#deck-ci').value;
+        if (ci) {
+            params.set('ci', ci);
+            params.set('ci_rule', $('#deck-ci-rule').value);
+        }
 
+        var mv = $('#deck-mv').value.trim();
+        if (mv) {
+            params.set('mv', mv);
+            params.set('mv_op', $('#deck-mv-op').value);
+        }
+
+        var powVal = $('#deck-pow').value.trim();
+        if (powVal) {
+            params.set('pow', powVal);
+            params.set('pow_op', $('#deck-pow-op').value);
+        }
+
+        var touVal = $('#deck-tou').value.trim();
+        if (touVal) {
+            params.set('tou', touVal);
+            params.set('tou_op', $('#deck-tou-op').value);
+        }
+
+        var loyVal = $('#deck-loy').value.trim();
+        if (loyVal) {
+            params.set('loy', loyVal);
+            params.set('loy_op', $('#deck-loy-op').value);
+        }
+
+        $$('#deck-rarity-chips input:checked').forEach(function (cb) {
+            params.append('rarity', cb.value);
+        });
+
+        var setCode = $('#deck-set').value.trim();
+        if (setCode) params.set('set', setCode);
+
+        var format = $('#deck-format').value;
+        if (format) params.set('format', format);
+        var legality = $('#deck-legality').value;
+        if (legality) params.set('legality', legality);
+
+        var perPageEl = $('#deck-search-per-page');
+        if (perPageEl) params.set('per_page', perPageEl.value);
+        if (page) params.set('page', page);
+        return params;
+    }
+
+    function searchResultCardHtml(card) {
+        var img = card.imageUrl
+            ? '<img src="' + escapeAttr(card.imageUrl) + '" alt="' + escapeAttr(card.name) +
+              '" loading="lazy" width="244" height="340">'
+            : '<div class="card-placeholder">' + escapeHtml(card.name) + '</div>';
+        var mana = card.manaCost
+            ? '<div class="cell-mana">' + renderManaSymbols(card.manaCost) + '</div>'
+            : '';
+        return '<div class="card-cell" data-set-code="' + escapeAttr(card.setCode || '') +
+            '" data-number="' + escapeAttr(card.number || '') + '">' +
+            img +
+            '<div class="cell-body">' +
+                '<div class="cell-name">' + escapeHtml(card.name || '') + '</div>' +
+                mana +
+                '<div class="cell-type">' + escapeHtml(card.type || '') + '</div>' +
+            '</div>' +
+        '</div>';
+    }
+
+    function renderDeckSearchResults(data) {
         var grid = $('#deck-search-results');
         var count = $('#deck-search-count');
+        if (grid) {
+            if (data.cards && data.cards.length) {
+                grid.innerHTML = data.cards.map(searchResultCardHtml).join('');
+                makeCardsDraggable(grid);
+            } else {
+                grid.innerHTML = '<div>No cards found.</div>';
+            }
+        }
+        if (count) {
+            count.textContent = data.total + ' card' + (data.total === 1 ? '' : 's') + ' found';
+        }
+        searchTotalPages = data.total_pages || 0;
+        searchPage = data.page || 1;
+        renderSearchPagination();
+    }
+
+    function runDeckSearch(page) {
+        page = page || 1;
+        var params = searchParams
+            ? new URLSearchParams(searchParams.toString())
+            : buildDeckSearchParams(page);
+        params.set('page', page);
+        searchParams = new URLSearchParams(params.toString());
+
+        var grid = $('#deck-search-results');
         var pagination = $('#deck-search-pagination');
         if (grid) grid.innerHTML = '<div class="panel-loading">Searching…</div>';
         if (pagination) pagination.innerHTML = '';
 
+        fetch('/api/search?' + params.toString())
+            .then(function (r) {
+                if (!r.ok) throw new Error('Search failed');
+                return r.json();
+            })
+            .then(renderDeckSearchResults)
+            .catch(function () {
+                // One-release fallback for the old HTML search path.
+                runDeckSearchLegacy(params);
+            });
+    }
+
+    function runDeckSearchLegacy(params) {
+        var grid = $('#deck-search-results');
+        var count = $('#deck-search-count');
+        var pagination = $('#deck-search-pagination');
         fetch('/search?' + params.toString())
             .then(function (r) { return r.text(); })
             .then(function (html) {
-                var parser = new DOMParser();
-                var doc = parser.parseFromString(html, 'text/html');
+                var doc = new DOMParser().parseFromString(html, 'text/html');
                 var results = doc.querySelector('.card-grid');
                 var resultCount = doc.querySelector('.result-count');
                 var pageCount = doc.querySelector('.pagination .page-indicator');
-
                 if (grid) {
-                    if (results) {
-                        grid.innerHTML = results.innerHTML;
-                        makeCardsDraggable(grid);
-                    } else {
-                        grid.innerHTML = '<div>No cards found.</div>';
-                    }
+                    grid.innerHTML = results ? results.innerHTML : '<div>No cards found.</div>';
+                    if (results) makeCardsDraggable(grid);
                 }
-                if (count) {
-                    count.textContent = resultCount ? resultCount.textContent : '';
-                }
-
-                // Extract total pages from the page indicator text "Page X of Y"
-                if (pageCount) {
-                    var m = pageCount.textContent.match(/of\s+(\d+)/);
-                    searchTotalPages = m ? parseInt(m[1], 10) : 0;
-                } else {
-                    searchTotalPages = 0;
-                }
-                searchPage = page;
+                if (count) count.textContent = resultCount ? resultCount.textContent : '';
+                var m = pageCount ? pageCount.textContent.match(/of\s+(\d+)/) : null;
+                searchTotalPages = m ? parseInt(m[1], 10) : 0;
+                searchPage = 1;
                 renderSearchPagination();
             })
             .catch(function () {
                 if (grid) grid.innerHTML = '<div>Search failed. Try again.</div>';
+                if (pagination) pagination.innerHTML = '';
             });
     }
 

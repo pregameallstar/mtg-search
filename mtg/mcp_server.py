@@ -28,8 +28,8 @@ DATABASE = os.environ.get("MTG_DATABASE", "AllPrintings.sqlite")
 
 mcp = FastMCP(
     "mtg-search",
-    instructions="""Magic: The Gathering card search engine with five tools:
-semantic_search, keyword_search, get_card, list_decks, and get_deck.
+    instructions="""Magic: The Gathering card search engine with six tools:
+semantic_search, keyword_search, search_cards, get_card, list_decks, and get_deck.
 
 CRITICAL — NO HALLUCINATION:
 - Every card name, mana value, color identity, type, and oracle text you
@@ -85,6 +85,11 @@ keyword_search — NOT just a fallback. It's the right tool when:
   - The query is structured attributes with no mechanical concept
   - semantic_search returned nothing and you need to try literal matching
   - You need exact text patterns in oracle text ("destroy target creature")
+
+search_cards — use for structured filters and sorting: color identity, mana
+  value range, rarity, format legality, Game Changer, EDHREC rank, salt, and
+  sort order. Prefer it over keyword_search when the query is attribute-heavy.
+
 
 get_card — fetch full details (rulings, legalities, P/T, loyalty, set info)
   by exact English name. Use after identifying candidates.
@@ -305,6 +310,89 @@ def keyword_search(
         ).fetchall()
 
         return [dict(r) for r in rows]
+    finally:
+        db.close()
+
+
+@mcp.tool()
+def search_cards(
+    query: str = "",
+    name: str = "",
+    oracle: str = "",
+    type_line: str = "",
+    color_identity: str = "",
+    color_identity_rule: str = "at_least",
+    mana_value_min: float = 0,
+    mana_value_max: float = 99,
+    rarity: str = "",
+    format: str = "",
+    game_changer: bool = False,
+    edhrec_max: int = 0,
+    salt_max: float = 0,
+    sort: str = "edhrec",
+    limit: int = 30,
+) -> list[dict]:
+    """Structured card search across the full local card database.
+
+    Unlike ``keyword_search``, this exposes the same filters as the web search
+    page: colors, mana value, rarity, format legality, Game Changer status,
+    EDHREC rank, salt, and sorting. Use it for attribute queries such as
+    "cheap blue interaction" or "commander-legal artifacts with MV <= 2".
+
+    Parameters:
+        query: free text across name/type/oracle.
+        name: card-name substring.
+        oracle: oracle-text substring.
+        type_line: type-line substring.
+        color_identity: subset colors, e.g. "WU", "UBR".
+        color_identity_rule: at_least / exact / at_most.
+        mana_value_min / mana_value_max: inclusive range.
+        rarity: comma-separated rarities, e.g. "rare,mythic".
+        format: format legality key, e.g. "commander", "modern".
+        game_changer: restrict to Game Changer cards.
+        edhrec_max: maximum EDHREC rank (lower is more popular).
+        salt_max: maximum EDHREC salt score.
+        sort: name / mv / edhrec / salt / newest / rarity.
+        limit: max results (1-50; default 30).
+
+    Results include name, mana cost/value, type, colors, color identity,
+    rarity, set, EDHREC rank/salt, and a Scryfall image URL. Use ``get_card``
+    for oracle text, rulings, and legalities.
+    """
+    from mtg.card_query import build_search_query, card_row_to_dict, run_search
+
+    args = {
+        "q": query,
+        "name": name,
+        "oracle": oracle,
+        "type_line": type_line,
+        "ci": color_identity,
+        "ci_rule": color_identity_rule,
+        "rarity": [r.strip() for r in rarity.split(",") if r.strip()],
+        "format": format,
+        "sort": sort,
+        "per_page": "50",
+    }
+    if mana_value_min and mana_value_max and mana_value_max < 99:
+        args["mv"] = f"{mana_value_min}-{mana_value_max}"
+    elif mana_value_min:
+        args["mv"] = str(mana_value_min)
+        args["mv_op"] = ">="
+    elif mana_value_max < 99:
+        args["mv"] = str(mana_value_max)
+        args["mv_op"] = "<="
+    if game_changer:
+        args["game_changer"] = "1"
+    if edhrec_max:
+        args["edhrec_max"] = str(edhrec_max)
+    if salt_max:
+        args["salt_max"] = str(salt_max)
+
+    db = _get_db()
+    try:
+        result = run_search(db, build_search_query(args))
+        cards = [card_row_to_dict(row) for row in result["results"]]
+        return cards[:max(1, min(int(limit), 50))]
     finally:
         db.close()
 

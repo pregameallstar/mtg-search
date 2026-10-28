@@ -279,3 +279,45 @@ def test_mcp_list_decks_counts_quantities(tmp_path, monkeypatch):
     assert rows[0]["card_count"] == 5
     assert rows[0]["total_count"] == 6
     assert rows[0]["sections"]["Sideboard"] == 4
+
+
+def test_deck_remove_card(tmp_path, monkeypatch):
+    monkeypatch.setattr(decks_module, "DECKS_DIR", str(tmp_path))
+    c = _client()
+    assert c.post("/api/deck/save", json={
+        "name": "Remove Test",
+        "cards": [{"name": "Sol Ring", "uuid": "u1", "quantity": 1, "setCode": "LTC", "number": "1"}],
+        "sections": {"Sideboard": [{"name": "Wrath of God", "uuid": "u2", "quantity": 1}]},
+    }).status_code == 200
+
+    rv = c.post("/api/deck/remove-card", json={"deck": "Remove Test", "name": "Sol Ring"})
+    assert rv.status_code == 200
+    saved = (tmp_path / "Remove_Test.json").read_text()
+    assert "Sol Ring" not in saved
+
+    rv = c.post("/api/deck/remove-card", json={
+        "deck": "Remove Test", "name": "Wrath of God", "section": "Sideboard",
+    })
+    assert rv.status_code == 200
+    assert c.post("/api/deck/remove-card", json={
+        "deck": "Remove Test", "name": "Missing",
+    }).status_code == 404
+
+
+def test_config_review_prompt_uses_server_store(tmp_path, monkeypatch):
+    monkeypatch.setattr(prompt_store, "PROMPTS_DIR", str(tmp_path))
+    c = _client()
+    c.get("/config/")
+    with c.session_transaction() as s:
+        token = s["_csrf_token"]
+    rv = c.post("/config/", data={
+        "csrf_token": token,
+        "save_review_prompt": "1",
+        "review_prompt": "CUSTOM REVIEW PROMPT",
+        "llm_backend": "openai",
+        "llm_base_url": "http://127.0.0.1:9/v1",
+        "llm_model": "m",
+    })
+    assert rv.status_code == 302
+    files = list(tmp_path.glob("*.json"))
+    assert files and json.loads(files[0].read_text())["review_prompt"] == "CUSTOM REVIEW PROMPT"

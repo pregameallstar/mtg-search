@@ -4,6 +4,8 @@
 <div class="search-page">
 
 <form action="/search" method="get" id="search-form" class="filter-form">
+    <input type="hidden" name="sort" value="{{ sort }}">
+    <input type="hidden" name="order" value="{{ order }}">
 
     {# --- Search help --- #}
     <details class="search-help" style="margin-bottom:1rem;font-size:0.8rem;color:var(--text-dim)">
@@ -175,11 +177,64 @@
         </div>
     </fieldset>
 
+    {# --- Advanced metadata filters --- #}
+    <details class="advanced-filters">
+        <summary>Advanced filters</summary>
+        <fieldset><legend>Metadata</legend>
+            <div class="field-row">
+                <label class="chip {% if game_changer %}active{% endif %}">
+                    <input type="checkbox" name="game_changer" value="1" {% if game_changer %}checked{% endif %}> Game Changer
+                </label>
+                <label>EDHREC top <input type="number" name="edhrec_max" value="{{ edhrec_max }}" min="1" placeholder="e.g. 500" style="width:7em"></label>
+                <label>EDHREC rank ≥ <input type="number" name="edhrec_min" value="{{ edhrec_min }}" min="0" placeholder="any" style="width:7em"></label>
+                <label>Salt ≥ <input type="number" step="0.01" name="salt_min" value="{{ salt_min }}" min="0" style="width:6em"></label>
+                <label>Salt ≤ <input type="number" step="0.01" name="salt_max" value="{{ salt_max }}" min="0" style="width:6em"></label>
+            </div>
+            <div class="field-row">
+                <label>Artist <input type="text" name="artist" value="{{ artist }}" placeholder="e.g. Nielsen"></label>
+                <label>Watermark <input type="text" name="watermark" value="{{ watermark }}" placeholder="e.g. Prophecy"></label>
+                <label>Set type <input type="text" name="set_type" value="{{ set_type }}" placeholder="e.g. commander"></label>
+            </div>
+            <div class="field-row">
+                <label>Released after <input type="date" name="release_after" value="{{ release_after }}"></label>
+                <label>Released before <input type="date" name="release_before" value="{{ release_before }}"></label>
+                <label>Produces <input type="text" name="produced_mana" value="{{ produced_mana }}" placeholder="e.g. W, U" style="width:7em"></label>
+                <label>Finish
+                    <select name="finish">
+                        <option value="">Any</option>
+                        {% for f in ['nonfoil','foil','etched'] %}
+                        <option value="{{ f }}" {% if finish==f %}selected{% endif %}>{{ f | capitalize }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+            </div>
+        </fieldset>
+        <fieldset><legend>Commander &amp; special printings</legend>
+            <div class="chip-row">
+                <label class="chip {% if commander_only %}active{% endif %}"><input type="checkbox" name="commander_only" value="1" {% if commander_only %}checked{% endif %}> Commander eligible</label>
+                <label class="chip {% if partner %}active{% endif %}"><input type="checkbox" name="partner" value="1" {% if partner %}checked{% endif %}> Partner / Background</label>
+                <label class="chip {% if is_timeshifted %}active{% endif %}"><input type="checkbox" name="is_timeshifted" value="1" {% if is_timeshifted %}checked{% endif %}> Timeshifted</label>
+                <label class="chip {% if is_story_spotlight %}active{% endif %}"><input type="checkbox" name="is_story_spotlight" value="1" {% if is_story_spotlight %}checked{% endif %}> Story spotlight</label>
+                <label class="chip {% if has_content_warning %}active{% endif %}"><input type="checkbox" name="has_content_warning" value="1" {% if has_content_warning %}checked{% endif %}> Content warning</label>
+            </div>
+        </fieldset>
+    </details>
+
     <div class="advanced-actions">
         <button type="submit">Search</button>
+        <button type="button" class="btn-secondary" onclick="jumpRandom()">Random</button>
         <a href="/search" class="btn-secondary">Reset All</a>
     </div>
 </form>
+
+<details class="saved-searches">
+    <summary>Saved searches</summary>
+    <div class="saved-search-actions">
+        <button type="button" id="save-search-btn" class="btn-secondary">Save current search</button>
+        <span id="saved-search-status" class="saved-search-status"></span>
+    </div>
+    <ul id="saved-search-list" class="saved-search-list"></ul>
+</details>
 
 {# --- Active filter badges --- #}
 {% set badges = [] %}
@@ -209,6 +264,23 @@
 {% if border %}{{ badges.append('Border: ' + border) or '' }}{% endif %}
 {% if layout %}{{ badges.append('Layout: ' + layout) or '' }}{% endif %}
 {% if frame %}{{ badges.append('Frame: ' + frame) or '' }}{% endif %}
+{% if game_changer %}{{ badges.append('Game Changer') or '' }}{% endif %}
+{% if edhrec_max %}{{ badges.append('EDHREC top ' + edhrec_max) or '' }}{% endif %}
+{% if edhrec_min %}{{ badges.append('EDHREC rank ≥ ' + edhrec_min) or '' }}{% endif %}
+{% if salt_min %}{{ badges.append('Salt ≥ ' + salt_min) or '' }}{% endif %}
+{% if salt_max %}{{ badges.append('Salt ≤ ' + salt_max) or '' }}{% endif %}
+{% if artist %}{{ badges.append('Artist: ' + artist) or '' }}{% endif %}
+{% if watermark %}{{ badges.append('Watermark: ' + watermark) or '' }}{% endif %}
+{% if set_type %}{{ badges.append('Set type: ' + set_type) or '' }}{% endif %}
+{% if release_after %}{{ badges.append('After ' + release_after) or '' }}{% endif %}
+{% if release_before %}{{ badges.append('Before ' + release_before) or '' }}{% endif %}
+{% if produced_mana %}{{ badges.append('Produces: ' + produced_mana) or '' }}{% endif %}
+{% if finish %}{{ badges.append('Finish: ' + finish) or '' }}{% endif %}
+{% if commander_only %}{{ badges.append('Commander eligible') or '' }}{% endif %}
+{% if partner %}{{ badges.append('Partner / Background') or '' }}{% endif %}
+{% if is_timeshifted %}{{ badges.append('Timeshifted') or '' }}{% endif %}
+{% if is_story_spotlight %}{{ badges.append('Story spotlight') or '' }}{% endif %}
+{% if has_content_warning %}{{ badges.append('Content warning') or '' }}{% endif %}
 {% if badges %}
 <div class="active-filters">
     {% for b in badges %}<span class="filter-badge">{{ b }}</span>{% endfor %}
@@ -216,15 +288,30 @@
 </div>
 {% endif %}
 
-<p class="result-count">
-    {% if total > 0 %}
-        {{ total }} card{{ 's' if total != 1 else '' }} found
-    {% elif has_filters %}
-        No results found — try adjusting your filters
-    {% else %}
-        Enter a search query to find cards
-    {% endif %}
-</p>
+<div class="search-toolbar">
+    <p class="result-count">
+        {% if total > 0 %}
+            {{ total }} card{{ 's' if total != 1 else '' }} found{% if random_sample %} (random sample){% endif %}
+        {% elif has_filters %}
+            No results found — try adjusting your filters
+        {% else %}
+            Enter a search query to find cards
+        {% endif %}
+    </p>
+    <div class="sort-controls">
+        <label for="search-sort-select">Sort:</label>
+        <select id="search-sort-select" onchange="jumpSort(this.value)">
+            {% for value, label in [('name','Name'),('mv','Mana Value'),('edhrec','EDHREC'),('salt','Salt'),('newest','Newest'),('rarity','Rarity'),('random','Random')] %}
+            <option value="{{ value }}" {% if sort==value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+        </select>
+        <label for="search-order-select">Order:</label>
+        <select id="search-order-select" onchange="jumpOrder(this.value)" {% if sort=='random' %}disabled{% endif %}>
+            <option value="asc" {% if order=='asc' %}selected{% endif %}>Ascending</option>
+            <option value="desc" {% if order=='desc' %}selected{% endif %}>Descending</option>
+        </select>
+    </div>
+</div>
 
 <div class="card-grid">
     {% for c in results %}
@@ -235,11 +322,18 @@
         {% else %}
         <div class="card-placeholder">{{ c['name'] }}</div>
         {% endif %}
+        <div class="cell-body">
+            <div class="cell-name">{{ c['name'] }}</div>
+            {% if c['manaCost'] %}<div class="cell-mana">{{ render_mana(c['manaCost']) | safe }}</div>{% endif %}
+            <div class="cell-type">{{ c['type'] or '' }}</div>
+        </div>
     </div>
     {% endfor %}
 </div>
 
-{% if total_pages > 1 %}
+{% if random_sample %}
+<div class="random-sample-note">Showing a random sample of {{ results|length }} of {{ total }} matching cards. Refresh for a new sample.</div>
+{% elif total_pages > 1 %}
 <div class="pagination">
     {% if page > 1 %}
     <a href="{{ pagination_url(request.args, page - 1) }}" class="page prev">← Previous</a>
@@ -348,6 +442,26 @@ function syncColorChips(el, field) {
     });
     document.getElementById(field).value = vals.join('');
 }
+function jumpSort(value) {
+    var url = new URL(window.location.href);
+    url.searchParams.set('sort', value);
+    url.searchParams.delete('page');
+    if (value === 'random') url.searchParams.delete('order');
+    window.location.href = url.toString();
+}
+function jumpOrder(value) {
+    var url = new URL(window.location.href);
+    url.searchParams.set('order', value);
+    url.searchParams.delete('page');
+    window.location.href = url.toString();
+}
+function jumpRandom() {
+    var url = new URL(window.location.href);
+    url.searchParams.set('sort', 'random');
+    url.searchParams.delete('order');
+    url.searchParams.delete('page');
+    window.location.href = url.toString();
+}
 function clearResults() {
     // Keep all filter form fields as-is, just remove results, badges, and count
     var el;
@@ -381,6 +495,63 @@ document.addEventListener('keydown', function(e) {
         jumpPage(document.activeElement.value, parseInt(document.activeElement.max, 10));
     }
 });
+
+// --- Saved searches (localStorage; no server write surface) ---
+(function() {
+    var KEY = 'mtg-search:saved-searches';
+    var listEl = document.getElementById('saved-search-list');
+    var saveBtn = document.getElementById('save-search-btn');
+    var statusEl = document.getElementById('saved-search-status');
+    if (!listEl || !saveBtn) return;
+
+    function read() {
+        try {
+            var data = JSON.parse(localStorage.getItem(KEY) || '[]');
+            return Array.isArray(data) ? data : [];
+        } catch (e) { return []; }
+    }
+    function write(items) {
+        localStorage.setItem(KEY, JSON.stringify(items.slice(0, 20)));
+    }
+    function render() {
+        var items = read();
+        listEl.innerHTML = '';
+        if (!items.length) {
+            listEl.innerHTML = '<li class="saved-search-empty">No saved searches yet.</li>';
+            return;
+        }
+        items.forEach(function(item, index) {
+            var li = document.createElement('li');
+            var a = document.createElement('a');
+            a.href = '/search' + item.query;
+            a.textContent = item.name;
+            var del = document.createElement('button');
+            del.type = 'button';
+            del.className = 'saved-search-delete';
+            del.textContent = 'Delete';
+            del.addEventListener('click', function() {
+                var next = read();
+                next.splice(index, 1);
+                write(next);
+                render();
+            });
+            li.appendChild(a);
+            li.appendChild(del);
+            listEl.appendChild(li);
+        });
+    }
+    saveBtn.addEventListener('click', function() {
+        var name = window.prompt('Name this search:');
+        if (!name) return;
+        var items = read();
+        items.unshift({ name: name, query: window.location.search || '' });
+        write(items);
+        if (statusEl) statusEl.textContent = 'Saved.';
+        render();
+        setTimeout(function() { if (statusEl) statusEl.textContent = ''; }, 2000);
+    });
+    render();
+})();
 </script>
 <div id="search-loading" style="display:none;text-align:center;padding:2rem;color:var(--text-dim)">
     <div class="spinner" style="margin:0 auto 0.5rem"></div>

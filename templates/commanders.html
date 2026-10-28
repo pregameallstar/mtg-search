@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}Commander Finder — MTG Search{% endblock %}
+{% block content %}
+<div class="commanders-page">
+    <h1>Commander Finder</h1>
+    <p class="commanders-intro">
+        Browse commander-eligible cards by color identity, popularity, or a
+        description of what you want the deck to do.
+    </p>
+
+    <form action="/commanders" method="get" class="filter-form commanders-form">
+        <fieldset><legend>Commander search</legend>
+            <div class="field-row">
+                <label>Strategy / mechanics
+                    <input type="text" name="q" value="{{ q }}" placeholder="e.g. sacrifice creatures to drain opponents">
+                </label>
+                <label>EDHREC top
+                    <input type="number" name="edhrec_max" value="{{ edhrec_max }}" min="1" placeholder="e.g. 500" style="width:7em">
+                </label>
+            </div>
+            <div class="field-row">
+                <label>Color identity</label>
+                <div class="color-chips multi" data-target="commander-ci">
+                    {% for c, name in [('W','White'),('U','Blue'),('B','Black'),('R','Red'),('G','Green')] %}
+                    <label class="chip color-{{ c.lower() }} {% if c in ci %}active{% endif %}">
+                        <input type="checkbox" class="commander-ci-cb" value="{{ c }}"
+                               {% if c in ci %}checked{% endif %}
+                               onchange="syncCommanderCI(this)">
+                        <span class="ms ms-{{ c.lower() }}"></span> {{ name }}
+                    </label>
+                    {% endfor %}
+                </div>
+                <input type="hidden" name="ci" id="commander-ci" value="{{ ci }}">
+            </div>
+            <div class="field-row">
+                <label class="chip {% if partner %}active{% endif %}">
+                    <input type="checkbox" name="partner" value="1" {% if partner %}checked{% endif %}>
+                    Partner / Background
+                </label>
+                <label>Sort
+                    <select name="sort">
+                        {% for value, label in [('edhrec','EDHREC'),('name','Name'),('mv','Mana Value')] %}
+                        <option value="{{ value }}" {% if sort==value %}selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <label>Per page
+                    <select name="per_page">
+                        {% for n in [10, 25, 30, 50] %}
+                        <option value="{{ n }}" {% if per_page==n %}selected{% endif %}>{{ n }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+            </div>
+            <div class="advanced-actions">
+                <button type="submit">Find commanders</button>
+                <a href="/commanders" class="btn-secondary">Reset</a>
+            </div>
+        </fieldset>
+    </form>
+
+    <p class="result-count">
+        {% if total > 0 %}
+            {{ total }} commander{{ 's' if total != 1 else '' }} found
+            {% if method == 'embed' %}<span class="commander-method">· ranked by strategy match</span>{% endif %}
+        {% else %}
+            No commanders found — try adjusting the filters.
+        {% endif %}
+    </p>
+
+    <div class="card-grid">
+        {% for c in commanders %}
+        <div class="card-cell" data-set-code="{{ c.setCode }}" data-number="{{ c.number }}">
+            {% if c.imageUrl %}
+            <img src="{{ c.imageUrl }}" alt="{{ c.name }}" loading="lazy" width="244" height="340">
+            {% else %}
+            <div class="card-placeholder">{{ c.name }}</div>
+            {% endif %}
+            <div class="cell-body">
+                <div class="cell-name">{{ c.name }}</div>
+                {% if c.manaCost %}<div class="cell-mana">{{ render_mana(c.manaCost) | safe }}</div>{% endif %}
+                <div class="cell-type">{{ c.type }}</div>
+                <div class="commander-meta">
+                    {% if c.edhrecRank %}<span>EDHREC #{{ c.edhrecRank }}</span>{% endif %}
+                    {% if c.colorIdentity %}<span>{{ c.colorIdentity }}</span>{% endif %}
+                </div>
+                <div class="commander-links">
+                    <a href="/card/{{ c.setCode }}/{{ c.number }}">Card</a>
+                    <a href="/card/{{ c.setCode }}/{{ c.number }}/similar">Similar</a>
+                    <a href="/card/{{ c.setCode }}/{{ c.number }}/eval">Eval</a>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    {% if total_pages > 1 %}
+    <div class="pagination">
+        {% if page > 1 %}
+        <a href="{{ commanders_page_url(request.args, page - 1) }}" class="page prev">← Previous</a>
+        {% else %}
+        <span class="page prev disabled">← Previous</span>
+        {% endif %}
+        <span class="page-indicator">Page {{ page }} of {{ total_pages }}</span>
+        {% if page < total_pages %}
+        <a href="{{ commanders_page_url(request.args, page + 1) }}" class="page next">Next →</a>
+        {% else %}
+        <span class="page next disabled">Next →</span>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+
+<script>
+function syncCommanderCI(el) {
+    var vals = [];
+    document.querySelectorAll('.commander-ci-cb:checked').forEach(function (cb) {
+        vals.push(cb.value);
+    });
+    document.getElementById('commander-ci').value = vals.join('');
+    el.closest('.chip').classList.toggle('active', el.checked);
+}
+</script>
+{% endblock %}

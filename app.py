@@ -105,6 +105,8 @@ from mtg.blueprints.similar import similar_bp
 from mtg.blueprints.config import config_bp
 from mtg.blueprints.eval import eval_bp
 from mtg.blueprints.eval_landing import eval_landing_bp
+from mtg.blueprints.deck_analysis import deck_analysis_bp
+from mtg.blueprints.deck_review import deck_review_bp
 from mtg.blueprints.decks import decks_bp
 from mtg.blueprints.templates_bp import templates_bp
 from mtg.blueprints.tags import tags_bp
@@ -115,6 +117,8 @@ app.register_blueprint(similar_bp)
 app.register_blueprint(config_bp)
 app.register_blueprint(eval_bp)
 app.register_blueprint(eval_landing_bp)
+app.register_blueprint(deck_analysis_bp)
+app.register_blueprint(deck_review_bp)
 app.register_blueprint(decks_bp)
 app.register_blueprint(templates_bp)
 app.register_blueprint(tags_bp)

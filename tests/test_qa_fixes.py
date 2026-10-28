@@ -223,9 +223,9 @@ def test_q2_sanitizer_documented():
 def test_q3_default_per_page_constant():
     assert DEFAULT_PER_PAGE == 30
     shared = open("mtg/shared.py").read()
-    search = open("mtg/blueprints/search.py").read()
+    query = open("mtg/card_query.py").read()
     assert "DEFAULT_PER_PAGE = 30" in shared
-    assert "DEFAULT_PER_PAGE" in search
+    assert "DEFAULT_PER_PAGE" in query
     # No hardcoded 30 left in pagination_url:
     assert 'per_page=30"' not in shared
 
@@ -235,9 +235,9 @@ def test_q3_default_per_page_constant():
 # --------------------------------------------------------------------------- #
 
 def test_q4_rarity_games_use_getlist():
-    src = open("mtg/blueprints/search.py").read()
-    assert 'request.args.getlist("rarity")' in src
-    assert 'request.args.getlist("game")' in src
+    src = open("mtg/card_query.py").read()
+    assert '_getlist(args, "rarity")' in src
+    assert '_getlist(args, "game")' in src
 
 
 # --------------------------------------------------------------------------- #

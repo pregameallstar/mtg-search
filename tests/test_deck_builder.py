@@ -68,6 +68,9 @@ _EXPOSE_JS = """    // ── test harness: expose pure logic (closure-aware) �
     globalThis.__exposed = {
         parseTypes: parseTypes,
         classifyCard: classifyCard,
+        getCardRoles: getCardRoles,
+        getPrimaryCategory: getPrimaryCategory,
+        searchResultCardHtml: searchResultCardHtml,
         Deck: Deck,
         getSectionKey: getSectionKey,
         sortCardsForDisplay: sortCardsForDisplay,
@@ -1282,3 +1285,75 @@ def test_extractScryfallIdFromTransfer_file_fallback(js):
         return __exposed._extractScryfallIdFromTransfer(dt);
     })()""")
     assert r == "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+
+# --------------------------------------------------------------------------- #
+# Search 2.0 JSON result rendering
+# --------------------------------------------------------------------------- #
+
+def test_search_result_card_html_has_deck_drag_attributes(js):
+    source = (
+        "__exposed.searchResultCardHtml("
+        + js_card(card(name="Sol Ring", setCode="LTC", number="1",
+                       manaCost="{1}", type="Artifact",
+                       imageUrl="/img/normal/front/0/0/x.jpg"))
+        + ")"
+    )
+    rendered = js.run(source)
+    assert 'class="card-cell"' in rendered
+    assert 'data-set-code="LTC"' in rendered
+    assert 'data-number="1"' in rendered
+    assert "Sol Ring" in rendered
+    assert "Artifact" in rendered
+    assert "ms ms-1" in rendered
+
+
+def test_search_result_card_html_escapes_text(js):
+    source = (
+        "__exposed.searchResultCardHtml("
+        + js_card(card(name="<script>alert(1)</script>", setCode="SET", number="1"))
+        + ")"
+    )
+    rendered = js.run(source)
+    assert "<script>" not in rendered
+    assert "&lt;script&gt;" in rendered
+
+
+# --------------------------------------------------------------------------- #
+# Role panel compatibility
+# --------------------------------------------------------------------------- #
+
+def test_getCardRoles_uses_server_roles(js):
+    source = (
+        "__exposed.getCardRoles("
+        + js_card(card(roles=["Ramp", "Fast Mana"], rolePrimary="Ramp"))
+        + ")"
+    )
+    assert js.run(source) == ["Ramp", "Fast Mana"]
+
+
+def test_getCardRoles_falls_back_to_legacy_classifier(js):
+    rendered = js.run(
+        "__exposed.getCardRoles("
+        + js_card(card(text="{T}: Add {G}.", types="Creature"))
+        + ")"
+    )
+    assert rendered == ["Ramp"]
+
+
+def test_getPrimaryCategory_prefers_server_primary(js):
+    source = (
+        "__exposed.getPrimaryCategory("
+        + js_card(card(roles=["Tutor"], rolePrimary="Core"))
+        + ")"
+    )
+    assert js.run(source) == "Core"
+
+
+def test_getPrimaryCategory_maps_legacy_ramp(js):
+    source = (
+        "__exposed.getPrimaryCategory("
+        + js_card(card(text="{T}: Add {G}.", types="Creature"))
+        + ")"
+    )
+    assert js.run(source) == "Ramp"

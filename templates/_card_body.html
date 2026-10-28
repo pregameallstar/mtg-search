@@ -21,6 +21,16 @@
 
     <p class="card-type-line">{{ card['type'] }}</p>
 
+    {% if role_info and role_info.roles %}
+    <div class="card-role-chips">
+        {% for role in role_info.roles %}
+        <span class="card-role-chip" title="{{ role_info.evidence | selectattr('role', 'equalto', role) | map(attribute='reason') | join('; ') }}">{{ role }}</span>
+        {% endfor %}
+        {% if card['isGameChanger'] %}<span class="card-role-chip card-role-gamechanger">Game Changer</span>{% endif %}
+        {% if card['edhrecSaltiness'] %}<span class="card-role-chip" title="EDHREC salt score">Salt {{ '%.2f' | format(card['edhrecSaltiness']) }}</span>{% endif %}
+    </div>
+    {% endif %}
+
     {% if card['text'] %}
     <div class="oracle-text">{{ card['text'] | e | replace('\n', '<br>') | safe }}</div>
     {% endif %}

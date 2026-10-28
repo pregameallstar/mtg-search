@@ -3898,3 +3898,247 @@ main:has(.card-templates-page) {
 }
 
 
+
+/* --- Search 2.0: toolbar, card metadata, advanced/saved searches --- */
+.search-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+}
+.search-toolbar .result-count { margin-bottom: 0; }
+.sort-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+    color: var(--text-dim);
+    font-size: 0.82rem;
+}
+.sort-controls select,
+.advanced-filters input,
+.advanced-filters select {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: var(--text);
+    padding: 0.25rem 0.4rem;
+    font-size: 0.82rem;
+}
+.advanced-filters {
+    margin-bottom: 0.85rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.6rem 0.85rem;
+}
+.advanced-filters > summary {
+    cursor: pointer;
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+.advanced-filters fieldset { margin-top: 0.75rem; }
+.saved-searches {
+    margin: 0.75rem 0 1.25rem;
+    font-size: 0.82rem;
+    color: var(--text-dim);
+}
+.saved-searches > summary { cursor: pointer; }
+.saved-search-actions { display: flex; align-items: center; gap: 0.6rem; margin: 0.6rem 0; }
+.saved-search-status { color: var(--accent); }
+.saved-search-list { list-style: none; margin: 0; padding: 0; }
+.saved-search-list li {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.3rem 0;
+    border-bottom: 1px solid var(--border);
+}
+.saved-search-list a { color: var(--text); text-decoration: none; }
+.saved-search-list a:hover { color: var(--accent); }
+.saved-search-delete {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 0.72rem;
+    padding: 0.15rem 0.4rem;
+}
+.saved-search-empty { color: var(--text-dim); }
+.random-sample-note {
+    color: var(--text-dim);
+    text-align: center;
+    margin-top: 1.5rem;
+    font-size: 0.85rem;
+}
+.card-cell .cell-body {
+    width: 100%;
+    padding: 0.45rem 0.55rem 0.6rem;
+    box-sizing: border-box;
+    text-align: left;
+}
+.card-cell .cell-name {
+    font-size: 0.88rem;
+    font-weight: 600;
+    margin-bottom: 0.1rem;
+}
+.card-cell .cell-mana { font-size: 0.8rem; margin-bottom: 0.1rem; }
+.card-cell .cell-type {
+    color: var(--text-dim);
+    font-size: 0.72rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* --- Commander Finder --- */
+.commanders-page h1 { margin-bottom: 0.35rem; }
+.commanders-intro { color: var(--text-dim); max-width: 70ch; margin-bottom: 1.25rem; }
+.commanders-form { margin-bottom: 1rem; }
+.commander-meta {
+    display: flex;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    color: var(--text-dim);
+    font-size: 0.7rem;
+    margin-top: 0.25rem;
+}
+.commander-links { display: flex; gap: 0.6rem; margin-top: 0.35rem; font-size: 0.72rem; }
+.commander-links a { color: var(--accent); text-decoration: none; }
+.commander-links a:hover { text-decoration: underline; }
+.commander-method { color: var(--accent); font-size: 0.78rem; }
+
+/* --- Deck analysis: roles, health, bracket --- */
+.deck-analysis {
+    margin: 0.85rem 0;
+    padding: 0.75rem 0.85rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+}
+.deck-analysis-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.55rem;
+}
+.deck-analysis-health { font-size: 0.8rem; color: var(--text-dim); }
+.deck-analysis-health strong { color: var(--text); font-size: 1.15rem; }
+.deck-analysis-label { margin-right: 0.3rem; }
+.deck-analysis-out-of { color: var(--text-dim); font-size: 0.72rem; }
+.deck-analysis-bracket {
+    font-size: 0.75rem;
+    color: var(--accent);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.2rem 0.55rem;
+}
+.role-breakdown { display: grid; gap: 0.28rem; }
+.role-row {
+    display: grid;
+    grid-template-columns: minmax(90px, 1.4fr) 2fr auto;
+    gap: 0.5rem;
+    align-items: center;
+    font-size: 0.72rem;
+    color: var(--text-dim);
+}
+.role-row-label { color: var(--text); }
+.role-row-track { height: 5px; background: var(--bg); border-radius: 999px; overflow: hidden; }
+.role-row-fill { height: 100%; background: var(--accent); opacity: 0.75; }
+.role-row-fill.under { background: #d29922; }
+.role-row-fill.surplus { background: #3fb950; }
+.role-row-count { font-variant-numeric: tabular-nums; }
+.deck-analysis-warnings {
+    margin-top: 0.5rem;
+    font-size: 0.7rem;
+    color: #d29922;
+}
+.deck-analysis-warnings div { margin-top: 0.15rem; }
+
+/* --- Card detail role chips --- */
+.card-role-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    margin: 0.35rem 0 0.55rem;
+}
+.card-role-chip {
+    display: inline-block;
+    padding: 0.12rem 0.45rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--bg-card);
+    color: var(--text-dim);
+    font-size: 0.7rem;
+}
+.card-role-gamechanger { color: #f0b429; border-color: #f0b429; }
+
+/* --- Deck Doctor --- */
+.deck-review-page { max-width: 1120px; margin: 0 auto; }
+.deck-review-header { display: flex; justify-content: space-between; gap: 1rem; align-items: flex-start; flex-wrap: wrap; }
+.deck-review-header h1 { margin-bottom: 0.25rem; }
+.deck-review-intro { color: var(--text-dim); max-width: 75ch; margin-bottom: 1rem; }
+.deck-review-form {
+    display: flex; gap: 0.75rem; align-items: end; flex-wrap: wrap;
+    padding: 0.9rem 1rem; background: var(--bg-card);
+    border: 1px solid var(--border); border-radius: 9px; margin-bottom: 1rem;
+}
+.deck-review-form label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.78rem; color: var(--text-dim); }
+.deck-review-form input, .deck-review-form select {
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 5px; padding: 0.35rem 0.45rem; font-size: 0.82rem;
+}
+.deck-review-form input[type=text] { min-width: 230px; }
+.deck-review-status { margin: 0.5rem 0; font-size: 0.82rem; color: var(--text-dim); }
+.deck-review-status.error { color: #f85149; }
+.deck-review-status.ok { color: #3fb950; }
+.deck-review-progress { margin: 0.75rem 0 1rem; font-size: 0.78rem; color: var(--text-dim); }
+.deck-review-progress-track { height: 6px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 999px; overflow: hidden; margin-bottom: 0.35rem; }
+#review-progress-fill { height: 100%; width: 5%; background: var(--accent); transition: width 0.2s ease; }
+.review-hero { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; padding: 1rem; background: var(--bg-card); border: 1px solid var(--border); border-radius: 9px; margin-bottom: 1rem; }
+.review-kicker { color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.68rem; }
+.review-hero h2 { margin: 0.2rem 0 0.4rem; }
+.review-hero p { margin: 0; color: var(--text-dim); max-width: 80ch; }
+.review-score { text-align: right; min-width: 120px; }
+.review-score strong { font-size: 2rem; color: var(--accent); }
+.review-score span { display: block; color: var(--text-dim); font-size: 0.72rem; }
+.review-bracket { margin-top: 0.4rem; font-size: 0.75rem; color: var(--text); }
+.review-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+.review-cards section, .deck-review-result > section { background: var(--bg-card); border: 1px solid var(--border); border-radius: 9px; padding: 0.85rem 1rem; margin-bottom: 1rem; }
+.deck-review-result h3 { margin: 0 0 0.45rem; font-size: 0.92rem; }
+.review-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.45rem; }
+.review-list li { display: flex; flex-direction: column; gap: 0.15rem; font-size: 0.8rem; }
+.review-list li span { color: var(--text-dim); font-size: 0.76rem; }
+.review-gaps { display: grid; gap: 0.3rem; }
+.review-gaps div { display: flex; justify-content: space-between; font-size: 0.78rem; color: var(--text-dim); border-bottom: 1px solid var(--border); padding-bottom: 0.2rem; }
+.review-gaps strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.review-warning { border-color: #d29922 !important; }
+.review-actions { margin: 1rem 0 2rem; }
+.deck-review-reports { margin-top: 2rem; }
+.deck-review-reports h2 { font-size: 1rem; }
+#review-reports-list ul { list-style: none; padding: 0; margin: 0; }
+#review-reports-list li { display: flex; gap: 0.75rem; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); padding: 0.35rem 0; font-size: 0.78rem; color: var(--text-dim); }
+.review-load-report { background: transparent; border: 0; color: var(--accent); cursor: pointer; text-align: left; font-size: 0.8rem; }
+.deck-review-empty { color: var(--text-dim); font-size: 0.8rem; }
+@media (max-width: 760px) { .review-cards { grid-template-columns: 1fr; } }
+
+/* --- Deck Doctor apply controls --- */
+.review-item-line { display: flex; justify-content: space-between; gap: 0.75rem; align-items: center; }
+.review-apply-add, .review-apply-cut {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 0.68rem;
+    padding: 0.12rem 0.4rem;
+}
+.review-apply-add:hover { color: #3fb950; border-color: #3fb950; }
+.review-apply-cut:hover { color: #f85149; border-color: #f85149; }

@@ -17,6 +17,7 @@
             <button class="tool-tab-btn" data-tool="eval">Commander Eval</button>
             <button class="tool-tab-btn" data-tool="templates">Templates</button>
             <button class="tool-tab-btn" data-tool="outline">Outline</button>
+            <button class="tool-tab-btn" data-tool="review">Deck Doctor</button>
         </div>
 
         <div class="panel-body search-panel-body">
@@ -264,6 +265,19 @@
                 <button id="outline-add-btn" class="btn-deck-action" style="margin-top:0.5rem;">+ Add Section</button>
                 <button id="outline-export-btn" class="btn-deck-action" style="margin-top:0.5rem;" title="Copy outline text to clipboard">📋 Export Outline</button>
             </div>
+
+            {# ── Deck Doctor Tool ── #}
+            <div class="tool-content" data-tool="review" hidden>
+                <p style="font-size:0.85rem; color:var(--text-dim); margin-bottom:0.75rem;">
+                    Run a structured audit of this deck, retrieve real candidate cards,
+                    and optionally ask the LLM for a coaching report. Nothing is applied
+                    automatically.
+                </p>
+                <a id="deck-review-link" class="btn-deck-action" href="/deck-review">🩺 Open Deck Doctor</a>
+                <p id="deck-review-hint" style="font-size:0.72rem;color:var(--text-dim);margin-top:0.6rem;">
+                    Save the deck first so Deck Doctor can find it by name.
+                </p>
+            </div>
         </div>
     </div>
 
@@ -381,6 +395,19 @@
                 <div class="guideline-panel-help" style="font-size:0.7rem;color:var(--text-dim);margin-top:0.4rem;text-align:center;">
                     Click a bar to see which cards are in each category · Tag cards with <em>Ramp</em>, <em>Removal</em>, etc. to override classification
                 </div>
+            </div>
+
+            {# Role / Bracket Analysis #}
+            <div id="deck-analysis" class="deck-analysis" hidden>
+                <div class="deck-analysis-top">
+                    <div class="deck-analysis-health">
+                        <span class="deck-analysis-label">Health</span>
+                        <strong id="deck-health-score">--</strong><span class="deck-analysis-out-of">/100</span>
+                    </div>
+                    <div class="deck-analysis-bracket" id="deck-bracket-badge">--</div>
+                </div>
+                <div id="role-breakdown" class="role-breakdown"></div>
+                <div id="deck-analysis-warnings" class="deck-analysis-warnings"></div>
             </div>
 
             {# Charts: Mana Curve + Color Identity #}

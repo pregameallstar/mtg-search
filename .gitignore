@@ -3,6 +3,7 @@ decks/
 eval_reports/
 prices/
 card_templates/
+deck_reviews/
 
 # SQLite database (large file, symlinked)
 AllPrintings.sqlite

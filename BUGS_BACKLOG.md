@@ -41,7 +41,7 @@ Priority is **impact × likelihood**, not effort.
 | B-20 | Fixed | Similarity | Removed the misleading `unique=prints` / All Printings UI; single latest printing is explicit |
 | B-21 | Ops | Security posture | No auth/CSRF, wide bind addresses, permissive MCP CORS, no upload cap |
 | B-22 | Ops | Docker entrypoint | `set -e` + `wait -n` exits instead of restarting a crashed child |
-| B-23 | Dev | Tests/docs | Root `pytest` collection fails; README still says three MCP tools |
+| B-23 | Dev | Tests/docs | Root `pytest` collection fails; PROJECT_OVERVIEW still says three MCP tools |
 
 ---
 
@@ -626,7 +626,7 @@ restarts it; kill Flask and confirm full cleanup.
   `test_scripts/run_eval_test.py` imports `requests`, which is not in
   `requirements.txt` (the directory is gitignored but present locally).
   `pytest tests` passed 171 tests (now 189 after the regression tests).
-- `README.md:276` said the MCP server exposed three tools; the current code
+- `PROJECT_OVERVIEW.md:276` said the MCP server exposed three tools; the current code
   exposes five (`semantic_search`, `keyword_search`, `get_card`, `list_decks`,
   `get_deck`).
 - `ARCHITECTURE.md:305` already labels `renderTagFilterBar`, `showTagUI`,
@@ -634,11 +634,11 @@ restarts it; kill Flask and confirm full cleanup.
 
 **Impact:** developer friction and stale user documentation; not a runtime bug.
 
-**Fixed:** added `pytest.ini` with `testpaths = tests` and updated the README
+**Fixed:** added `pytest.ini` with `testpaths = tests` and updated the PROJECT_OVERVIEW
 tool list. `pytest` from the root now passes. The tag filter bar is now wired
 up; the other dead JS names remain cleanup opportunities.
 
-**Acceptance tests:** a clean checkout can run `pytest` successfully; README
+**Acceptance tests:** a clean checkout can run `pytest` successfully; PROJECT_OVERVIEW
 matches the MCP manifest.
 
 ---

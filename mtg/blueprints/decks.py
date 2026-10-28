@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from flask import Blueprint, request, render_template, jsonify, session
 
 from mtg.shared import get_db, DECKS_DIR, HISTORY_DIR, card_image, _list_json_files
+from mtg.roles import ROLES_VERSION, classify_roles
 from mtg.storage import (
     StorageError,
     clean_name,
@@ -154,6 +155,7 @@ def _card_to_deck_json(card):
     exactly (15 fields), so server-side additions and client-side saves produce
     identical card objects.
     """
+    role_info = classify_roles(dict(card))
     return {
         "uuid": card["uuid"],
         "setCode": card["setCode"],
@@ -170,6 +172,9 @@ def _card_to_deck_json(card):
         "supertypes": card["supertypes"] or "",
         "tags": [],
         "scryfallId": card["scryfallId"] or "",
+        "roles": role_info["roles"],
+        "rolePrimary": role_info["primary"],
+        "rolesVersion": ROLES_VERSION,
     }
 
 
@@ -306,6 +311,76 @@ def api_deck_add_card():
         return jsonify({"error": str(e)}), 500
 
     return jsonify({"success": True, "name": card["name"]})
+
+
+@decks_bp.route("/api/deck/remove-card", methods=["POST"])
+def api_deck_remove_card():
+    """Remove a card from a saved deck's main list or a named section.
+
+    Body: {"deck": "<name>", "name": "<card name>", "section": "<optional>",
+           "quantity": <optional>}
+    """
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return jsonify({"error": "Request body must be a JSON object."}), 400
+    deck_name = clean_name(body.get("deck", ""))
+    name = clean_name(body.get("name", ""))
+    uuid_val = clean_name(body.get("uuid", ""))
+    section = clean_name(body.get("section"))
+    if not deck_name:
+        return jsonify({"error": "Deck name is required."}), 400
+    if not name and not uuid_val:
+        return jsonify({"error": "Provide a card name or uuid."}), 400
+    try:
+        qty = int(body.get("quantity") or 0)
+    except (TypeError, ValueError):
+        qty = 0
+
+    try:
+        fpath = resolve_json_path(DECKS_DIR, deck_name, reserved=RESERVED_DECK_FILES)
+        with file_lock(fpath):
+            deck = read_named_json(fpath, deck_name)
+            if deck is None:
+                return jsonify({"error": "Deck not found."}), 404
+            if section:
+                sections = deck.get("sections")
+                target = sections.get(section) if isinstance(sections, dict) else None
+                if not isinstance(target, list):
+                    return jsonify({"error": "Section not found."}), 404
+            else:
+                target = deck.get("cards")
+                if not isinstance(target, list):
+                    target = []
+                    deck["cards"] = target
+
+            def matches(card):
+                if not isinstance(card, dict):
+                    return False
+                if uuid_val:
+                    return card.get("uuid") == uuid_val
+                return (
+                    str(card.get("name") or "").lower() == name.lower()
+                    or str(card.get("name") or "").split(" // ", 1)[0].lower() == name.lower()
+                )
+
+            found = next((card for card in target if matches(card)), None)
+            if found is None:
+                return jsonify({"error": "Card not found in deck."}), 404
+
+            if qty and qty > 0:
+                current = int(found.get("quantity") or 1)
+                if qty >= current:
+                    target.remove(found)
+                else:
+                    found["quantity"] = current - qty
+            else:
+                target.remove(found)
+            write_json_atomic(fpath, deck)
+    except StorageError as e:
+        return jsonify({"error": str(e)}), e.status_code
+    except OSError as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"success": True, "name": name})
 
 
 @decks_bp.route("/api/deck/lookup-by-name", methods=["POST"])

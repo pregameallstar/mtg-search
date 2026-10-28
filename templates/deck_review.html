@@ -1,0 +1,382 @@
+{% extends "base.html" %}
+{% block title %}Deck Doctor — MTG Search{% endblock %}
+{% block content %}
+<div class="deck-review-page">
+    <div class="deck-review-header">
+        <div>
+            <h1>Deck Doctor</h1>
+            <p class="deck-review-intro">
+                A structural audit of one specific Commander deck, with real card
+                candidates and an optional LLM review. Nothing is applied without
+                your explicit action.
+            </p>
+        </div>
+        <a id="deck-review-open-deck" class="btn-secondary" href="/deck-builder{% if deck_name %}?deck={{ deck_name | urlencode }}{% endif %}">Open deck</a>
+    </div>
+
+    <div class="deck-review-form">
+        <label>Deck
+            <select id="review-deck-name">
+                <option value="">Select a saved deck…</option>
+                {% for deck in decks %}
+                <option value="{{ deck.name }}" {% if deck.name == deck_name %}selected{% endif %}>
+                    {{ deck.name }}{% if deck.commander %} — {{ deck.commander }}{% endif %} ({{ deck.count }} cards)
+                </option>
+                {% endfor %}
+            </select>
+        </label>
+        <label>Target bracket
+            <select id="review-target-bracket">
+                <option value="">Auto</option>
+                {% for n in [1,2,3,4,5] %}
+                <option value="{{ n }}">{{ n }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <label>Budget
+            <input type="number" id="review-budget" min="0" step="0.01" placeholder="optional">
+        </label>
+        <label class="chip">
+            <input type="checkbox" id="review-use-llm" checked> Use LLM
+        </label>
+        <button type="button" id="review-run-btn" class="eval-config-save">Review deck</button>
+    </div>
+
+    <div id="review-status" class="deck-review-status" hidden></div>
+    <div id="review-progress" class="deck-review-progress" hidden>
+        <div class="deck-review-progress-track"><div id="review-progress-fill"></div></div>
+        <span id="review-progress-label">Starting…</span>
+    </div>
+
+    <div id="review-result" class="deck-review-result" hidden></div>
+
+    <div class="deck-review-reports">
+        <h2>Saved reviews</h2>
+        <div id="review-reports-list">
+            {% if reports %}
+            <ul>
+                {% for report in reports %}
+                <li>
+                    <button type="button" class="review-load-report" data-filename="{{ report.filename }}">{{ report.deck }} · {{ report.verdict or 'Review' }}</button>
+                    <span>{{ report.createdAt }}</span>
+                    <button type="button" class="review-delete-report" data-filename="{{ report.filename }}">Delete</button>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p class="deck-review-empty">No saved reviews yet.</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<script>
+(function () {
+    'use strict';
+    var deckInput = document.getElementById('review-deck-name');
+    var runBtn = document.getElementById('review-run-btn');
+    var statusEl = document.getElementById('review-status');
+    var progressEl = document.getElementById('review-progress');
+    var progressFill = document.getElementById('review-progress-fill');
+    var progressLabel = document.getElementById('review-progress-label');
+    var resultEl = document.getElementById('review-result');
+    var reportsEl = document.getElementById('review-reports-list');
+    var currentJob = null;
+
+    function esc(s) {
+        return String(s === null || s === undefined ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function setStatus(text, kind) {
+        if (!statusEl) return;
+        statusEl.hidden = !text;
+        statusEl.textContent = text || '';
+        statusEl.className = 'deck-review-status ' + (kind || '');
+    }
+
+    function setDeckValue(name) {
+        if (!name) return;
+        var exists = Array.prototype.some.call(deckInput.options, function (option) {
+            return option.value === name;
+        });
+        if (!exists) {
+            var option = document.createElement('option');
+            option.value = name;
+            option.textContent = name;
+            deckInput.appendChild(option);
+        }
+        deckInput.value = name;
+    }
+
+    function refreshOpenDeck() {
+        var link = document.getElementById('deck-review-open-deck');
+        if (link && deckInput.value.trim()) {
+            link.href = '/deck-builder?deck=' + encodeURIComponent(deckInput.value.trim());
+        }
+    }
+
+    function runReview() {
+        var name = deckInput.value.trim();
+        if (!name) { setStatus('Enter a saved deck name first.', 'error'); return; }
+        runBtn.disabled = true;
+        resultEl.hidden = true;
+        progressEl.hidden = false;
+        progressFill.style.width = '5%';
+        progressLabel.textContent = 'Starting…';
+        setStatus('');
+
+        var options = {
+            use_llm: document.getElementById('review-use-llm').checked,
+            target_bracket: document.getElementById('review-target-bracket').value || null,
+            budget: document.getElementById('review-budget').value || null
+        };
+        fetch('/api/deck/review/run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: name, options: options })
+        })
+        .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
+        .then(function (res) {
+            if (!res.ok) throw new Error(res.data.error || 'Could not start review.');
+            currentJob = res.data.jobId;
+            poll();
+        })
+        .catch(function (err) {
+            runBtn.disabled = false;
+            progressEl.hidden = true;
+            setStatus(err.message, 'error');
+        });
+    }
+
+    function poll() {
+        if (!currentJob) return;
+        fetch('/api/deck/review/progress?jobId=' + encodeURIComponent(currentJob))
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                if (data.error) throw new Error(data.error);
+                var pct = data.total ? Math.max(5, Math.round(data.step / data.total * 100)) : 5;
+                progressFill.style.width = pct + '%';
+                progressLabel.textContent = data.label || 'Working…';
+                if (data.status === 'done') {
+                    progressFill.style.width = '100%';
+                    progressLabel.textContent = 'Done';
+                    loadResult();
+                    return;
+                }
+                if (data.status === 'error') throw new Error(data.error || 'Review failed.');
+                setTimeout(poll, 600);
+            })
+            .catch(function (err) {
+                runBtn.disabled = false;
+                progressEl.hidden = true;
+                setStatus(err.message, 'error');
+            });
+    }
+
+    function loadResult() {
+        fetch('/api/deck/review/result?jobId=' + encodeURIComponent(currentJob))
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                if (data.error) throw new Error(data.error);
+                renderResult(data);
+                runBtn.disabled = false;
+                progressEl.hidden = true;
+                loadReports();
+            })
+            .catch(function (err) { setStatus(err.message, 'error'); runBtn.disabled = false; });
+    }
+
+    function renderResult(data) {
+        var audit = data.audit || {};
+        var analysis = data.analysis;
+        var bracket = audit.bracket || {};
+        var salt = bracket.salt || {};
+        var health = audit.health || {};
+        var gaps = Array.isArray(audit.roleGaps) ? audit.roleGaps : [];
+        var candidates = data.candidates || {};
+        var adds = candidates.adds || {};
+        var cuts = candidates.cuts || [];
+        var candidateIndex = {};
+        Object.keys(adds).forEach(function (role) {
+            (adds[role] || []).forEach(function (card) {
+                candidateIndex[String(card.name || '').toLowerCase()] = card;
+            });
+        });
+        var html = '';
+
+        html += '<div class="review-hero">';
+        html += '<div><div class="review-kicker">Verdict</div><h2>' +
+            esc(analysis && analysis.verdict ? analysis.verdict : 'Deterministic audit') + '</h2>';
+        html += '<p>' + esc(analysis && analysis.summary ? analysis.summary : 'No LLM narrative was generated. The structural audit and candidate cards are shown below.') + '</p></div>';
+        html += '<div class="review-score"><strong>' + esc(health.score != null ? health.score : '--') + '</strong><span>health / 100</span>';
+        html += '<div class="review-bracket">Bracket ' + esc(bracket.estimate != null ? bracket.estimate : '—') +
+            (salt.score != null ? ' · Salt ' + esc(salt.score) : '') + '</div></div>';
+        html += '</div>';
+
+        html += '<div class="review-cards">';
+        html += '<section><h3>Strengths</h3>' + list(analysis && analysis.strengths) + '</section>';
+        html += '<section><h3>Weaknesses</h3>' + list(analysis && analysis.weaknesses) + '</section>';
+        html += '</div>';
+
+        html += '<section><h3>Role gaps</h3><div class="review-gaps">';
+        gaps.forEach(function (gap) { html += '<div><span>' + esc(gap.role) + '</span><strong>' + esc(gap.actual) + ' / ' + esc(gap.target) + '</strong></div>'; });
+        html += '</div></section>';
+
+        html += '<div class="review-cards">';
+        html += '<section><h3>Cuts</h3>';
+        var cutItems = analysis && Array.isArray(analysis.cuts) ? analysis.cuts : cuts;
+        if (!cutItems.length) html += '<p class="deck-review-empty">No cuts recommended.</p>';
+        else {
+            html += '<ul class="review-list">';
+            cutItems.forEach(function (cut) {
+                html += '<li><div class="review-item-line"><strong>' + esc(cut.name) + '</strong>' +
+                    '<button type="button" class="review-apply-cut" data-name="' + esc(cut.name) + '">Cut</button></div>' +
+                    '<span>' + esc(cut.reason || cut.reasonHint || '') + '</span></li>';
+            });
+            html += '</ul>';
+        }
+        html += '</section>';
+
+        html += '<section><h3>Adds</h3>';
+        var addItems = analysis && Array.isArray(analysis.adds) ? analysis.adds : [];
+        if (!addItems.length) {
+            Object.keys(adds).forEach(function (role) {
+                adds[role].forEach(function (card) { addItems.push({name: card.name, reason: card.reasonHint, role: role}); });
+            });
+        }
+        if (!addItems.length) html += '<p class="deck-review-empty">No candidate adds found.</p>';
+        else {
+            html += '<ul class="review-list">';
+            addItems.forEach(function (add) {
+                var candidate = candidateIndex[String(add.name || '').toLowerCase()];
+                var button = candidate
+                    ? '<button type="button" class="review-apply-add" data-set-code="' +
+                      esc(candidate.setCode) + '" data-number="' + esc(candidate.number) + '">Add</button>'
+                    : '';
+                html += '<li><div class="review-item-line"><strong>' + esc(add.name) + '</strong>' + button + '</div>' +
+                    '<span>' + esc(add.reason || '') + (add.role ? ' · ' + esc(add.role) : '') + '</span></li>';
+            });
+            html += '</ul>';
+        }
+        html += '</section></div>';
+
+        if (analysis) {
+            html += '<section><h3>Mana base</h3><p>' + esc(analysis.mana_base) + '</p></section>';
+            html += '<section><h3>Win conditions</h3><p>' + esc(analysis.win_conditions) + '</p></section>';
+            html += '<section><h3>Bracket fit</h3><p>' + esc(analysis.bracket_fit) + '</p></section>';
+            html += '<section><h3>Next steps</h3>' + list(analysis.next_steps) + '</section>';
+        }
+
+        var rejected = (data.validation && data.validation.rejected) || [];
+        if (rejected.length) {
+            html += '<section class="review-warning"><h3>Rejected suggestions</h3><ul class="review-list">';
+            rejected.forEach(function (item) { html += '<li><strong>' + esc(item.name) + '</strong><span>' + esc(item.reason) + '</span></li>'; });
+            html += '</ul></section>';
+        }
+        html += '<div class="review-actions"><button type="button" id="review-save-btn" class="btn-secondary">Save review</button></div>';
+        resultEl.innerHTML = html;
+        resultEl.hidden = false;
+        var saveBtn = document.getElementById('review-save-btn');
+        if (saveBtn) saveBtn.addEventListener('click', saveReview);
+        resultEl.querySelectorAll('.review-apply-add').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                applyCard('add', {setCode: btn.dataset.setCode, number: btn.dataset.number});
+            });
+        });
+        resultEl.querySelectorAll('.review-apply-cut').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                applyCard('cut', {name: btn.dataset.name});
+            });
+        });
+    }
+
+    function applyCard(kind, payload) {
+        var name = deckInput.value.trim();
+        if (!name) { setStatus('Save the deck first, then apply recommendations.', 'error'); return; }
+        var endpoint = kind === 'add' ? '/api/deck/add-card' : '/api/deck/remove-card';
+        var body = kind === 'add'
+            ? {deck: name, setCode: payload.setCode, number: payload.number}
+            : {deck: name, name: payload.name};
+        fetch(endpoint, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body)
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            if (data.error) throw new Error(data.error);
+            setStatus(kind === 'add' ? 'Card added to the deck.' : 'Card removed from the deck.', 'ok');
+        })
+        .catch(function (err) { setStatus(err.message, 'error'); });
+    }
+
+    function list(items) {
+        if (!Array.isArray(items) || !items.length) return '<p class="deck-review-empty">None noted.</p>';
+        return '<ul class="review-list">' + items.map(function (item) {
+            return '<li>' + esc(typeof item === 'string' ? item : JSON.stringify(item)) + '</li>';
+        }).join('') + '</ul>';
+    }
+
+    function saveReview() {
+        if (!currentJob) return;
+        fetch('/api/deck/review/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ jobId: currentJob, name: deckInput.value.trim() })
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            if (data.error) throw new Error(data.error);
+            setStatus('Review saved.', 'ok');
+            loadReports();
+        })
+        .catch(function (err) { setStatus(err.message, 'error'); });
+    }
+
+    function loadReports() {
+        var name = deckInput.value.trim();
+        fetch('/api/deck/review/reports' + (name ? '?deck=' + encodeURIComponent(name) : ''))
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                var reports = data.reports || [];
+                if (!reports.length) {
+                    reportsEl.innerHTML = '<p class="deck-review-empty">No saved reviews yet.</p>';
+                    return;
+                }
+                reportsEl.innerHTML = '<ul>' + reports.map(function (report) {
+                    return '<li><button type="button" class="review-load-report" data-filename="' +
+                        esc(report.filename) + '">' + esc(report.deck) + ' · ' + esc(report.verdict || 'Review') +
+                        '</button><span>' + esc(report.createdAt) + '</span></li>';
+                }).join('') + '</ul>';
+                reportsEl.querySelectorAll('.review-load-report').forEach(function (btn) {
+                    btn.addEventListener('click', function () { loadSavedReport(btn.dataset.filename); });
+                });
+            })
+            .catch(function () {});
+    }
+
+    function loadSavedReport(filename) {
+        fetch('/api/deck/review/report?filename=' + encodeURIComponent(filename))
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                if (data.error) throw new Error(data.error);
+                if (data.deck) {
+                    setDeckValue(data.deck);
+                    refreshOpenDeck();
+                }
+                renderResult(data);
+                setStatus('Loaded saved review.', 'ok');
+            })
+            .catch(function (err) { setStatus(err.message, 'error'); });
+    }
+
+    runBtn.addEventListener('click', runReview);
+    deckInput.addEventListener('change', refreshOpenDeck);
+    deckInput.addEventListener('input', refreshOpenDeck);
+    refreshOpenDeck();
+    loadReports();
+})();
+</script>
+{% endblock %}

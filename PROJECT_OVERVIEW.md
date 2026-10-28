@@ -4,7 +4,7 @@ A self-hosted Magic: The Gathering card search engine, deck builder, and Command
 
 ## Features
 
-- **Card search** — full Scryfall-style query engine: name, oracle text, type line, mana cost, colors, color identity, power/toughness/loyalty, rarity, set, format legality, game availability, and 10+ boolean flags. 30+ filters in total.
+- **Card search** — full Scryfall-style query engine: name, oracle text, type line, mana cost, colors, color identity, power/toughness/loyalty, rarity, set, format legality, game availability, 10+ boolean flags, plus Game Changer, EDHREC rank, salt, artist, watermark, set type, release date, produced mana, finish, commander eligibility, partner, and special-printing filters. Sort by name, mana value, EDHREC, salt, newest, or rarity. A JSON API (`/api/search`) backs the Deck Builder and external clients.
 - **Card detail** — full card view with high-res image, oracle text, Oracle rulings, format legalities, latest set info, and other faces for DFCs.
 - **Deck Builder** — split-panel builder with four integrated tools:
   - **Search** — the full card search engine embedded in a compact panel. Name autocomplete, drag-and-drop card results into the deck, and card image preview on hover.
@@ -14,6 +14,8 @@ A self-hosted Magic: The Gathering card search engine, deck builder, and Command
   - Commander slot, custom sections (Sideboard, Maybeboard), drag-and-drop reordering, card counts, local save/load, JSON import/export.
   - **Guideline Templates** — define expected card counts per category (Ramp, Removal, Card Draw, etc.) with progress bars that track your deck against targets. Auto-classification assigns cards to categories; category-name tags override automatic classification.
   - **Tag system** — tag cards with predefined tags (Ramp, Removal, Card Draw, Tutor, Board Wipe, Protection, Recursion, Win Condition) or custom tags. Tags are shared across all decks.
+  - **Role / bracket analysis** — shared role classification, guideline progress, structural health, and an advisory Commander bracket/salt estimate.
+- **Deck analysis** — a shared role engine classifies cards into Lands, Ramp, Card Draw, Card Selection, Targeted Removal, Board Wipe, Counterspell, Tutor, Protection, Recursion, Tokens, Counters, Sac Outlet, Lifegain, Stax, Extra Turns, Mass Land Denial, Fast Mana, and Win Condition. The Deck Builder shows role targets, a structural health score, and an advisory Commander bracket/salt estimate. Tags override automatic classification.
 - **Similarity engine** — find cards that play mechanically similarly to a given card. Two search backends:
   - **Semantic** (default) — AI embedding vectors (`all-MiniLM-L6-v2`) map oracle text into vector space. Catches reworded abilities, mechanical cousins, and conceptually similar designs that keyword matching misses. Built once per database ingest, queries run in ~100ms.
   - **Legacy** — classic TF-IDF word overlap with tunable factor gates (types, keywords, subtypes, mana value, color identity). Each factor has a strictness knob. MTG-domain stop-word filter strips ubiquitous terms. Format legality filter for format-restricted searches.
@@ -27,7 +29,9 @@ A self-hosted Magic: The Gathering card search engine, deck builder, and Command
 - **Card Templates** — reusable card packages saved to `card_templates/`. Two types:
   - **Card templates** — pre-built card lists you can load into the Deck Builder
   - **Guideline templates** — category targets (Ramp, Removal, Card Draw, etc.) with expected counts, used to score decks against deck-building standards
-- **MCP server** — expose `semantic_search`, `keyword_search`, `get_card`, `list_decks`, and `get_deck` tools to LLM agents (Claude Code, OpenWebUI, etc.) via SSE + MCPO proxy.
+- **Commander Finder** — browse commander-eligible cards by color identity, EDHREC popularity, partner/background status, or a strategy description (semantic when embeddings are available, text fallback otherwise).
+- **Deck Doctor** — review a specific 100-card deck. A deterministic audit covers legality, curve, roles, health, and bracket/salt; embeddings retrieve real candidate cards grouped by role gap; an optional LLM writes a coaching report; every recommendation is validated against the deck and DB. Reports are saved in `deck_reviews/` and keyed by a deck fingerprint.
+- **MCP server** — expose `semantic_search`, `keyword_search`, `search_cards`, `get_card`, `list_decks`, and `get_deck` tools to LLM agents (Claude Code, OpenWebUI, etc.) via SSE + MCPO proxy.
 - **Database ingest** — drag-and-drop upload of MTGJSON `AllPrintings.sqlite` (or `.tar.gz`/`.zip` archives). Deduplication, validation, and embedding rebuild run automatically.
 - **Lazy image cache** — first card view fetches from Scryfall and caches locally. Subsequent views serve from disk.
 
@@ -72,6 +76,7 @@ Volume mounts:
 | `./embeddings/` | `/app/embeddings/` | Embedding index (persisted) |
 | `./images/` | `/app/images/` | Lazy image cache (persisted) |
 | `./eval_reports/` | `/app/eval_reports/` | Saved Commander Eval reports |
+| `./deck_reviews/` | `/app/deck_reviews/` | Saved Deck Doctor reports |
 | `prompt_store` (named volume) | `/app/prompt_store/` | Server-side custom LLM prompts |
 | `./.secret_key` | `/app/.secret_key` | Flask session secret (writeable) |
 | `./.last_ingest.json` | `/app/.last_ingest.json` | Database ingest metadata (writeable) |
@@ -109,7 +114,7 @@ Environment variables for the app container:
 
 ### Search
 
-`GET /search` — Full card search with 30+ filter fields.
+`GET /search` — Full card search with 30+ filter fields. `GET /api/search` returns the same results as JSON.
 
 **Text filters:**
 - `q` — free-text search across name, type line, and oracle text. Comma-separated, AND logic (cards must match all terms)
@@ -135,7 +140,29 @@ Environment variables for the app container:
 
 **Display:** `border` (black/white/silver/gold/yellow/borderless), `layout` (normal/split/transform/saga/etc.), `frame` (1993/1997/2003/2015/future)
 
-Results are paginated (10, 25, or 50 per page). Click any card to open its detail panel. The root URL `/` redirects to `/search`.
+**Metadata:** `game_changer`, `edhrec_max`/`edhrec_min`, `salt_min`/`salt_max`, `artist`, `watermark`, `set_type`, `release_after`/`release_before`, `produced_mana`, `finish`, `commander_only`, `partner`, `is_timeshifted`, `is_story_spotlight`, `has_content_warning`
+
+**Sorting:** `sort` = `name`, `mv`, `edhrec`, `salt`, `newest`, `rarity`, or `random`; `order` = `asc`/`desc`. Random is a single sample page, not stable pagination.
+
+Results are paginated (10, 25, or 50 per page). Click any card to open its detail panel. The root URL `/` redirects to `/search`. Saved searches are stored in the browser's `localStorage`.
+
+### Commander Finder
+
+`GET /commanders` — Browse commander-eligible cards. Filter by color identity, partner/background, EDHREC rank, or a strategy description. Results link to the card, Similarity, and Commander Eval tools. `GET /api/commanders` returns the same data as JSON.
+
+### Deck Doctor
+
+`GET /deck-review?deck=<name>` — Review a saved Commander deck.
+
+The pipeline runs five steps:
+
+1. **Enrich** — load the deck and enrich each card from SQLite (text, legalities, EDHREC, salt, Game Changer, DFC faces).
+2. **Audit** — deterministic counts, curve, roles, role gaps, color identity, legality, health, and bracket/salt.
+3. **Candidates** — embedding retrieval finds real cards that fill role gaps, filtered by color identity, legality, mana value, target bracket, budget, and duplicate identity.
+4. **LLM review** — optional. The model chooses only from the candidate list and writes cuts, adds, mana-base notes, win conditions, bracket fit, and next steps.
+5. **Validate** — invalid adds/cuts are rejected; only real cards in the right deck/color identity survive.
+
+The page shows scorecards, cuts, adds with apply buttons, saved reviews, and validation notes. Nothing is applied automatically. Review reports live in `deck_reviews/` and are fingerprinted.
 
 ### Card Detail
 
@@ -268,16 +295,17 @@ Default Guideline is auto-created on first use. Templates are saved as JSON in `
 - Similarity Tool: semantic or legacy (controls the standalone Similarity page)
 - Commander Eval: semantic or legacy (controls the "Find Similar" button on eval pages)
 
-**Custom Prompts** — Full text editing for all three LLM prompts:
+**Custom Prompts** — Full text editing for all four LLM prompts:
 - **Commander Eval** — system prompt for the main analysis (default: 100+ line structured prompt covering bracket system, card economy language, trigger analysis, etc.)
 - **Deep Dive** — system prompt for strategy/build deep-dives
 - **Verification** — system prompt for second-pass factual verification against oracle text
+- **Deck Doctor** — system prompt for deck-specific reviews
 
 Each prompt has a "Reset to Default" button. Prompts are stored server-side in `prompt_store/`, keyed by a small browser id in the session cookie; this keeps the cookie below the browser's ~4 KB limit.
 
 ## MCP Server
 
-The MCP server exposes five tools to LLM agents:
+The MCP server exposes six tools to LLM agents:
 
 ### `semantic_search`
 Find cards by mechanical description using embedding vectors. Describes what the card **does**, not community slang:
@@ -293,6 +321,9 @@ Parameters: `query`, `color_identity` (e.g. `"GW"`), `mana_value_min`/`max`, `li
 Literal text search against name, type line, and oracle text. Fallback when semantic search misses.
 
 Parameters: `query`, `color_identity`, `card_type`, `mana_value_min`/`max`, `limit`
+
+### `search_cards`
+Structured search across the full database using the web search filters: text, color identity, mana value range, rarity, format legality, Game Changer, EDHREC rank, salt, and sorting. Returns compact card summaries; use `get_card` for oracle text and rulings.
 
 ### `get_card`
 Get full card details by exact English name — oracle text, rulings, legalities, stats.
@@ -341,24 +372,37 @@ mtg/                # Application package
 │   ├── eval_landing.py    #  /commander-eval, /commander-eval/reports/delete
 │   ├── decks.py           #  /deck-builder, /saved-decks, /api/deck/*
 │   ├── templates_bp.py    #  /card-templates, /api/template/*
+│   ├── deck_analysis.py    #  /api/cards/roles, /api/deck/analyze
+│   ├── deck_review.py      #  /deck-review, /api/deck/review/*
 │   └── tags.py            #  /api/tags/*
 ├── shared.py        #  db_path, get_db, constants, Jinja helpers
+├── card_query.py    #  Canonical search query builder (SQL, no Flask)
+├── roles.py         #  Shared role taxonomy/classifier with evidence
+├── bracket.py       #  Advisory bracket/salt signal estimator
+├── bracket_rules.py #  Provisional bracket thresholds + fast-mana list
+├── deck_rules.py    #  Commander count/singleton/color-identity rules
+├── deck_stats.py    #  Deterministic deck audit + health score
+├── deck_enrich.py   #  Saved-deck card → DB row enrichment
+├── deck_review.py   #  Deck Doctor pipeline (audit, candidates, LLM, validation)
+├── review_cache.py  #  In-memory background review jobs
 ├── eval_cache.py    #  Server-side in-memory cache for eval analysis
 ├── similarity.py    #  TF-IDF + factor-gate scoring engine
 ├── embed.py         #  Embedding index build + search (sentence-transformers)
 ├── dedup.py         #  Database deduplication (one row per unique card)
 ├── llm.py           #  LLM client — single generate() function (OpenAI + Anthropic)
 ├── websearch.py     #  SearXNG web search client
-├── prompts.py       #  LLM system prompts (eval, deepdive, verify)
+├── prompts.py       #  LLM system prompts (eval, deepdive, verify, deck review)
 ├── eval_helpers.py  #  Eval similarity backends, deepdive persistence
 ├── images.py        #  Scryfall image fetching + mana symbol rendering
 ├── ingest.py        #  Database file upload + ingest pipeline
-├── mcp_server.py    #  MCP server — semantic_search, keyword_search, get_card
+├── mcp_server.py    #  MCP server — semantic_search, keyword_search, search_cards, get_card
 └── mcp_control.py   #  MCP process management (status, restart)
 
 templates/          # Jinja2 templates
 ├── base.html       # Base layout with navigation, theme, search bar
 ├── search.html     # Card search page
+├── commanders.html # Commander Finder
+├── deck_review.html # Deck Doctor
 ├── card.html       # Full card detail page
 ├── similar_landing.html  # Similarity landing page
 ├── similar.html    # Similarity results page

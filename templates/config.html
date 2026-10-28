@@ -451,6 +451,25 @@
     </div>
 
     <div class="eval-config" style="margin-top: 1.5rem;">
+        <h2 class="eval-config-heading">Deck Doctor Prompt</h2>
+        <div style="padding: 1rem;">
+            <textarea name="review_prompt" form="review-prompt-form" class="prompt-editor review-prompt-area"
+                      placeholder="Enter system prompt for Deck Doctor reviews…">{{ review_prompt or default_review_prompt }}</textarea>
+            <form method="post" id="review-prompt-form" style="margin-top: 0.75rem;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="save_review_prompt" value="1">
+                <input type="hidden" name="llm_backend" value="{{ llm_backend }}">
+                <input type="hidden" name="llm_base_url" value="{{ llm_base_url }}">
+                <input type="hidden" name="llm_model" value="{{ llm_model }}">
+                <div style="display:flex; gap:0.5rem;">
+                    <button type="submit" class="eval-config-save" style="margin-left:0;">Save Prompt</button>
+                    <button type="button" id="reset-review-prompt" class="eval-test-btn">Reset to Default</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="eval-config" style="margin-top: 1.5rem;">
         <h2 class="eval-config-heading">Verification Prompt</h2>
         <div style="padding: 1rem;">
             <textarea name="verify_prompt" form="verify-prompt-form" class="prompt-editor verify-prompt-area"
@@ -481,6 +500,9 @@ document.getElementById('reset-deepdive-prompt').addEventListener('click', funct
 });
 document.getElementById('reset-verify-prompt').addEventListener('click', function() {
     document.querySelector('.verify-prompt-area').value = {{ default_verify_prompt | tojson | safe }};
+});
+document.getElementById('reset-review-prompt').addEventListener('click', function() {
+    document.querySelector('.review-prompt-area').value = {{ default_review_prompt | tojson | safe }};
 });
 </script>
 

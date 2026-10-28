@@ -18,9 +18,11 @@
                 <li><a href="/search">Search</a></li>
                 <li class="sidebar-section-label">Tools</li>
                 <li><a href="/similar">Similarity</a></li>
+                <li><a href="/commanders">Commander Finder</a></li>
                 <li><a href="/commander-eval">Commander Eval</a></li>
                 <li><a href="/deck-builder">🃏 Deck Builder</a></li>
                 <li><a href="/saved-decks">📋 Saved Decks</a></li>
+                <li><a href="/deck-review">🩺 Deck Doctor</a></li>
                 <li><a href="/card-templates">📦 Templates</a></li>
                 <li class="sidebar-section-label">Settings</li>
                 <li><a href="/config">⚙ Configuration</a></li>
@@ -109,6 +111,8 @@
         }
         var cell = e.target.closest('.card-cell');
         if (!cell) return;
+        // Let real links (e.g. Commander Finder) navigate normally.
+        if (e.target.closest('a')) return;
         // Don't open panel if dragging or clicking the add-to-deck button
         if (e.target.closest('.btn-add-to-deck')) return;
         e.preventDefault();

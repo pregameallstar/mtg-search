@@ -5,36 +5,30 @@ ponytail: core routes for browsing and searching the MTG database.
 
 import os
 import sys
-import re
 
 from flask import Blueprint, render_template, request, abort, send_file, jsonify, session, redirect, url_for
+from werkzeug.datastructures import MultiDict
 
-from mtg.shared import (
-    get_db, _db_ready,
-    IMAGE_DIR, DEFAULT_PER_PAGE, VALID_FORMATS,
+from mtg.shared import get_db, _db_ready, IMAGE_DIR, DATABASE, db_path
+from mtg.card_query import (
+    CAN_BE_COMMANDER_SQL,
+    NAME_EXPR,
+    build_search_query,
+    card_row_to_dict,
+    empty_search_result,
+    result_to_api,
+    run_search,
 )
-from mtg.similarity import normalize_dash, wubrg_sort
+from mtg.roles import classify_roles
 from mtg.images import (
     VALID_IMAGE_FACES,
     VALID_IMAGE_SIZES,
+    card_image_url,
     fetch_scryfall_image,
     is_scryfall_id,
 )
 
 search_bp = Blueprint("search", __name__)
-
-
-# === Helpers ===
-
-def _n(op, field, cast=False):
-    """Return SQL clause for a numeric operator + field. Handles =, <, >, <=, >=.
-    If cast=True, the field is text — use CAST AS REAL for comparison, which
-    handles integer and fractional values. '*' and non-numeric values cast to NULL,
-    which fails any comparison → excluded."""
-    ops = {"=": "=", "<": "<", ">": ">", "<=": "<=", ">=": ">="}
-    if op in ops:
-        col = f"CAST(c.{field} AS REAL)" if cast else f"c.{field}"
-        return f"{col} {ops[op]} ?"
 
 
 # === Routes ===
@@ -46,353 +40,261 @@ def index():
 
 @search_bp.route("/search")
 def search():
-    q = request.args.get("q", "").strip()                      # free-text name/type/text
-    name = request.args.get("name", "").strip()                 # card name search (autocomplete-backed)
-    oracle = request.args.get("oracle", "").strip()             # oracle text search
-    type_line = request.args.get("type_line", "").strip()       # full type line
-    mana_cost = request.args.get("mana_cost", "").strip()       # exact mana cost e.g. "{1}{R}"
-    keywords = request.args.get("keywords", "").strip()         # comma-separated keywords, AND logic
-    # Colors
-    color = request.args.get("color", "").strip()               # WUBRGC string
-    color_rule = request.args.get("color_rule", "at_least")     # exact / at_most / at_least
-    ci = request.args.get("ci", "").strip()                     # color identity
-    ci_rule = request.args.get("ci_rule", "at_least")           # exact / at_most / at_least
-    # Stats
-    mv = request.args.get("mv", "").strip()
-    mv_op = request.args.get("mv_op", "=")
-    pow_val = request.args.get("pow", "").strip()
-    pow_op = request.args.get("pow_op", "=")
-    tou_val = request.args.get("tou", "").strip()
-    tou_op = request.args.get("tou_op", "=")
-    loy_val = request.args.get("loy", "").strip()
-    loy_op = request.args.get("loy_op", "=")
-    # Rarity (multi-select)
-    rarities = request.args.getlist("rarity")                   # e.g. ["rare","mythic"]
-    # Game / Availability (multi-select)
-    games = request.args.getlist("game")                        # paper, mtgo, arena
-    # Legality
-    fmt = request.args.get("format", "").strip()
-    legality = request.args.get("legality", "legal")            # legal / banned / restricted
-    # Set
-    set_code = request.args.get("set", "").strip()
-    # Booleans / Flags
-    is_reprint = request.args.get("is_reprint")
-    is_reserved = request.args.get("is_reserved")
-    is_funny = request.args.get("is_funny")
-    is_oversized = request.args.get("is_oversized")
-    is_fullart = request.args.get("is_fullart")
-    is_textless = request.args.get("is_textless")
-    is_promo = request.args.get("is_promo")
-    is_rebalanced = request.args.get("is_rebalanced")
-    border = request.args.get("border", "").strip()             # black / white / silver / borderless
-    layout = request.args.get("layout", "").strip()
-    frame = request.args.get("frame", "").strip()               # frameVersion
-
-    page = request.args.get("page", 1, type=int)
-    if page < 1:
-        page = 1
-    per_page_raw = request.args.get("per_page", str(DEFAULT_PER_PAGE))
-    per_page = int(per_page_raw) if per_page_raw.isdigit() and int(per_page_raw) in (10, 25, 50) else DEFAULT_PER_PAGE
+    """Card search — build the canonical query and render results."""
+    query = build_search_query(request.args)
 
     if not _db_ready():
+        empty = empty_search_result(query)
+        # The unseeded page is an empty state, not a "no results" result.
+        empty_values = dict(query.values)
+        empty_values["has_filters"] = False
         return render_template(
             "search.html",
-            query=q, name=name, oracle=oracle, type_line=type_line, mana_cost=mana_cost, keywords=keywords,
-            color=color, color_rule=color_rule, ci=ci, ci_rule=ci_rule,
-            mv=mv, mv_op=mv_op, pow_val=pow_val, pow_op=pow_op,
-            tou_val=tou_val, tou_op=tou_op, loy_val=loy_val, loy_op=loy_op,
-            rarities=rarities, games=games, fmt=fmt, legality=legality, set_code=set_code,
-            is_reprint=is_reprint, is_reserved=is_reserved, is_funny=is_funny,
-            is_oversized=is_oversized, is_fullart=is_fullart, is_textless=is_textless,
-            is_promo=is_promo, is_rebalanced=is_rebalanced,
-            border=border, layout=layout, frame=frame,
-            results=[], page=page, total=0, total_pages=0, per_page=per_page,
-            db_unseeded=True, has_filters=False,
+            **empty_values,
+            results=[],
+            total=0,
+            total_pages=0,
+            random_sample=False,
+            db_unseeded=True,
+            warnings=empty["warnings"],
         )
 
-    db = get_db()
+    result = run_search(get_db(), query)
+    return render_template(
+        "search.html",
+        **query.values,
+        results=result["results"],
+        total=result["total"],
+        total_pages=result["total_pages"],
+        random_sample=result["random_sample"],
+        db_unseeded=False,
+        warnings=result["warnings"],
+    )
 
-    where = ["c.language = 'English'", "(c.side IS NULL OR c.side = 'a')"]
+
+@search_bp.route("/api/search")
+def api_search():
+    """JSON card search. Shares the canonical builder with /search."""
+    query = build_search_query(request.args)
+    if not _db_ready():
+        payload = result_to_api(
+            query,
+            {
+                "results": [],
+                "total": 0,
+                "total_pages": 0,
+                "random_sample": False,
+                "warnings": ["Database not seeded."],
+            },
+        )
+        return jsonify(payload)
+    return jsonify(result_to_api(query, run_search(get_db(), query)))
+
+
+@search_bp.route("/api/search/random")
+def api_search_random():
+    """Return one random card matching the current filters (if any)."""
+    if not _db_ready():
+        return jsonify({"card": None, "warnings": ["Database not seeded."]})
+    args = MultiDict(request.args)
+    args["sort"] = "random"
+    args["per_page"] = "10"
+    query = build_search_query(args)
+    if not query.has_filters:
+        # A match-all filter is needed because an empty query intentionally
+        # renders the search page's empty state rather than all cards.
+        args["release_after"] = "1900-01-01"
+        query = build_search_query(args)
+    result = run_search(get_db(), query)
+    cards = [card_row_to_dict(row) for row in result["results"]]
+    return jsonify({"card": cards[0] if cards else None,
+                    "warnings": result["warnings"]})
+
+
+@search_bp.route("/commanders")
+def commanders_page():
+    """Commander Finder — browse/search commander-eligible cards."""
+    values = build_commander_values(request.args)
+    if not _db_ready():
+        return render_template(
+            "commanders.html", **values,
+            commanders=[], total=0, total_pages=0, method="text",
+            commanders_page_url=commanders_page_url, db_unseeded=True,
+        )
+    data = build_commander_results(request.args)
+    return render_template(
+        "commanders.html", **values,
+        commanders=data["commanders"], total=data["total"],
+        total_pages=data["total_pages"], method=data["method"],
+        commanders_page_url=commanders_page_url, db_unseeded=False,
+    )
+
+
+@search_bp.route("/api/commanders")
+def api_commanders():
+    """JSON Commander Finder results."""
+    if not _db_ready():
+        return jsonify({
+            "commanders": [], "total": 0, "page": 1, "per_page": 30,
+            "total_pages": 0, "method": "text",
+            "warnings": ["Database not seeded."], "schemaVersion": 1,
+        })
+    data = build_commander_results(request.args)
+    return jsonify(data)
+
+
+def commanders_page_url(args, page):
+    """Build a Commander Finder pagination URL preserving filters."""
+    from urllib.parse import quote
+
+    parts = []
+    for key, values in args.lists():
+        if key == "page":
+            continue
+        for value in values:
+            parts.append(f"{quote(key)}={quote(value)}")
+    parts.append(f"page={page}")
+    return "/commanders?" + "&".join(parts)
+
+
+def build_commander_values(args):
+    """Normalize Commander Finder form values for the template."""
+    ci = "".join(ch for ch in str(args.get("ci", "")).upper() if ch in "WUBRG")
+    sort = str(args.get("sort", "edhrec")).lower()
+    if sort not in ("edhrec", "name", "mv"):
+        sort = "edhrec"
+    try:
+        per_page = int(args.get("per_page", 30))
+    except (TypeError, ValueError):
+        per_page = 30
+    if per_page not in (10, 25, 50):
+        per_page = 30
+    try:
+        page = max(1, int(args.get("page", 1)))
+    except (TypeError, ValueError):
+        page = 1
+    return {
+        "ci": ci,
+        "q": str(args.get("q", "")).strip(),
+        "partner": args.get("partner", ""),
+        "edhrec_max": str(args.get("edhrec_max", "")).strip(),
+        "sort": sort,
+        "page": page,
+        "per_page": per_page,
+    }
+
+
+def build_commander_results(args):
+    """Build, filter, optionally embed-rerank, and paginate commanders."""
+    import mtg.embed as embed
+
+    values = build_commander_values(args)
+    db = get_db()
+    where = [
+        "c.language = 'English'",
+        "(c.side IS NULL OR c.side = 'a')",
+        "cl.commander = 'Legal'",
+        CAN_BE_COMMANDER_SQL,
+    ]
     params = []
 
-    # Free-text: search name + type + oracle text (comma-separated, AND logic)
-    if q:
-        for term in q.split(","):
-            term = term.strip().strip("\"'")
-            if term:
-                escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-                where.append(
-                    "(c.name LIKE ? ESCAPE '\\' OR c.type LIKE ? ESCAPE '\\' "
-                    "OR c.text LIKE ? ESCAPE '\\')"
-                )
-                params.extend([f"%{escaped}%"] * 3)
+    allowed = set(values["ci"])
+    if allowed:
+        for ch in "WUBRG":
+            if ch not in allowed:
+                where.append("c.colorIdentity NOT LIKE ?")
+                params.append(f"%{ch}%")
 
-    # Name search (autocomplete-backed, exact substring match)
-    if name:
-        escaped = name.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        front_only = "CASE WHEN instr(c.name, ' // ') > 0 THEN substr(c.name, 1, instr(c.name, ' // ') - 1) ELSE c.name END"
-        where.append(f"{front_only} LIKE ? ESCAPE '\\'")
-        params.append(f"%{escaped}%")
-
-    # Oracle text only (comma-separated, AND logic)
-    if oracle:
-        for term in oracle.split(","):
-            term = term.strip().strip("\"'")
-            if term:
-                escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-                where.append("c.text LIKE ? ESCAPE '\\'")
-                params.append(f"%{escaped}%")
-
-    # Full type line
-    if type_line:
-        normalized = normalize_dash(type_line)
-        escaped = normalized.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        where.append("REPLACE(c.type, '—', '-') LIKE ? ESCAPE '\\'")
-        params.append(f"%{escaped}%")
-
-    # Exact mana cost
-    if mana_cost:
-        where.append("c.manaCost = ?")
-        params.append(mana_cost)
-
-    # Keywords (comma-separated, AND logic)
-    if keywords:
-        for kw in keywords.split(","):
-            kw = kw.strip()
-            if kw:
-                where.append("c.keywords LIKE ?")
-                params.append(f"%{kw}%")
-
-    # Colors (WUBRGC)
-    if color:
-        color_chars = [ch for ch in color.upper() if ch in "WUBRGC"]
-        has_c = "C" in color_chars
-        color_chars = [ch for ch in color_chars if ch != "C"]
-        if has_c:
-            if not color_chars:
-                where.append("c.colors = ''")
-            elif color_rule == "exact":
-                where.append("1 = 0")
-        if color_chars:
-            if color_rule == "exact":
-                where.append("c.colors = ?")
-                params.append(", ".join(wubrg_sort(color_chars)))
-                where.append(f"LENGTH(c.colors) - LENGTH(REPLACE(c.colors, ',', '')) + (CASE WHEN c.colors = '' THEN 0 ELSE 1 END) = ?")
-                params.append(len(color_chars))
-            elif color_rule == "at_most":
-                for ch in "WUBRG":
-                    if ch not in color_chars:
-                        where.append("c.colors NOT LIKE ?")
-                        params.append(f"%{ch}%")
-            else:  # at_least
-                for ch in color_chars:
-                    where.append("c.colors LIKE ?")
-                    params.append(f"%{ch}%")
-
-    # Color identity
-    if ci:
-        ci_chars = [ch for ch in ci.upper() if ch in "WUBRGC"]
-        has_c = "C" in ci_chars
-        ci_chars = [ch for ch in ci_chars if ch != "C"]
-        if has_c:
-            if not ci_chars:
-                where.append("c.colorIdentity = ''")
-            elif ci_rule == "exact":
-                where.append("1 = 0")
-        if ci_chars:
-            if ci_rule == "exact":
-                where.append("c.colorIdentity = ?")
-                params.append(", ".join(sorted(ci_chars)))
-            elif ci_rule == "at_most":
-                for ch in "WUBRG":
-                    if ch not in ci_chars:
-                        where.append("c.colorIdentity NOT LIKE ?")
-                        params.append(f"%{ch}%")
-            else:  # at_least
-                for ch in ci_chars:
-                    where.append("c.colorIdentity LIKE ?")
-                    params.append(f"%{ch}%")
-
-    # Mana value
-    if mv:
+    if values["edhrec_max"]:
         try:
-            if mv_op in ("<", ">", "<=", ">="):
-                val = float(mv)
-                where.append(f"c.manaValue {mv_op} ?")
-                params.append(val)
-            elif re.match(r"^\s*\d+(\.\d+)?\s*-\s*\d+(\.\d+)?\s*$", mv):
-                lo, hi = mv.split("-", 1)
-                lo_val, hi_val = float(lo.strip()), float(hi.strip())
-                if lo_val > hi_val:
-                    lo_val, hi_val = hi_val, lo_val
-                where.append("c.manaValue BETWEEN ? AND ?")
-                params.extend([lo_val, hi_val])
-            elif mv_op == "=":
-                val = float(mv)
-                where.append("c.manaValue = ?")
-                params.append(val)
-            else:
-                print(f"search: invalid mv format '{mv}', showing empty results", file=sys.stderr)
-                where.append("1 = 0")
-        except (ValueError, TypeError):
-            print(f"search: unparseable mv '{mv}', showing empty results", file=sys.stderr)
-            where.append("1 = 0")
+            rank = int(values["edhrec_max"])
+            if rank >= 0:
+                where.append("c.edhrecRank IS NOT NULL AND c.edhrecRank <= ?")
+                params.append(rank)
+        except ValueError:
+            values["edhrec_max"] = ""
 
-    # Power (text column, needs CAST for comparisons)
-    if pow_val:
-        if pow_val == '*':
-            where.append("c.power = '*'")
-        else:
-            clause = _n(pow_op, "power", cast=True)
-            if clause:
-                where.append(clause)
-                params.append(pow_val)
+    if values["partner"]:
+        where.append(
+            "(c.keywords LIKE '%Partner%' OR c.text LIKE '%Choose a Background%' "
+            "OR c.text LIKE '%Friends forever%' OR c.text LIKE '%Doctor''s companion%')"
+        )
 
-    # Toughness
-    if tou_val:
-        if tou_val == '*':
-            where.append("c.toughness = '*'")
-        else:
-            clause = _n(tou_op, "toughness", cast=True)
-            if clause:
-                where.append(clause)
-                params.append(tou_val)
+    q = values["q"]
+    embed_scores = {}
+    method = "text"
+    if q:
+        try:
+            found = embed.find(db_path(DATABASE), q, top_k=800)
+            if found:
+                embed_scores = {row["uuid"]: row.get("score", 0) for row in found}
+                method = "embed"
+        except Exception:
+            embed_scores = {}
+        if not embed_scores:
+            escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            where.append(
+                "(c.name LIKE ? ESCAPE '\\' OR c.type LIKE ? ESCAPE '\\' "
+                "OR c.text LIKE ? ESCAPE '\\')"
+            )
+            params.extend([f"%{escaped}%"] * 3)
 
-    # Loyalty
-    if loy_val:
-        clause = _n(loy_op, "loyalty", cast=True)
-        if clause:
-            where.append(clause)
-            params.append(loy_val)
-
-    # Rarity (multi-select)
-    if rarities:
-        placeholders = ",".join("?" * len(rarities))
-        where.append(f"LOWER(c.rarity) IN ({placeholders})")
-        params.extend([r.lower() for r in rarities])
-
-    # Set
-    if set_code:
-        where.append("c.setCode = ?")
-        params.append(set_code.upper())
-
-    # Game / Availability (multi-select, OR logic)
-    if games:
-        clauses = []
-        for g in games:
-            clauses.append("c.availability LIKE ?")
-            params.append(f"%{g}%")
-        where.append("(" + " OR ".join(clauses) + ")")
-
-    # Format legality
-    join_clause = ""
-    if fmt:
-        fmt_lower = fmt.lower()
-        if fmt_lower in VALID_FORMATS:
-            join_clause = "JOIN cardLegalities cl ON c.uuid = cl.uuid"
-            if legality == "banned":
-                where.append(f"cl.{fmt_lower} = 'Banned'")
-            elif legality == "restricted":
-                where.append(f"cl.{fmt_lower} = 'Restricted'")
-            else:
-                where.append(f"cl.{fmt_lower} = 'Legal'")
-
-    # Boolean flags
-    if is_reprint:
-        where.append("c.isReprint = 1")
-    if is_reserved:
-        where.append("c.isReserved = 1")
-    if is_funny:
-        where.append("c.isFunny = 1")
-    if is_oversized:
-        where.append("c.isOversized = 1")
-    if is_fullart:
-        where.append("c.isFullArt = 1")
-    if is_textless:
-        where.append("c.isTextless = 1")
-    if is_promo:
-        where.append("c.isPromo = 1")
-    if is_rebalanced:
-        where.append("c.isRebalanced = 1")
-
-    # Border
-    if border:
-        border_map = {"black": "black", "white": "white", "silver": "silver", "borderless": "borderless",
-                       "gold": "gold", "yellow": "yellow"}
-        if border in border_map:
-            where.append("c.borderColor = ?")
-            params.append(border_map[border])
-
-    # Layout
-    if layout:
-        where.append("c.layout = ?")
-        params.append(layout)
-
-    # Frame version
-    if frame:
-        where.append("c.frameVersion = ?")
-        params.append(frame)
-
-    where_clause = "WHERE " + " AND ".join(where)
-
-    # Count — one result per front-face name. The DB intentionally stores only
-    # the latest printing, so there is no "all printings" mode.
-    group_expr = (
-        "CASE WHEN instr(c.name, ' // ') > 0 "
-        "THEN substr(c.name, 1, instr(c.name, ' // ') - 1) ELSE c.name END"
-    )
-    count_sql = f"""
-        SELECT COUNT(DISTINCT {group_expr})
-        FROM cards c
-        {join_clause}
-        {where_clause}
-    """
-    total = db.execute(count_sql, params).fetchone()[0]
-
-    # Fetch
-    name_expr = "CASE WHEN instr(c.name, ' // ') > 0 THEN substr(c.name, 1, instr(c.name, ' // ') - 1) ELSE c.name END"
-    data_sql = f"""
-        SELECT {name_expr} as name, c.manaCost, c.type, c.rarity, c.setCode, c.colors,
-               ci.scryfallId, s.name as setName, s.releaseDate, c.number
+    order = {
+        "edhrec": "c.edhrecRank IS NULL, c.edhrecRank ASC",
+        "name": "c.name COLLATE NOCASE ASC",
+        "mv": "c.manaValue IS NULL, c.manaValue ASC",
+    }[values["sort"]]
+    rows = db.execute(f"""
+        SELECT c.uuid, {NAME_EXPR} as name, c.setCode, c.number,
+               ci.scryfallId, c.manaCost, c.manaValue, c.type,
+               c.colorIdentity, c.edhrecRank, c.edhrecSaltiness, c.keywords
         FROM cards c
         JOIN cardIdentifiers ci ON c.uuid = ci.uuid
         JOIN sets s ON c.setCode = s.code
-        {join_clause}
-        {where_clause}
-        GROUP BY {group_expr}
-        ORDER BY c.name
-        LIMIT ? OFFSET ?
-    """
-    results = db.execute(data_sql, params + [per_page, (page - 1) * per_page]).fetchall()
+        JOIN cardLegalities cl ON c.uuid = cl.uuid
+        WHERE {' AND '.join(where)}
+        ORDER BY {order}
+        LIMIT 5000
+    """, params).fetchall()
 
+    if embed_scores:
+        rows = [row for row in rows if row["uuid"] in embed_scores]
+        rows.sort(key=lambda row: embed_scores.get(row["uuid"], 0), reverse=True)
+
+    total = len(rows)
+    per_page = values["per_page"]
+    page = values["page"]
     total_pages = max(1, (total + per_page - 1) // per_page)
+    start = (page - 1) * per_page
+    page_rows = rows[start:start + per_page]
 
-    # No filters provided — show empty state, don't dump all cards
-    has_filters = any([
-        q, name, oracle, type_line, mana_cost, keywords, color, ci, mv, pow_val, tou_val,
-        loy_val, rarities, games, fmt, set_code, is_reprint, is_reserved, is_funny,
-        is_oversized, is_fullart, is_textless, is_promo, is_rebalanced,
-        border, layout, frame,
-    ])
-    if not has_filters:
-        results = []
-        total = 0
-        total_pages = 0
+    commanders = []
+    for row in page_rows:
+        commanders.append({
+            "name": row["name"],
+            "setCode": row["setCode"],
+            "number": row["number"],
+            "scryfallId": row["scryfallId"] or "",
+            "manaCost": row["manaCost"] or "",
+            "manaValue": row["manaValue"],
+            "type": row["type"] or "",
+            "colorIdentity": row["colorIdentity"] or "",
+            "edhrecRank": row["edhrecRank"],
+            "salt": row["edhrecSaltiness"],
+            "keywords": row["keywords"] or "",
+            "imageUrl": card_image_url(row["scryfallId"] or ""),
+        })
 
-    return render_template(
-        "search.html",
-        query=q, name=name, oracle=oracle, type_line=type_line, mana_cost=mana_cost, keywords=keywords,
-        color=color, color_rule=color_rule, ci=ci, ci_rule=ci_rule,
-        mv=mv, mv_op=mv_op, pow_val=pow_val, pow_op=pow_op,
-        tou_val=tou_val, tou_op=tou_op, loy_val=loy_val, loy_op=loy_op,
-        rarities=rarities, games=games, fmt=fmt, legality=legality, set_code=set_code,
-        is_reprint=is_reprint, is_reserved=is_reserved, is_funny=is_funny,
-        is_oversized=is_oversized, is_fullart=is_fullart, is_textless=is_textless,
-        is_promo=is_promo, is_rebalanced=is_rebalanced,
-        border=border, layout=layout, frame=frame,
-        results=results, page=page, total=total, total_pages=total_pages, per_page=per_page,
-        has_filters=has_filters,
-    )
+    return {
+        "commanders": commanders,
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "total_pages": total_pages,
+        "method": method,
+        "warnings": [],
+        "schemaVersion": 1,
+    }
 
 
 @search_bp.route("/card/<set_code>/<number>")
@@ -441,11 +343,12 @@ def card_detail(set_code, number):
                 other_uuids,
             ).fetchall()
 
+    role_info = classify_roles(dict(card))
     template = "card_panel.html" if request.args.get("fragment") else "card.html"
     return render_template(
         template,
         card=card, rulings=rulings, legalities=legalities,
-        other_faces=other_faces,
+        other_faces=other_faces, role_info=role_info,
     )
 
 

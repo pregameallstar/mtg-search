@@ -106,6 +106,8 @@ DATABASE = "AllPrintings.sqlite"
 DEFAULT_PER_PAGE = 30
 REPORTS_DIR = "eval_reports"
 REPORTS_PATH = os.path.join(PROJECT_ROOT, REPORTS_DIR)
+REVIEWS_DIR = "deck_reviews"
+REVIEWS_PATH = os.path.join(PROJECT_ROOT, REVIEWS_DIR)
 # Auto-saved deepdive files use this suffix; the eval landing page skips them
 # when listing saved reports. Single source of truth so a rename can't desync.
 DEEPDIVE_SUFFIX = "_deepdives.json"
@@ -118,6 +120,7 @@ PRICES_DIR = "prices"
 os.makedirs(PRICES_DIR, exist_ok=True)
 HISTORY_DIR = os.path.join(DECKS_DIR, "_history")
 os.makedirs(HISTORY_DIR, exist_ok=True)
+os.makedirs(REVIEWS_DIR, exist_ok=True)
 
 # ponytail: alias for backward compat — Jinja globals and deck routes use this name
 card_image = card_image_url

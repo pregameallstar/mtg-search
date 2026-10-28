@@ -14,7 +14,12 @@ from flask import Blueprint, render_template, request, session, redirect, url_fo
 
 from mtg.shared import get_db, resolve_bind_path, DATABASE, db_path
 from mtg.csrf import csrf_ok
-from mtg.prompts import COMMANDER_SYSTEM_PROMPT, DEEPDIVE_SYSTEM_PROMPT, VERIFY_SYSTEM_PROMPT
+from mtg.prompts import (
+    COMMANDER_SYSTEM_PROMPT,
+    DEEPDIVE_SYSTEM_PROMPT,
+    DECK_REVIEW_SYSTEM_PROMPT,
+    VERIFY_SYSTEM_PROMPT,
+)
 from mtg.prompt_store import get_prompts, save_prompt
 from mtg.mcp_control import (
     MCP_SSE_PORT, MCPO_PORT, MCP_HOST, MCP_DISPLAY_HOST,
@@ -76,6 +81,8 @@ def config_page():
             save_prompt("deepdive_prompt", request.form.get("deepdive_prompt", ""))
         if request.form.get("save_verify_prompt") == "1":
             save_prompt("verify_prompt", request.form.get("verify_prompt", ""))
+        if request.form.get("save_review_prompt") == "1":
+            save_prompt("review_prompt", request.form.get("review_prompt", ""))
         # Search Logic config
         if request.form.get("save_search_logic") == "1":
             similar_method = request.form.get("similar_method", "").strip()
@@ -113,6 +120,7 @@ def config_page():
     eval_prompt = prompts.get("eval_prompt", "")
     deepdive_prompt = prompts.get("deepdive_prompt", "")
     verify_prompt = prompts.get("verify_prompt", "")
+    review_prompt = prompts.get("review_prompt", "")
     similar_method = session.get("similar_method", "embed")
     eval_similar_method = session.get("eval_similar_method", "embed")
     pricing_store = session.get("pricing_store") or os.environ.get("PRICING_STORE", "usd")
@@ -148,6 +156,7 @@ def config_page():
                            eval_prompt=eval_prompt,
                            deepdive_prompt=deepdive_prompt,
                            verify_prompt=verify_prompt,
+                           review_prompt=review_prompt,
                            similar_method=similar_method,
                            eval_similar_method=eval_similar_method,
                            pricing_store=pricing_store,
@@ -155,6 +164,7 @@ def config_page():
                            default_prompt=COMMANDER_SYSTEM_PROMPT,
                            default_deepdive_prompt=DEEPDIVE_SYSTEM_PROMPT,
                            default_verify_prompt=VERIFY_SYSTEM_PROMPT,
+                           default_review_prompt=DECK_REVIEW_SYSTEM_PROMPT,
                            last_ingest=last_ingest,
                            db_card_count=db_card_count,
                            embed_status=embed_status,

@@ -25,6 +25,7 @@ to your task, then drill into specific files.
 | **Commander Eval** | `/commander-eval`, `/card/{set}/{num}/eval` | `mtg/blueprints/eval.py` (860 lines), `eval_landing.py` (125 lines) | `commander_eval.html`, `commander_eval_landing.html` | inline in `commander_eval.html` | style.css §eval |
 | **Deck Builder** | `/deck-builder` | `mtg/blueprints/decks.py` (226 lines) | `templates/deck_builder.html` (438 lines) | `static/deck-builder.js` (3,460 lines) | style.css §deck-builder |
 | **Saved Decks** | `/saved-decks` | `mtg/blueprints/decks.py` (shared) | `templates/saved_decks.html` (105 lines) | inline in `saved_decks.html` | style.css §saved-decks |
+| **Deck Doctor** | `/deck-review?deck=…` | `mtg/blueprints/deck_review.py`, `mtg/deck_review.py` | `templates/deck_review.html` | inline in `deck_review.html` | style.css §Deck Doctor |
 | **Card Templates** | `/card-templates` | `mtg/blueprints/templates_bp.py` (87 lines) | `templates/card_templates.html` (1,048 lines) | inline in `card_templates.html` | style.css §templates |
 | **Configuration** | `/config` | `mtg/blueprints/config.py` (247 lines) | `templates/config.html` (590 lines) | inline in `config.html` | style.css §config |
 | **MCP Server** | (standalone process) | `mtg/mcp_server.py` (404 lines) | — | — | — |
@@ -46,8 +47,10 @@ The core card search engine with 30+ filters.
 
 | File | Role |
 |------|------|
-| `mtg/blueprints/search.py` | Route handler — builds SQL WHERE clauses from query params |
+| `mtg/blueprints/search.py` | Route handler — delegates to `card_query` and renders results |
+| `mtg/card_query.py` | Canonical query builder — parses search params, builds SQL, runs it |
 | `templates/search.html` | Search form + results grid |
+| `templates/commanders.html` | Commander Finder page |
 | `templates/card.html` | Full card detail page (DFC faces, rulings, legalities, printings) |
 | `templates/card_panel.html` | Card detail as a side-panel fragment (`?fragment=1`) |
 | `templates/index.html` | Homepage redirects to `/search` |
@@ -58,16 +61,20 @@ The core card search engine with 30+ filters.
 |-------|---------|
 | `GET /` | Redirects to `/search` |
 | `GET /search` | Search form + results (30+ query params) |
+| `GET /api/search` | JSON search using the canonical query builder |
+| `GET /api/search/random` | JSON: one random matching card |
+| `GET /commanders` | Commander Finder page |
+| `GET /api/commanders` | JSON: commander-eligible cards |
 | `GET /card/<set_code>/<number>` | Card detail page (`?fragment=1` → side panel) |
 | `GET /card-autocomplete?q=...` | JSON: top 10 name matches |
 | `GET /img/<size>/<face>/<c1>/<c2>/<id>.jpg` | Lazy image proxy (cache from Scryfall) |
 | `GET /llm-models?base_url=...` | JSON: fetch models from LLM API |
 
-### Key detail: `deck-builder.js` scrapes search HTML
+### Key detail: `/api/search`
 
-The Deck Builder's embedded Search tool fetches `/search?...` and parses the HTML
-with `DOMParser` to extract `.card-grid`, `.result-count`, and pagination. Changes
-to `search.html`'s card grid structure WILL break the Deck Builder search tab.
+The Deck Builder's embedded Search tool now fetches `/api/search` JSON. The HTML
+route and API share `mtg/card_query.py`, so filters and sorting stay in sync.
+`.card-grid` / `.card-cell` markup is still used by the HTML page and drag-and-drop.
 
 ### Key detail: color ordering
 
@@ -137,7 +144,7 @@ Bump `_idf_version` when `extract_terms()` logic changes.
 | `mtg/eval_cache.py` | Server-side OrderedDict cache (FIFO 100); Flask sessions cap at 4KB |
 | `mtg/eval_helpers.py` | Similarity search (embed + legacy), placeholder detection, deepdive auto-save |
 | `mtg/websearch.py` | SearXNG query function — returns `None` when unreachable |
-| `mtg/prompts.py` | Three LLM system prompts: commander, deepdive, verify |
+| `mtg/prompts.py` | Four LLM system prompts: commander, deepdive, verify, deck review |
 | `mtg/llm.py` | `generate()` — OpenAI/Anthropic backends with JSON repair |
 | `mtg/embed.py` | Embedding index (shared with Similarity) |
 | `templates/commander_eval.html` | Analysis display (1,069 lines): tabs for strengths, strategies, brackets, deepdives |
@@ -191,9 +198,12 @@ Split-panel drag-and-drop Commander deck builder. The most JS-heavy tool.
 
 | File | Role |
 |------|------|
-| `mtg/blueprints/decks.py` | 2 page routes + 5 JSON API endpoints |
+| `mtg/blueprints/decks.py` | 2 page routes + deck JSON API endpoints |
+| `mtg/blueprints/deck_analysis.py` | Role batches + deterministic deck audit API |
+| `mtg/blueprints/deck_review.py` | Deck Doctor page, review jobs, saved reports |
 | `mtg/blueprints/tags.py` | Global tag catalog CRUD at `/api/tags` |
-| `templates/deck_builder.html` | Page layout: 4-tab left panel + right deck panel + 2 modals |
+| `templates/deck_builder.html` | Page layout: tool panel + right deck panel, role/bracket analysis, modals |
+| `templates/deck_review.html` | Deck Doctor report/run page |
 | `static/deck-builder.js` | Entire client app (3,460 lines): Deck model, drag-drop, search, charts, autosave |
 | `decks/` | Saved deck JSON files (one per deck) |
 | `decks/_tags.json` | Global tag catalog (shared across all decks) |
@@ -210,6 +220,16 @@ Split-panel drag-and-drop Commander deck builder. The most JS-heavy tool.
 | `/api/deck/card-lookup` | POST | Card by setCode+number or uuid |
 | `/api/deck/lookup-by-name` | POST | Card by exact name (latest printing) |
 | `/api/deck/lookup-by-uuid` | POST | Scryfall UUID → setCode+number |
+| `/api/cards/roles` | POST | Classify up to 200 cards into roles/evidence |
+| `/api/deck/analyze` | POST | Deterministic deck audit: curve, roles, health, bracket |
+| `/api/deck/remove-card` | POST | Remove a card from a saved deck |
+| `/api/deck/review/run` | POST | Start a Deck Doctor background job |
+| `/api/deck/review/progress` | GET | Review job progress |
+| `/api/deck/review/result` | GET | Review result |
+| `/api/deck/review/reports` | GET | Saved review summaries |
+| `/api/deck/review/save` | POST | Persist a review report |
+| `/api/deck/review/report` | GET | Load a saved review |
+| `/api/deck/review/delete` | POST | Delete a saved review |
 | `/api/tags/list` | GET | Tag catalog (auto-seeds 8 predefined tags) |
 | `/api/tags/save` | POST | Save tag catalog |
 
@@ -239,8 +259,8 @@ only requires a non-empty name. Filenames: `re.sub(r'[^a-zA-Z0-9_ -]', '', name)
 - `Deck` constructor + prototype (lines 69–338) — the data model
 - `classifyCard()` (lines 19–66) — regex-based Lands/Ramp/Removal/Draw/Core
 - Tag popover is **duplicated twice**: `openTagPopover()` (line 495) for main deck, `openTagPopoverForSection()` (line 988) for custom sections (~90 lines each, near-identical)
-- Search scrapes `/search?...` HTML with `DOMParser` (line 1934)
-- Similarity scrapes `/card/{set}/{num}/similar` HTML, takes `grids[1]` (line 2010)
+- Search fetches `/api/search` JSON and renders cards (no HTML scrape)
+- Similarity still scrapes `/card/{set}/{num}/similar` HTML, takes `grids[1]`
 - Autosave: 600ms debounce + `beforeunload`/`visibilitychange` `sendBeacon`
 - Load: **synchronous XHR** to `/api/deck/list`, linear search by name (line 384)
 - Two mana curve renderers: `renderManaCurve()` (stats bar) and `renderManaCurveChart()` (charts panel)
@@ -255,9 +275,8 @@ only requires a non-empty name. Filenames: `re.sub(r'[^a-zA-Z0-9_ -]', '', name)
 
 ### Cross-tool: search integration
 
-Deck Builder embeds a compact search form (tab 1). It does NOT call the JSON API —
-it fetches the search page HTML and parses it. Changes to `search.html`'s `.card-grid`
-structure break this.
+Deck Builder embeds a compact search form (tab 1). It calls `/api/search` and
+renders the JSON card objects; it no longer parses the search page HTML.
 
 ### Cross-tool: card drag-and-drop
 
@@ -366,12 +385,12 @@ Clicks link to `/deck-builder?deck=<urlencoded name>`. Deck Builder reads the
 - **Consumer:** `deck-builder.js` `handleCardDrop()`, which also handles Scryfall UUIDs from external drops
 
 ### Deck Builder ↔ Search
-- Deck Builder tab 1 fetches `/search?...` HTML and scrapes `.card-grid`
+- Deck Builder tab 1 calls `/api/search` and renders JSON cards
 - Card grid HTML structure must be stable — changes to `search.html` break the builder
 
 ### Deck Builder ↔ Similarity
 - Deck Builder tab 2 fetches `/card/{set}/{num}/similar` HTML, takes `grids[1]` ("All Results")
-- Paginates client-side from the scraped data
+- Paginates from the API's `page` / `total_pages` fields
 
 ### Deck Builder ↔ Commander Eval
 - Deck Builder tab 3 loads `/card/{set}/{num}/eval?embed=1` in an iframe
@@ -397,17 +416,25 @@ These are not tied to a single tool but used by several.
 | File | Lines | Role | Used by |
 |------|-------|------|---------|
 | `mtg/shared.py` | 127 | `get_db()`, `db_path()`, `color_identity_subset()`, `card_image`, `render_mana()`, `pagination_url()`, `DECKS_DIR`/`TEMPLATES_DIR` constants | All blueprints, MCP server |
+| `mtg/card_query.py` | — | `build_search_query()`, `run_search()`, `search_cards()`, `empty_search_result()` | Search route, future JSON API/MCP |
+| `mtg/roles.py` | — | `classify_roles()` — multi-role taxonomy, evidence, primary bucket | Deck Builder, deck analysis, bracket |
+| `mtg/bracket.py` / `mtg/bracket_rules.py` | — | `estimate_bracket()` — advisory signals, salt, target fit | Deck Builder, deck analysis |
+| `mtg/deck_rules.py` | — | `validate_deck()` — count, singleton, color identity, legality | Deck Builder, deck analysis |
+| `mtg/deck_stats.py` | — | `analyze_deck()`, `deck_fingerprint()` — curve, roles, gaps, health | Deck Builder, Deck Doctor |
+| `mtg/deck_enrich.py` | — | `lookup_card()`, `enrich_deck()` — saved deck → DB-backed cards | Deck analysis, Deck Doctor |
+| `mtg/deck_review.py` | — | `candidate_adds()`, `cut_candidates()`, `validate_analysis()`, `run_review_job()` | Deck Doctor |
+| `mtg/review_cache.py` | — | bounded job progress/result cache | Deck Doctor |
 | `mtg/similarity.py` | 286 | `score_similarity()`, `extract_terms()`, `get_idf()`, `gate()`, `split_csv()`, `similarity_label()`, `wubrg_sort()` | Similarity tool, Eval deepdive/similar, MCP server |
 | `mtg/embed.py` | 232 | `build(db_path)`, `find(db_path, text, top_k=200)`, `status()` | Similarity tool, Eval pipeline, Config page |
 | `mtg/llm.py` | 163 | `generate()`, `_parse_json()` (JSON repair), `fetch_models()` | Commander Eval, Config page |
 | `mtg/images.py` | 81 | `card_image_url()`, `fetch_scryfall_image()`, `mana_symbols()` | Search routes, shared helpers |
-| `mtg/prompts.py` | 142 | Three system prompt constants | Commander Eval |
+| `mtg/prompts.py` | 142 | Four system prompt constants | Commander Eval, Deck Doctor |
 | `mtg/websearch.py` | 42 | `web_search(query, max_results)` → SearXNG | Commander Eval pipeline |
 | `mtg/eval_cache.py` | 42 | `_eval_cache` (OrderedDict, FIFO 100), `cache_put/get/update` | Commander Eval routes |
 | `mtg/eval_helpers.py` | 237 | `eval_similar_embed/legacy`, `get_commander_filter_sets()`, `is_placeholder_name()`, `auto_save_deepdives()` | Commander Eval routes |
 | `mtg/ingest.py` | 240 | `process_upload()` — validate, dedup, replace DB | Config page |
 | `mtg/dedup.py` | 171 | `dedup_db()`, `dedup_in_place()` | Config page (ingest) |
-| `mtg/mcp_server.py` | 404 | FastMCP server: `semantic_search`, `keyword_search`, `get_card` | Standalone process (managed by `mcp_control.py`) |
+| `mtg/mcp_server.py` | 404 | FastMCP server: `semantic_search`, `keyword_search`, `search_cards`, `get_card` | Standalone process (managed by `mcp_control.py`) |
 | `mtg/mcp_control.py` | 61 | `restart_mcp()`, `port_alive()` | Config page, docker-entrypoint |
 | `app.py` | 116 | Flask app factory: secret key, security headers, Jinja globals, blueprint registration | All web routes |
 
@@ -496,7 +523,7 @@ docker-compose.yml
 
 3. **Session cookie size** — capped at ~4KB. Eval results are too large → stored in `_eval_cache` (in-memory OrderedDict) with UUID keys in the session.
 
-4. **Deck Builder scrapes HTML** — the embedded Search and Similarity tabs parse the search/similar HTML pages. Changes to `.card-grid` or pagination structure in those templates break the Deck Builder.
+4. **Deck Builder HTML coupling** — the embedded Similarity tab still parses the similarity HTML page. Search now uses `/api/search`; changes to `search.html`'s grid no longer break search.
 
 5. **Embedding index** — must be rebuilt after DB ingest. `embed.build()` is async (threaded) and thread-safe (mutex). `status()` shows building state via lock file.
 

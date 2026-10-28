@@ -59,6 +59,15 @@ app.py                  Flask app factory: secret key, security headers, Jinja g
 mtg/
   __init__.py           empty (package marker)
   shared.py             THE shared module — constants + DB helpers + Jinja globals
+  card_query.py         canonical search args → SQL builder/runner (pure, no Flask)
+  roles.py              shared role taxonomy/classifier with evidence (pure)
+  bracket.py            advisory bracket/salt estimator (pure)
+  bracket_rules.py      provisional bracket thresholds + fast-mana list
+  deck_rules.py         Commander count/singleton/color-identity rules (pure)
+  deck_stats.py         deterministic deck audit + health score (pure)
+  deck_enrich.py        saved-deck card → current DB row enrichment
+  deck_review.py        Deck Doctor: audit → candidates → LLM → validation
+  review_cache.py       bounded in-memory background review jobs
   blueprints/
     __init__.py         empty
     search.py           /, /search, /card/<set>/<n>, /img/..., /card-autocomplete, /llm-models
@@ -67,6 +76,8 @@ mtg/
     eval_landing.py     /commander-eval, /commander-eval/reports/delete
     decks.py            /deck-builder, /saved-decks, /api/deck/*, /api/deck/history/*
     pricing.py          /api/pricing/fetch, /api/pricing/status
+    deck_analysis.py    /api/cards/roles, /api/deck/analyze
+    deck_review.py      /deck-review, /api/deck/review/*
     templates_bp.py     /card-templates, /api/template/*
     tags.py             /api/tags/* (global tag catalog)
     config.py           /config/* (LLM, ingest, embeddings, MCP, prompts)
@@ -75,12 +86,12 @@ mtg/
   llm.py                generate() + JSON repair, openai/anthropic (pure)
   images.py             card_image_url(), fetch_scryfall_image(), mana_symbols() (pure)
   websearch.py          SearXNG web_search() (pure)
-  prompts.py            three LLM system prompt string constants (pure)
+  prompts.py            four LLM system prompt string constants (pure)
   eval_cache.py         in-memory OrderedDict caches for eval analysis
   eval_helpers.py       eval similarity backends, placeholder detection, deepdive autosave
   ingest.py             DB upload → validate → dedup → replace → rebuild embeddings (pure)
   dedup.py              dedup one row/unique English card (pure)
-  mcp_server.py         FastMCP server: semantic_search, keyword_search, get_card
+  mcp_server.py         FastMCP server: semantic_search, keyword_search, search_cards, get_card
   mcp_control.py        MCP process management (port_alive, restart_mcp)
 templates/              Jinja2 templates (all extend base.html)
 static/
@@ -93,6 +104,7 @@ prices/                 Scryfall price cache JSON
 images/                 lazy Scryfall image cache
 embeddings/             vectors.npy + meta.json + build_info.json + .build.lock
 eval_reports/           saved eval JSON + *_deepdives.json autosaves
+deck_reviews/           saved Deck Doctor reports (fingerprinted)
 searxng/                settings.yml + limiter.toml (config only)
 docker-compose.yml      app + searxng services
 docker-entrypoint.sh    starts Flask + MCP SSE + MCPO, supervises them
@@ -113,8 +125,8 @@ A thin factory. Responsibilities:
 4. **`get_db` teardown** on app context, and a context processor injecting
    `db_unseeded=False` (routes that detect a missing DB flip it to `True` so
    `base.html` can show a "seed the database" banner).
-5. **Blueprint registration** — 9 blueprints (search, similar, config, eval,
-   eval_landing, decks, templates_bp, tags, pricing).
+5. **Blueprint registration** — 11 blueprints (search, similar, config, eval,
+   eval_landing, deck_analysis, deck_review, decks, templates_bp, tags, pricing).
 
 New routes go in an existing blueprint or a new one registered here.
 
@@ -204,14 +216,18 @@ Every page extends `templates/base.html`, which provides: sidebar nav (hidden wh
 the image lightbox, a global `MutationObserver` that makes every `.card-cell`
 draggable, and an Escape-key handler.
 
-### 6.1 Search — `mtg/blueprints/search.py` (520 loc)
+### 6.1 Search — `mtg/blueprints/search.py` + `mtg/card_query.py`
 
-`GET /search` builds a SQL `WHERE` clause from **30+ query params**: free-text `q`
+`GET /search` delegates SQL construction to `mtg/card_query.py` and renders the
+result. The query builder accepts **30+ query params**: free-text `q`
 (name/type/oracle, comma-AND), `name`, `oracle`, `type_line` (em-dash normalized),
 `mana_cost` (exact), `keywords` (comma-AND), `color`/`ci` with `*_rule`
 (`at_least`/`exact`/`at_most`), `mv` (supports ranges `1-3` + operators), `pow`/`tou`/`loy`,
 `rarity` (multi), `game` (multi), `format`+`legality`, 8 boolean flags, `border`,
-`layout`, `frame`.
+`layout`, `frame`, plus Search 2.0 metadata filters (`game_changer`, EDHREC rank,
+salt, artist, watermark, set type, release dates, produced mana, finish,
+commander eligibility, partner, timeshifted/story/content-warning flags) and
+sorting (`name`/`mv`/`edhrec`/`salt`/`newest`/`rarity`/`random`).
 
 Also in this blueprint:
 - `GET /` → redirect to `/search`.
@@ -221,10 +237,35 @@ Also in this blueprint:
   (fetches from Scryfall with exponential backoff, caches to `images/`).
 - `GET /card-autocomplete?q=` → top 10 name matches (JSON).
 - `GET /llm-models?base_url=` → proxy to list models from a configured backend.
+- `GET /commanders` + `GET /api/commanders` → Commander Finder.
 
-**Gotcha:** `deck-builder.js` does NOT call a search JSON API — it fetches `/search?...`
-HTML and parses `.card-grid` / `.result-count` / pagination with `DOMParser`.
-Changing `search.html`'s grid structure breaks the Deck Builder's embedded search tab.
+**JSON API:** `GET /api/search` shares the same query builder and returns the
+cards + pagination metadata. `GET /api/search/random` returns one random card.
+`deck-builder.js` uses `/api/search` instead of parsing search HTML.
+
+**Commander Finder:** `/commanders` + `/api/commanders` query
+`leadershipSkills.commander = true`, Commander legality, color-identity subsets,
+partner/background, and EDHREC rank. A strategy query uses `embed.find()` to
+rerank the eligible pool, falling back to literal text matching.
+
+### 6.1b Deck Analysis — `mtg/blueprints/deck_analysis.py`
+
+`POST /api/cards/roles` classifies up to 200 cards, resolving missing text/type
+from the DB. `POST /api/deck/analyze` accepts a saved deck name or a deck object,
+enriches the cards, and returns the deterministic audit from
+`mtg/deck_stats.py`: counts, curve, roles, role gaps, health, bracket/salt,
+legality, guideline progress, and per-card roles. The Deck Builder uses this for
+its role panel, guideline bars, and bracket badge.
+
+### 6.1c Deck Doctor — `mtg/blueprints/deck_review.py` + `mtg/deck_review.py`
+
+`GET /deck-review?deck=<name>` is the page. `POST /api/deck/review/run` starts a
+background job; `GET /progress` and `GET /result` poll it. Reports are saved to
+`deck_reviews/` and listed by `/api/deck/review/reports`. The pipeline enriches
+the deck, runs `analyze_deck()`, retrieves real candidate adds with embeddings,
+optionally calls the LLM with `DECK_REVIEW_SYSTEM_PROMPT`, and rejects any
+recommendation that is not a real card in the candidate list or not in the deck
+for cuts.
 
 ### 6.2 Similarity — `mtg/blueprints/similar.py` (359 loc) + `mtg/similarity.py` (295 loc)
 
@@ -303,12 +344,15 @@ predefined tags, stored in `decks/_tags.json`).
 **JS architecture (`deck-builder.js`):**
 - `Deck` constructor + prototype — the data model.
 - `classifyCard()` — regex-based Lands/Ramp/Removal/Draw/Core auto-classification.
-- Embedded tools in a 4-tab left panel: **Search** (scrapes `/search` HTML),
+- Embedded tools in a 5-tab left panel: **Search** (`/api/search` JSON),
   **Similarity** (scrapes `/card/.../similar`, takes `grids[1]`), **Commander Eval**
   (iframe of `.../eval?embed=1`), **Templates** (via `/api/template/list`).
 - Autosave: 600ms debounce + `sendBeacon` on `beforeunload`/`visibilitychange`.
 - Load: synchronous XHR to `/api/deck/list`, linear search by name.
 - Card hover preview (250ms delay, 400×560px).
+- Role/bracket panel calls `/api/deck/analyze` (debounced), applies server roles
+  to deck cards, and renders role gaps, health, bracket, and salt. Guideline bars
+  prefer server roles and fall back to the legacy classifier.
 
 **Known dead/stale JS:** `STORAGE_PREFIX` and `activePopoverCard`. The tag
 popover is duplicated twice (main deck + custom sections); the tag filter bar is
@@ -332,7 +376,7 @@ returns cache count. Pricing store selection (`usd`/`usd_foil`/`eur`) is a sessi
 
 `GET/POST /config` manages:
 - **LLM** — backend (`openai`/`anthropic`), base URL, model, API key, and three
-  **custom prompts** (commander, deepdive, verify). The API key stays in the
+  **custom prompts** (commander, deepdive, verify, deck review). The API key stays in the
   signed session cookie (it is small); prompts live in `prompt_store/`, keyed by
   an opaque browser id, because the default prompt is larger than the ~4 KB
   cookie limit.
@@ -353,9 +397,9 @@ cards, dedup to one row/unique card, atomically replace the live DB, persist
 
 These are where changes in one tool silently break another:
 
-1. **Deck Builder ↔ Search/Similarity:** the builder *scrapes* the search and
-   similarity **HTML** (`DOMParser`), not a JSON API. `.card-grid` / `.result-count`
-   / pagination structure in `search.html` and `similar.html` is load-bearing.
+1. **Deck Builder ↔ Search/Similarity:** the builder uses `/api/search` JSON for
+   search and still *scrapes* similarity **HTML** (`DOMParser`).
+   `.card-grid` / pagination structure in `similar.html` is load-bearing.
 
 2. **Deck Builder ↔ Commander Eval:** iframe of `/card/<set>/<n>/eval?embed=1`;
    the eval page posts `{type:'mtg-eval-data', data}` to `window.parent`; on deck
@@ -379,11 +423,19 @@ These are where changes in one tool silently break another:
 | Module | Role | Consumers |
 |--------|------|-----------|
 | `shared.py` | `db_path()` (handles Docker bind-mount-dir case), `get_db()` (query_only), `color_identity_subset()`, `card_image`/`render_mana`/`pagination_url`, all `*_DIR`/`*_PATH` constants, `sanitize_filename()`, `_latest_printing()`, `_load_card()`, `_other_faces()`, `_list_json_files()`, `_db_ready()`, `VALID_FORMATS` | everything |
+| `card_query.py` | `build_search_query()`, `run_search()`, `search_cards()`, `empty_search_result()` — canonical SQL builder for the search route and future JSON API/MCP | search, future API/MCP |
+| `roles.py` | `classify_roles()` — one card, multiple roles, primary bucket, evidence; `ROLES_VERSION` | Deck Builder, deck analysis, bracket |
+| `bracket.py` / `bracket_rules.py` | `estimate_bracket()` — Game Changer, MLD, extra turns, tutors, fast mana, salt; provisional thresholds | deck analysis |
+| `deck_rules.py` | `validate_deck()` — 100 count, singleton, color identity, legality | deck analysis, future validation |
+| `deck_stats.py` | `analyze_deck()` — curve, roles, gaps, health, bracket; `deck_fingerprint()` | deck analysis, Deck Doctor |
+| `deck_enrich.py` | `lookup_card()` / `enrich_deck()` — merge saved-deck rows with current DB data | deck analysis, Deck Doctor |
+| `deck_review.py` | `candidate_adds()`, `cut_candidates()`, `validate_analysis()`, `run_review_job()` | Deck Doctor |
+| `review_cache.py` | job progress/result cache, FIFO 25 | Deck Doctor |
 | `similarity.py` | TF-IDF scoring engine (pure) | similar, eval_helpers, mcp_server |
 | `embed.py` | `build()`, `find()`, `status()` — thread-safe, model cached per process | similar, eval, config, mcp_server |
 | `llm.py` | `generate()` (openai/anthropic), `_parse_json()` JSON repair, `fetch_models()` | eval, config |
 | `images.py` | `card_image_url()`, `fetch_scryfall_image()` (3-retry backoff), `mana_symbols()` | search, shared |
-| `prompts.py` | `COMMANDER_SYSTEM_PROMPT`, `DEEPDIVE_SYSTEM_PROMPT`, `VERIFY_SYSTEM_PROMPT` | eval, config |
+| `prompts.py` | `COMMANDER_SYSTEM_PROMPT`, `DEEPDIVE_SYSTEM_PROMPT`, `VERIFY_SYSTEM_PROMPT`, `DECK_REVIEW_SYSTEM_PROMPT` | eval, deck review, config |
 | `websearch.py` | `web_search(query, max)` → SearXNG, `None` on failure | eval |
 | `eval_cache.py` | in-memory FIFO caches + lock | eval |
 | `eval_helpers.py` | `eval_similar_embed/legacy`, `get_commander_filter_sets()` (10-min TTL), `is_placeholder_name()`, deepdive autosave | eval |
@@ -395,7 +447,7 @@ These are where changes in one tool silently break another:
 
 ## 9. MCP server (`mtg/mcp_server.py`, 403 loc)
 
-Standalone FastMCP server exposing five tools to LLM agents, backed by
+Standalone FastMCP server exposing six tools to LLM agents, backed by
 `embed.find()` and raw SQL. **No Flask, no auth, read-only for cards; deck tools
 are read-only.** Long `instructions` string encodes the tool-selection
 heuristics: `semantic_search` for "what a card does" (mechanics),
@@ -404,6 +456,8 @@ and `list_decks`/`get_deck` for saved-deck inspection.
 
 - `semantic_search(query, color_identity, card_type, mana_value_min/max, limit)` —
   embed search (top_k=800) + CI subset + type substring + MV range filters.
+- `search_cards(...)` — structured search using the canonical `card_query`
+  builder: colors, MV, rarity, legality, Game Changer, EDHREC, salt, sort.
 - `keyword_search(...)` — literal LIKE over name/type/oracle, deduped by name via
   `ROW_NUMBER()` picking the latest printing.
 - `get_card(name)` — full detail incl. rulings + legalities.
@@ -457,7 +511,8 @@ refactor of `deck-builder.js`.
 1. Read the `# ponytail:` comments in the file and its neighbors.
 2. If it touches DB access: use `get_db()` (query_only), respect the English +
    `side IS NULL OR 'a'` filter, and the `colors`(WUBRG) vs `colorIdentity`(alpha) split.
-3. If it touches search/similar **HTML structure**: check `deck-builder.js`'s scraper.
+3. If it touches similarity **HTML structure**: check `deck-builder.js`'s scraper.
+   Search uses `/api/search`; keep the JSON contract stable instead.
 4. If it touches LLM output format: check `llm._parse_json()` still repairs it.
 5. If it touches filename handling: route through `sanitize_filename()`.
 6. If it touches embeddings: rebuild is async + thread-safe; `status()` reports state.
@@ -467,7 +522,7 @@ refactor of `deck-builder.js`.
 
 ## 13. Related docs
 
-- `README.md` — user-facing feature documentation and setup.
+- `PROJECT_OVERVIEW.md` — user-facing feature documentation and setup.
 - `PROJECT_MAP.md` — an older tool-first index (some line counts and details are now
   stale, e.g. it predates the pricing blueprint, deck history, and the enrich endpoint).
 - Memory: [[project-map]], [[deck-builder-js-tests]].

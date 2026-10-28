@@ -17,6 +17,7 @@ services:
       - ./embeddings:/app/embeddings
       - ./images:/app/images
       - ./eval_reports:/app/eval_reports
+      - ./deck_reviews:/app/deck_reviews
       - prompt_store:/app/prompt_store
       - ./.secret_key:/app/.secret_key
       - ./.last_ingest.json:/app/.last_ingest.json
